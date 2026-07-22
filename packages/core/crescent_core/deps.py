@@ -1,3 +1,4 @@
+from typing import Callable
 from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from crescent_core.claims import TokenClaims
@@ -6,9 +7,10 @@ from crescent_core.verify import InvalidToken, verify_access_token
 
 _bearer = HTTPBearer(auto_error=False)
 
-def current_user_dep(jwks_client: JWKSClient, issuer: str):
+def current_user_dep(jwks_client: JWKSClient, issuer: str) -> Callable[..., TokenClaims]:
     """Factory: returns a FastAPI dependency that verifies the Authorization: Bearer
-    token and yields TokenClaims. Products call this once at startup."""
+    token and yields TokenClaims. Products call this once at startup and reuse
+    the returned dep everywhere."""
 
     def _current_user(creds: HTTPAuthorizationCredentials | None = Depends(_bearer)) -> TokenClaims:
         if not creds or not creds.credentials:
@@ -28,16 +30,27 @@ def current_user_dep(jwks_client: JWKSClient, issuer: str):
 
     return _current_user
 
-def require_role(*allowed_roles: str):
-    """Factory: gate an endpoint on the caller's role claim. Use *after* current_user_dep.
+def require_role(current_user: Callable[..., TokenClaims], *allowed_roles: str) -> Callable[..., TokenClaims]:
+    """Factory: gate an endpoint on the caller's role claim. Wraps `current_user`
+    so FastAPI resolves auth + role in one chained dependency.
 
-    Example:
-        manager_only = require_role("manager", "owner")
-        @app.post("/reports/{id}/approve", dependencies=[Depends(current_user), Depends(manager_only)])"""
+    Example (in Pulse or Forge, after wiring up current_user at startup):
 
-    def _check(user: TokenClaims) -> TokenClaims:
+        jwks = JWKSClient("http://identity:8000/.well-known/jwks.json")
+        current_user = current_user_dep(jwks, issuer="cyphercrescent-identity")
+        manager_only = require_role(current_user, "manager", "owner")
+
+        @app.post("/reports/{id}/approve")
+        def approve(user: TokenClaims = Depends(manager_only)):
+            ...
+    """
+
+    def _check(user: TokenClaims = Depends(current_user)) -> TokenClaims:
         if user.role not in allowed_roles:
-            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=f"Requires one of roles: {', '.join(allowed_roles)}")
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=f"Requires one of roles: {', '.join(allowed_roles)}",
+            )
         return user
 
     return _check
