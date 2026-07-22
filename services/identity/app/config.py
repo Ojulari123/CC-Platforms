@@ -12,6 +12,10 @@ class Settings(BaseSettings):
     REFRESH_TOKEN_EXPIRE_DAYS: int = 7
     CORS_ORIGINS: str = "http://localhost:3000"
     RATE_LIMIT_ENABLED: bool = True
+    BREVO_API_KEY: str = ""
+    EMAIL_FROM: str = ""
+    FRONTEND_URL: str = "http://localhost:3000"
+    INVITE_EXPIRE_DAYS: int = 7
 
     @property
     def cors_origins_list(self) -> list[str]:

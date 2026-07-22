@@ -7,7 +7,7 @@ from tests.conftest import ISSUER
 def _app(jwks_client):
     app = FastAPI()
     current_user = current_user_dep(jwks_client=jwks_client, issuer=ISSUER)
-    manager_only = require_role(current_user, "manager", "owner")
+    manager_only = require_role(current_user, "manager", "admin")
 
     @app.get("/me")
     def me(user: TokenClaims = Depends(current_user)):

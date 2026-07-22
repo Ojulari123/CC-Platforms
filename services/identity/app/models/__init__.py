@@ -87,3 +87,22 @@ class RefreshToken(Base):
     created_at = Column(TIMESTAMP(timezone=True), server_default=func.now(), nullable=False)
 
     user = relationship("User", back_populates="refresh_tokens")
+
+class Invite(Base):
+    """One-time invitation into an existing org. Token stored as SHA-256 hash
+    (same pattern as RefreshToken); the raw value only ever lives in the email.
+    Accepting creates the user (if new) + a membership with the invited role."""
+    __tablename__ = "invites"
+
+    id = Column(Integer, primary_key=True)
+    org_id = Column(Integer, ForeignKey("orgs.id", ondelete="CASCADE"), nullable=False, index=True)
+    email = Column(String(255), nullable=False, index=True)
+    role = Column(String(50), nullable=False)
+    team_id = Column(Integer, ForeignKey("teams.id", ondelete="SET NULL"), nullable=True)
+    token_hash = Column(String(64), unique=True, index=True, nullable=False)
+    invited_by = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    expires_at = Column(TIMESTAMP(timezone=True), nullable=False)
+    accepted_at = Column(TIMESTAMP(timezone=True), nullable=True)
+    created_at = Column(TIMESTAMP(timezone=True), server_default=func.now(), nullable=False)
+
+    org = relationship("Org")

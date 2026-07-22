@@ -38,7 +38,7 @@ def require_role(current_user: Callable[..., TokenClaims], *allowed_roles: str) 
 
         jwks = JWKSClient("http://identity:8000/.well-known/jwks.json")
         current_user = current_user_dep(jwks, issuer="cyphercrescent-identity")
-        manager_only = require_role(current_user, "manager", "owner")
+        manager_only = require_role(current_user, "manager", "admin")
 
         @app.post("/reports/{id}/approve")
         def approve(user: TokenClaims = Depends(manager_only)):

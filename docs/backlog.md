@@ -6,29 +6,31 @@ something's still open. **Updated per session, not per commit.**
 
 ---
 
-## Blocked on: supervisor confirms email provider
-Every item here sends email at some point. Nothing here can be built end-to-end
-until the supervisor picks a provider (Brevo is our tentative default — see the
-supervisor questions in `docs/sessions/2026-07-21-session-01.md`).
+## Email-dependent flows (Brevo confirmed session 03 — no longer blocked)
+`app/services/email.py` now exists with one `send(...)` function (Brevo
+transactional API). Provider choice still worth confirming with supervisor,
+but building proceeds in parallel.
 
-- **Email verification** — new users get a "click to verify" link. Until this
-  ships, `email_verified` on the user always stays `false`.
+- **Email verification for self-registered users** — register still sets
+  `email_verified=False`; invited users get `True` automatically (they proved
+  the address by opening the link). A verify flow only matters for the
+  self-signup founder path.
 - **Password reset (forgot password)** — public flow: enter email → get link →
   set new password. FindYourCribb has the same shape (6-digit code or magic
-  link).
-- **Admin-invite flow** — the second/third user joins an existing org via a
-  link an admin sends them. Adds `POST /orgs/{id}/invites`,
-  `POST /invites/{token}/accept`, backing invite table. This is what turns
-  identity from a self-signup founder tool into a real internal-user system.
-
-**When email is confirmed:** build a thin `app/services/email.py` (or reuse the
-FindYourCribb `Utils/email.py` pattern) with one `send(...)` function, then
-wire the three flows above onto it.
+  link). Next email flow to build.
+- ~~Admin-invite flow~~ — **shipped session 03.** `POST /orgs/{id}/invites` +
+  `POST /invites/accept`, `invites` table (migration 0002), 5/min rate limit
+  on accept. New users land in the inviting org with the invited role.
 
 ---
 
 ## Also open (larger, tackle later)
 
+- **Org switching / multi-org tokens** — a user can now belong to several orgs
+  (own org from register + invited orgs). Login picks their first active
+  membership arbitrarily; accepting an invite issues tokens scoped to the
+  inviting org. Fine for now (CypherCrescent is effectively one org), but a
+  real `POST /auth/switch-org` should exist before multi-org is used in anger.
 - **`GET /orgs/{id}/members`** and other org-admin endpoints once multi-user
   orgs exist (i.e. after admin-invite lands).
 - **`tv` (token_version) invalidation for downstream products** —

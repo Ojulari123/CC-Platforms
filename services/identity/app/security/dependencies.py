@@ -1,8 +1,9 @@
 from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 from app.db import get_db
-from app.models import User
+from app.models import Membership, User
 from app.security.jwt import decode_access_token
 
 _bearer = HTTPBearer(auto_error=False)
@@ -26,3 +27,14 @@ def get_current_user(creds: HTTPAuthorizationCredentials | None = Depends(_beare
     if payload.token_version != user.token_version:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Session revoked. Please log in again.", headers={"WWW-Authenticate": "Bearer"})
     return user
+
+def require_org_role(db: Session, user: User, org_id: int, *roles: str) -> Membership:
+    """Plain helper (not a FastAPI dep — org_id comes from the path). Returns the
+    caller's active membership in the org, 403 if absent or role not allowed.
+    Pass no roles to only require membership."""
+    membership = db.scalar(select(Membership).where(Membership.user_id == user.id, Membership.org_id == org_id, Membership.is_active.is_(True)))
+    if not membership:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Not a member of this organisation")
+    if roles and membership.role not in roles:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=f"Requires one of roles: {', '.join(roles)}")
+    return membership

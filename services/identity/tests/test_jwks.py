@@ -23,6 +23,6 @@ def test_access_token_verifies_against_jwks_public_key(client, registered_user):
     payload = jwt.decode(access, jwk, algorithms=["RS256"], issuer=settings.JWT_ISSUER)
     assert payload["email"] == registered_user["email"]
     assert payload["token_type"] == "access"
-    assert payload["role"] == "owner"
+    assert payload["role"] == "admin"
     assert payload["org_id"] is not None
     assert payload["sub"]

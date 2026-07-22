@@ -7,7 +7,7 @@ def test_returns_current_user_with_active_org(client, registered_user):
     assert body["first_name"] == "Alice"
     assert body["email_verified"] is False
     assert body["is_active"] is True
-    assert body["active_role"] == "owner"
+    assert body["active_role"] == "admin"
     assert body["active_org_name"] == "Acme Corp"
     assert body["active_org_id"]
 

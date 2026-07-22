@@ -4,7 +4,7 @@ from slowapi import _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 from app.config import settings
 from app.rate_limit import limiter
-from app.routes import auth, health, jwks, me
+from app.routes import auth, health, invites, jwks, me, orgs
 
 app = FastAPI(title="Crescent Identity", version="0.0.1")
 
@@ -23,6 +23,8 @@ app.include_router(health.router)
 app.include_router(jwks.router)
 app.include_router(auth.router)
 app.include_router(me.router)
+app.include_router(orgs.router)
+app.include_router(invites.router)
 
 @app.get("/")
 def root():

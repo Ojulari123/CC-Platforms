@@ -32,7 +32,7 @@ app = FastAPI()
 # Once, at startup — a single shared client for the app's lifetime.
 jwks = JWKSClient(jwks_url="http://identity:8000/.well-known/jwks.json")
 current_user = current_user_dep(jwks_client=jwks, issuer="cyphercrescent-identity")
-manager_only = require_role(current_user, "manager", "owner")
+manager_only = require_role(current_user, "manager", "admin")
 
 @app.get("/me")
 def me(user: TokenClaims = Depends(current_user)):
@@ -40,7 +40,7 @@ def me(user: TokenClaims = Depends(current_user)):
 
 @app.post("/reports/{report_id}/approve")
 def approve(report_id: int, user: TokenClaims = Depends(manager_only)):
-    # 401 if unauthenticated, 403 if role isn't manager/owner, else user is the caller.
+    # 401 if unauthenticated, 403 if role isn't manager/admin, else user is the caller.
     ...
 ```
 

@@ -69,7 +69,7 @@ def register_user(db: Session, payload: RegisterRequest) -> TokenPair:
     db.add(org)
     db.flush()
 
-    membership = Membership(user_id=user.id, org_id=org.id, role="owner")
+    membership = Membership(user_id=user.id, org_id=org.id, role="admin")
     db.add(membership)
     db.flush()
 

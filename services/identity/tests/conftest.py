@@ -35,6 +35,11 @@ os.environ["REFRESH_TOKEN_EXPIRE_DAYS"] = "7"
 # Off globally so unrelated tests can hammer /auth/* freely; the dedicated
 # rate-limit test flips limiter.enabled on for itself only.
 os.environ["RATE_LIMIT_ENABLED"] = "false"
+# Blank out email creds so tests can NEVER hit Brevo, even with a real key in
+# .env (env vars beat the .env file in pydantic-settings). Tests monkeypatch
+# email_service.send_invite to capture invites instead.
+os.environ["BREVO_API_KEY"] = ""
+os.environ["EMAIL_FROM"] = ""
 
 # ------- noqa: E402 -------
 import pytest
