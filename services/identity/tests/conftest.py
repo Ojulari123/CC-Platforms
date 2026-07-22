@@ -32,6 +32,9 @@ os.environ["JWT_PRIVATE_KEY_PATH"] = _priv_path
 os.environ["JWT_PUBLIC_KEY_PATH"] = _pub_path
 os.environ["ACCESS_TOKEN_EXPIRE_MINUTES"] = "15"
 os.environ["REFRESH_TOKEN_EXPIRE_DAYS"] = "7"
+# Off globally so unrelated tests can hammer /auth/* freely; the dedicated
+# rate-limit test flips limiter.enabled on for itself only.
+os.environ["RATE_LIMIT_ENABLED"] = "false"
 
 # ------- noqa: E402 -------
 import pytest

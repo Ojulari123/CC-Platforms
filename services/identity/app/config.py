@@ -11,6 +11,7 @@ class Settings(BaseSettings):
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 15
     REFRESH_TOKEN_EXPIRE_DAYS: int = 7
     CORS_ORIGINS: str = "http://localhost:3000"
+    RATE_LIMIT_ENABLED: bool = True
 
     @property
     def cors_origins_list(self) -> list[str]:

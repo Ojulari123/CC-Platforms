@@ -29,9 +29,6 @@ wire the three flows above onto it.
 
 ## Also open (larger, tackle later)
 
-- **Rate limiting** on auth endpoints — FindYourCribb uses `slowapi`
-  (5/min register, 10/min login, 3/min forgot). Not urgent for internal tools
-  but should land before we open anything to a wider audience.
 - **`GET /orgs/{id}/members`** and other org-admin endpoints once multi-user
   orgs exist (i.e. after admin-invite lands).
 - **`tv` (token_version) invalidation for downstream products** —
@@ -72,3 +69,7 @@ wire the three flows above onto it.
 - ~~Identity's own `get_current_user`~~ — shipped session 03 in
   `app/security/dependencies.py`. Decodes JWT + loads user + checks
   `is_active` + checks `tv`.
+- ~~Rate limiting on auth endpoints~~ — shipped session 03. `slowapi`, per-IP:
+  5/min register, 10/min login, 30/min refresh, 5/min change-password.
+  In-memory store (per-process); move to Redis storage when Redis lands for
+  Celery. Toggle: `RATE_LIMIT_ENABLED` (tests turn it off globally).
