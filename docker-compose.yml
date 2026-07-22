@@ -1,0 +1,43 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    # CC_ prefix on the host side so nothing else on the machine (or another
+    # project's shell exports) collides with these. Inside the container the
+    # Postgres image still needs POSTGRES_USER/PASSWORD/DB — we remap here.
+    environment:
+      POSTGRES_USER: ${CC_POSTGRES_USER:-crescent}
+      POSTGRES_PASSWORD: ${CC_POSTGRES_PASSWORD:-crescent}
+      POSTGRES_DB: ${CC_POSTGRES_DB:-crescent}
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./scripts/init-databases.sh:/docker-entrypoint-initdb.d/init-databases.sh:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${CC_POSTGRES_USER:-crescent} -d postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  identity:
+    build:
+      context: ./services/identity
+      dockerfile: Dockerfile
+    env_file:
+      - ./services/identity/.env
+    environment:
+      DATABASE_URL: postgresql+psycopg://${CC_POSTGRES_USER:-crescent}:${CC_POSTGRES_PASSWORD:-crescent}@postgres:5432/identity
+    ports:
+      - "8001:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    volumes:
+      - ./services/identity:/app
+    command: >
+      sh -c "alembic upgrade head &&
+             uvicorn app.main:app --host 0.0.0.0 --port 8000
+             --reload --reload-dir app"
+
+volumes:
+  postgres_data:

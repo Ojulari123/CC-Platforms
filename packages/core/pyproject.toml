@@ -1,0 +1,26 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "crescent-core"
+version = "0.0.1"
+description = "Shared backend helpers for Crescent products (Pulse, Forge). Never imports from any services/*."
+requires-python = ">=3.11"
+dependencies = [
+    "fastapi>=0.115,<0.120",
+    "python-jose[cryptography]>=3.3,<4.0",
+    "httpx>=0.28,<1.0",
+    "cryptography>=44.0,<46.0",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8.3,<9.0"]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["crescent_core*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra --strict-markers"
