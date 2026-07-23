@@ -78,6 +78,18 @@ in weeks 3–4.
 > new join table, a data migration, and re-deciding how report approval works.
 > Changing now is about half a day.
 
+**Who can put people on a team.** Department admins, for any team — plus the
+**manager of that team**, for their own team only. The reasoning: in Pulse the
+manager approves that team's weekly reports, so they should own who's on it
+without routing every change through an admin. Managers still can't create,
+rename or delete teams, invite people into the department, or change anyone's
+role — those stay with admins.
+
+**Two ways to join a team.** An invite carries an optional team, so someone can
+be hired straight onto Platform and land there on day one; the invite email and
+the accept page both name the team. Otherwise they join the department
+unassigned and an admin or their manager adds them afterwards.
+
 ---
 
 ## Decision 4 — Registration is bootstrap-only

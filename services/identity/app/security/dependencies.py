@@ -42,6 +42,25 @@ def get_membership(db: Session, user: User, dept_id: int) -> Membership | None:
         Membership.is_active.is_(True),
     ))
 
+def require_team_manager(dept_id: int, team_id: int, user: User = Depends(get_current_user), db: Session = Depends(get_db)) -> User:
+    """Who may change a team's roster: department admins (any team), or the
+    manager OF THAT TEAM. A manager approves their team's weekly reports in
+    Pulse, so they should own who's on it — but only theirs, and they still
+    can't create or delete teams, or invite people into the department."""
+    if user.is_platform_admin:
+        return user
+    membership = get_membership(db, user, dept_id)
+    if not membership:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Not a member of this department")
+    if membership.role == "admin":
+        return user
+    if membership.role == "manager" and membership.team_id == team_id:
+        return user
+    raise HTTPException(
+        status_code=status.HTTP_403_FORBIDDEN,
+        detail="Requires a department admin, or the manager of this team",
+    )
+
 def require_dept_role(*roles: str):
     """Factory: FastAPI dependency gating on the caller's role IN THE DEPARTMENT
     NAMED IN THE URL. `dept_id` is read from the path, so permission is always

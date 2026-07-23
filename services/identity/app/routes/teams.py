@@ -8,7 +8,7 @@ from sqlalchemy.orm import Session
 from app.db import get_db
 from app.models import User
 from app.schemas.departments import MemberResponse, TeamCreate, TeamResponse, TeamUpdate
-from app.security import require_dept_role
+from app.security import require_dept_role, require_team_manager
 from app.services import teams as team_service
 
 router = APIRouter(prefix="/departments/{dept_id}/teams", tags=["teams"])
@@ -41,11 +41,11 @@ def list_team_members(dept_id: int, team_id: int, _: User = Depends(dept_member)
     return team_service.list_team_members(db, dept_id, team_id)
 
 @router.put("/{team_id}/members/{member_user_id}", response_model=MemberResponse)
-def add_team_member(dept_id: int, team_id: int, member_user_id: int, _: User = Depends(dept_admin), db: Session = Depends(get_db)) -> MemberResponse:
+def add_team_member(dept_id: int, team_id: int, member_user_id: int, _: User = Depends(require_team_manager), db: Session = Depends(get_db)) -> MemberResponse:
     """PUT, not POST — assigning someone to a team is idempotent, so repeating
     the call lands in the same state instead of erroring."""
     return team_service.add_team_member(db, dept_id, team_id, member_user_id)
 
 @router.delete("/{team_id}/members/{member_user_id}", status_code=status.HTTP_204_NO_CONTENT)
-def remove_team_member(dept_id: int, team_id: int, member_user_id: int, _: User = Depends(dept_admin), db: Session = Depends(get_db)) -> None:
+def remove_team_member(dept_id: int, team_id: int, member_user_id: int, _: User = Depends(require_team_manager), db: Session = Depends(get_db)) -> None:
     team_service.remove_team_member(db, dept_id, team_id, member_user_id)

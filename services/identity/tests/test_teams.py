@@ -159,3 +159,69 @@ class TestTeamMembers:
         membership = client.get("/me", headers=auth(fresh)).json()["memberships"][0]
         assert membership["team_id"] == team_id
         assert membership["team_name"] == "Platform"
+
+
+class TestManagerOwnTeamRoster:
+    """A manager owns who's on THEIR team — they approve its reports in Pulse —
+    but nothing beyond it."""
+
+    def _manager_of(self, client, dept, admin, team_id, registered_user, invite_user, email="mgr@example.com"):
+        mgr = invite_user(registered_user["tokens"], dept, email, "manager")
+        mgr_id = client.get("/me", headers=auth(mgr)).json()["id"]
+        client.put(f"/departments/{dept}/teams/{team_id}/members/{mgr_id}", headers=admin)
+        # Re-login so the token carries the new team assignment.
+        return client.post("/auth/login", json={"email": email, "password": "Test123!password"}).json()
+
+    def test_manager_adds_someone_to_their_own_team(self, client, dept, admin, registered_user, invite_user, engineer_user):
+        team_id = _team(client, dept, admin, "Platform")
+        mgr = self._manager_of(client, dept, admin, team_id, registered_user, invite_user)
+        eng_id = client.get("/me", headers=auth(engineer_user)).json()["id"]
+
+        r = client.put(f"/departments/{dept}/teams/{team_id}/members/{eng_id}", headers=auth(mgr))
+        assert r.status_code == 200
+        assert r.json()["team_id"] == team_id
+
+    def test_manager_removes_someone_from_their_own_team(self, client, dept, admin, registered_user, invite_user, engineer_user):
+        team_id = _team(client, dept, admin, "Platform")
+        mgr = self._manager_of(client, dept, admin, team_id, registered_user, invite_user)
+        eng_id = client.get("/me", headers=auth(engineer_user)).json()["id"]
+        client.put(f"/departments/{dept}/teams/{team_id}/members/{eng_id}", headers=admin)
+
+        assert client.delete(f"/departments/{dept}/teams/{team_id}/members/{eng_id}", headers=auth(mgr)).status_code == 204
+
+    def test_manager_cannot_touch_another_team(self, client, dept, admin, registered_user, invite_user, engineer_user):
+        mine = _team(client, dept, admin, "Platform")
+        other = _team(client, dept, admin, "Data Infra")
+        mgr = self._manager_of(client, dept, admin, mine, registered_user, invite_user)
+        eng_id = client.get("/me", headers=auth(engineer_user)).json()["id"]
+
+        r = client.put(f"/departments/{dept}/teams/{other}/members/{eng_id}", headers=auth(mgr))
+        assert r.status_code == 403
+        assert "manager of this team" in r.json()["detail"]
+
+    def test_manager_without_a_team_cannot_manage_any(self, client, dept, admin, registered_user, invite_user, engineer_user):
+        team_id = _team(client, dept, admin, "Platform")
+        unassigned = invite_user(registered_user["tokens"], dept, "loose@example.com", "manager")
+        eng_id = client.get("/me", headers=auth(engineer_user)).json()["id"]
+        assert client.put(f"/departments/{dept}/teams/{team_id}/members/{eng_id}", headers=auth(unassigned)).status_code == 403
+
+    def test_manager_still_cannot_create_rename_or_delete_teams(self, client, dept, admin, registered_user, invite_user):
+        team_id = _team(client, dept, admin, "Platform")
+        mgr = self._manager_of(client, dept, admin, team_id, registered_user, invite_user)
+
+        assert client.post(f"/departments/{dept}/teams", json={"name": "New"}, headers=auth(mgr)).status_code == 403
+        assert client.patch(f"/departments/{dept}/teams/{team_id}", json={"name": "Renamed"}, headers=auth(mgr)).status_code == 403
+        assert client.delete(f"/departments/{dept}/teams/{team_id}", headers=auth(mgr)).status_code == 403
+
+    def test_manager_still_cannot_invite_or_change_roles(self, client, dept, admin, registered_user, invite_user, engineer_user):
+        team_id = _team(client, dept, admin, "Platform")
+        mgr = self._manager_of(client, dept, admin, team_id, registered_user, invite_user)
+        eng_id = client.get("/me", headers=auth(engineer_user)).json()["id"]
+
+        assert client.post(f"/departments/{dept}/invites", json={"email": "x@example.com", "role": "engineer"}, headers=auth(mgr)).status_code == 403
+        assert client.patch(f"/departments/{dept}/members/{eng_id}", json={"role": "manager"}, headers=auth(mgr)).status_code == 403
+
+    def test_engineer_still_cannot_manage_rosters(self, client, dept, admin, engineer_user):
+        team_id = _team(client, dept, admin, "Platform")
+        eng_id = client.get("/me", headers=auth(engineer_user)).json()["id"]
+        assert client.put(f"/departments/{dept}/teams/{team_id}/members/{eng_id}", headers=auth(engineer_user)).status_code == 403
