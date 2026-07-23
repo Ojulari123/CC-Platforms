@@ -29,8 +29,10 @@ def create_invite(db: Session, dept_id: int, inviter: User, payload: InviteCreat
     if existing_user and db.scalar(select(Membership).where(Membership.user_id == existing_user.id, Membership.dept_id == dept_id)):
         raise HTTPException(status_code=400, detail="That person is already a member of this department")
 
+    team = None
     if payload.team_id is not None:
-        if not db.scalar(select(Team).where(Team.id == payload.team_id, Team.dept_id == dept_id)):
+        team = db.scalar(select(Team).where(Team.id == payload.team_id, Team.dept_id == dept_id))
+        if not team:
             raise HTTPException(status_code=400, detail="Team does not belong to this department")
 
     # One live invite per (department, email) — replace any pending one.
@@ -51,7 +53,13 @@ def create_invite(db: Session, dept_id: int, inviter: User, payload: InviteCreat
     db.flush()
 
     try:
-        email_service.send_invite(to=invited_email, dept_name=department.name, role=payload.role, raw_token=raw_token)
+        email_service.send_invite(
+            to=invited_email,
+            dept_name=department.name,
+            team_name=team.name if team else None,
+            role=payload.role,
+            raw_token=raw_token,
+        )
     except email_service.EmailNotConfigured:
         raise HTTPException(status_code=503, detail="Email is not configured on the server (BREVO_API_KEY / EMAIL_FROM)")
     except email_service.EmailSendError:
@@ -96,10 +104,12 @@ def preview_invite(db: Session, raw_token: str) -> InvitePreview:
     whether to ask for a password, before anything is committed."""
     invite = _load_valid_invite(db, raw_token)
     department = db.get(Department, invite.dept_id)
+    team = db.get(Team, invite.team_id) if invite.team_id else None
     existing_user = db.scalar(select(User).where(User.email == invite.email))
     return InvitePreview(
         email=invite.email,
         dept_name=department.name if department else "",
+        team_name=team.name if team else None,
         role=invite.role,
         needs_account=existing_user is None,
     )

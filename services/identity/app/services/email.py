@@ -41,15 +41,22 @@ def send(to: str, subject: str, html: str) -> None:
         logger.error("Brevo rejected email to %s: HTTP %s — %s", to, resp.status_code, resp.text[:500])
         raise EmailSendError(f"Provider rejected the email (HTTP {resp.status_code})")
 
-def send_invite(to: str, dept_name: str, role: str, raw_token: str) -> None:
+def send_invite(to: str, dept_name: str, role: str, raw_token: str, team_name: str | None = None) -> None:
     link = f"{settings.FRONTEND_URL}/invites/accept?token={raw_token}"
+    where = f"{dept_name} — {team_name}" if team_name else dept_name
+    placement = (
+        f"<p>You've been invited to join the <strong>{team_name}</strong> team "
+        f"in <strong>{dept_name}</strong> as <strong>{role}</strong>.</p>"
+        if team_name else
+        f"<p>You've been invited to join <strong>{dept_name}</strong> as "
+        f"<strong>{role}</strong>.</p>"
+    )
     send(
         to=to,
-        subject=f"You've been invited to {dept_name} on CypherCrescent Platforms",
+        subject=f"You've been invited to {where} on CypherCrescent Platforms",
         html=(
-            f"<p>You've been invited to join <strong>{dept_name}</strong> as "
-            f"<strong>{role}</strong>.</p>"
-            f'<p><a href="{link}">Accept your invitation</a> '
+            placement
+            + f'<p><a href="{link}">Accept your invitation</a> '
             f"(link expires in {settings.INVITE_EXPIRE_DAYS} days).</p>"
             f"<p>If you weren't expecting this, you can ignore this email.</p>"
         ),

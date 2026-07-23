@@ -70,6 +70,7 @@ class InvitePreview(BaseModel):
     already told in their email."""
     email: EmailStr
     dept_name: str
+    team_name: str | None = None
     role: str
     needs_account: bool  # False when the invitee already has an account
 

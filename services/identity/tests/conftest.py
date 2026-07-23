@@ -89,8 +89,11 @@ def sent_emails(monkeypatch):
     raw token, which is the only place it ever exists outside the email."""
     captured = []
 
-    def fake_send_invite(to, dept_name, role, raw_token):
-        captured.append({"to": to, "dept_name": dept_name, "role": role, "raw_token": raw_token})
+    def fake_send_invite(to, dept_name, role, raw_token, team_name=None):
+        captured.append({
+            "to": to, "dept_name": dept_name, "team_name": team_name,
+            "role": role, "raw_token": raw_token,
+        })
 
     monkeypatch.setattr(email_service, "send_invite", fake_send_invite)
     return captured

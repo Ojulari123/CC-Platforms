@@ -188,3 +188,49 @@ class TestInvitePreview:
 
     def test_preview_rejects_bogus_token(self, client):
         assert client.get("/invites/preview?token=nonsense").status_code == 400
+
+
+class TestInviteStraightOntoATeam:
+    """You can hire someone into a team, not just a department — the invite
+    carries an optional team_id and the invitee lands on it already assigned."""
+
+    def test_email_and_preview_name_the_team(self, client, registered_user, sent_emails):
+        tokens, dept_id = registered_user["tokens"], registered_user["dept_id"]
+        team_id = client.post(f"/departments/{dept_id}/teams", json={"name": "Platform"}, headers=auth(tokens)).json()["id"]
+        _invite(client, tokens, dept_id, team_id=team_id)
+
+        assert sent_emails[0]["team_name"] == "Platform"
+        preview = client.get(f"/invites/preview?token={sent_emails[0]['raw_token']}").json()
+        assert preview["team_name"] == "Platform"
+        assert preview["dept_name"] == "Engineering"
+
+    def test_no_team_means_no_team_name(self, client, registered_user, sent_emails):
+        _invite(client, registered_user["tokens"], registered_user["dept_id"])
+        assert sent_emails[0]["team_name"] is None
+        preview = client.get(f"/invites/preview?token={sent_emails[0]['raw_token']}").json()
+        assert preview["team_name"] is None
+
+    def test_invitee_shows_up_on_the_team_roster(self, client, registered_user, sent_emails):
+        tokens, dept_id = registered_user["tokens"], registered_user["dept_id"]
+        team_id = client.post(f"/departments/{dept_id}/teams", json={"name": "Platform"}, headers=auth(tokens)).json()["id"]
+        _invite(client, tokens, dept_id, team_id=team_id)
+        accepted = _accept(client, sent_emails[0]["raw_token"])
+        assert accepted.status_code == 200
+
+        roster = client.get(f"/departments/{dept_id}/teams/{team_id}/members", headers=auth(tokens)).json()
+        assert [m["email"] for m in roster] == ["dami@example.com"]
+
+    def test_unassigned_invitee_can_be_added_to_a_team_afterwards(self, client, registered_user, sent_emails):
+        """The other path: join the department first, get a team later."""
+        tokens, dept_id = registered_user["tokens"], registered_user["dept_id"]
+        _invite(client, tokens, dept_id)
+        accepted = _accept(client, sent_emails[0]["raw_token"]).json()
+        me = client.get("/me", headers=auth(accepted)).json()
+        user_id = me["id"]
+        assert me["memberships"][0]["team_id"] is None
+
+        team_id = client.post(f"/departments/{dept_id}/teams", json={"name": "Platform"}, headers=auth(tokens)).json()["id"]
+        assert client.put(f"/departments/{dept_id}/teams/{team_id}/members/{user_id}", headers=auth(tokens)).status_code == 200
+
+        fresh = client.post("/auth/login", json={"email": "dami@example.com", "password": "Test123!password"}).json()
+        assert client.get("/me", headers=auth(fresh)).json()["memberships"][0]["team_name"] == "Platform"
