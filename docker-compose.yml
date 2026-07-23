@@ -19,12 +19,30 @@ services:
       timeout: 5s
       retries: 5
 
+  # Browse the local databases at http://localhost:8080 (System: PostgreSQL,
+  # Server: postgres, user/password from .env, Database: identity).
+  # Dev convenience only — never expose this anywhere real.
+  adminer:
+    image: adminer:5
+    ports:
+      - "8080:8080"
+    environment:
+      ADMINER_DEFAULT_SERVER: postgres
+    depends_on:
+      postgres:
+        condition: service_healthy
+
   identity:
     build:
       context: ./services/identity
       dockerfile: Dockerfile
     env_file:
       - ./services/identity/.env
+    # This OVERRIDES the DATABASE_URL in services/identity/.env — in Compose,
+    # `environment:` beats `env_file:`. So in Docker, identity always talks to
+    # the local sandbox Postgres above, never Neon. That's deliberate: dev is
+    # where you break things. Comment this line out to run against the .env
+    # (Neon) URL instead.
     environment:
       DATABASE_URL: postgresql+psycopg://${CC_POSTGRES_USER:-crescent}:${CC_POSTGRES_PASSWORD:-crescent}@postgres:5432/identity
     ports:

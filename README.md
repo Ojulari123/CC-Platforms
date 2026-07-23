@@ -98,12 +98,37 @@ Interactive versions at `/docs`. In Swagger's **Authorize** box paste the raw
 token only (starts `eyJ`) — it adds the `Bearer ` prefix itself, and pasting it
 twice gives `401 Invalid token`.
 
-## Where's my data?
+## Two databases — which is which
+
+| | Docker Postgres | Neon |
+|---|---|---|
+| Where | your laptop, via `docker compose up` | hosted, on the internet |
+| Job | **everyday development** — wipe and rebuild freely | the copy that survives: deploys, demos, anything not on your laptop |
+| Used when | always, right now | from Week 8 (deployment), or whenever something off your machine needs the data |
+| Safe to destroy | yes, that's the point | no |
 
 Under Docker Compose, `DATABASE_URL` is **overridden** to the local sandbox
-Postgres container — `environment:` beats `env_file:`, so the Neon URL in
-`services/identity/.env` is ignored while running in Docker. That's deliberate:
-dev testing never touches Neon. To see what you just wrote:
+Postgres — in Compose, `environment:` beats `env_file:`, so the Neon URL in
+`services/identity/.env` is ignored while running in Docker. Deliberate: dev is
+where you run half-finished migrations and create junk users, and none of that
+should land in the database you later demo from.
+
+**To run against Neon instead**, comment out the `DATABASE_URL:` line under
+`identity:` in `docker-compose.yml` and `docker compose up -d --build identity`.
+The `.env` (Neon) URL then applies.
+
+## Seeing your data
+
+Browser: **http://localhost:8080** (Adminer, starts with the stack).
+
+| field | value |
+|---|---|
+| System | PostgreSQL |
+| Server | `postgres` |
+| Username / Password | `CC_POSTGRES_USER` / `CC_POSTGRES_PASSWORD` from your root `.env` |
+| Database | `identity` |
+
+Or from the terminal:
 
 ```bash
 docker compose exec postgres psql -U admin -d identity -c "select id, email from users;"
