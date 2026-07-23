@@ -8,6 +8,10 @@ def _register(client, email="bob@example.com", password="Test123!password", depa
     })
 
 class TestRegister:
+    """Registration is BOOTSTRAP ONLY — the first call sets up the platform
+    admin and the first department, then the door closes and everyone else
+    arrives by invite. See docs/decisions/2026-07-23-identity-structure.md."""
+
     def test_creates_user_and_returns_token_pair(self, client):
         r = _register(client)
         assert r.status_code == 201
@@ -19,18 +23,30 @@ class TestRegister:
         assert body["user"]["email"] == "bob@example.com"
         assert body["user"]["first_name"] == "Bob"
 
-    def test_duplicate_email_fails(self, client):
+    def test_first_user_becomes_platform_admin_and_department_admin(self, client):
+        r = _register(client)
+        me = client.get("/me", headers={"Authorization": f"Bearer {r.json()['access_token']}"}).json()
+        assert me["is_platform_admin"] is True
+        assert me["memberships"][0]["role"] == "admin"
+        assert me["memberships"][0]["dept_name"] == "Bob Co"
+
+    def test_second_registration_is_closed(self, client):
+        _register(client)
+        r = _register(client, email="someone-else@example.com")
+        assert r.status_code == 403
+        assert "closed" in r.json()["detail"].lower()
+
+    def test_closed_even_for_the_same_email(self, client):
         _register(client)
         r = _register(client)
-        assert r.status_code == 400
-        assert "already registered" in r.json()["detail"].lower()
+        assert r.status_code == 403
 
     def test_email_is_lowercased(self, client):
         r = _register(client, email="Bob@Example.COM")
         assert r.status_code == 201
         assert r.json()["user"]["email"] == "bob@example.com"
 
-    def test_weak_password_rejected(self, client):
+    def test_weak_password_rejected_on_bootstrap(self, client):
         r = client.post("/auth/register", json={
             "email": "weak@example.com",
             "password": "weakpass",
@@ -40,7 +56,7 @@ class TestRegister:
         })
         assert r.status_code == 400
 
-    def test_invalid_email_rejected(self, client):
+    def test_invalid_email_rejected_on_bootstrap(self, client):
         r = client.post("/auth/register", json={
             "email": "not-an-email",
             "password": "Test123!password",

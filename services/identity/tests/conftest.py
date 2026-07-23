@@ -96,9 +96,16 @@ def sent_emails(monkeypatch):
     return captured
 
 
+def auth(tokens: dict) -> dict:
+    """Authorization header from any token-pair response."""
+    return {"Authorization": f"Bearer {tokens['access_token']}"}
+
+
 @pytest.fixture
 def registered_user(client: TestClient) -> dict:
-    """Register a user and return {'tokens': <register response>, 'password': ...}."""
+    """The bootstrap user: first registration, so platform admin + admin of the
+    first department ('Engineering'). Registration is closed after this, which
+    is why every other user in these tests arrives by invite."""
     password = "Test123!password"
     resp = client.post(
         "/auth/register",
@@ -111,20 +118,45 @@ def registered_user(client: TestClient) -> dict:
         },
     )
     assert resp.status_code == 201, resp.text
-    return {"tokens": resp.json(), "password": password, "email": "alice@example.com"}
+    tokens = resp.json()
+    dept_id = client.get("/me", headers=auth(tokens)).json()["memberships"][0]["dept_id"]
+    return {"tokens": tokens, "password": password, "email": "alice@example.com", "dept_id": dept_id}
 
 
 @pytest.fixture
-def engineer_user(client: TestClient, registered_user: dict, sent_emails: list) -> dict:
+def invite_user(client: TestClient, sent_emails: list):
+    """Invite someone into a department and accept it — returns their token pair.
+    The only way to add people now that self-signup is closed."""
+
+    def _invite(inviter_tokens: dict, dept_id: int, email: str, role: str = "engineer", team_id: int | None = None) -> dict:
+        r = client.post(
+            f"/departments/{dept_id}/invites",
+            json={"email": email, "role": role, "team_id": team_id},
+            headers=auth(inviter_tokens),
+        )
+        assert r.status_code == 201, r.text
+        resp = client.post("/invites/accept", json={
+            "token": sent_emails[-1]["raw_token"],
+            "first_name": email.split("@")[0].title(),
+            "last_name": "Tester",
+            "password": "Test123!password",
+        })
+        assert resp.status_code == 200, resp.text
+        return resp.json()
+
+    return _invite
+
+
+@pytest.fixture
+def engineer_user(client: TestClient, registered_user: dict, invite_user) -> dict:
     """A second user in the SAME department as registered_user, role=engineer.
-    Used to prove role gating — the only way to get one is via an invite."""
-    admin_auth = {"Authorization": f"Bearer {registered_user['tokens']['access_token']}"}
-    client.post("/dept/invites", json={"email": "eng@example.com", "role": "engineer"}, headers=admin_auth)
-    resp = client.post("/invites/accept", json={
-        "token": sent_emails[-1]["raw_token"],
-        "first_name": "Enid",
-        "last_name": "Engineer",
-        "password": "Test123!password",
-    })
-    assert resp.status_code == 200, resp.text
-    return resp.json()
+    Not a platform admin — this is the fixture that proves role gating bites."""
+    return invite_user(registered_user["tokens"], registered_user["dept_id"], "eng@example.com", "engineer")
+
+
+@pytest.fixture
+def second_dept(client: TestClient, registered_user: dict) -> int:
+    """A second department, created by the platform admin. Returns its id."""
+    r = client.post("/departments", json={"name": "Data"}, headers=auth(registered_user["tokens"]))
+    assert r.status_code == 201, r.text
+    return r.json()["id"]

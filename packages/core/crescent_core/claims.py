@@ -2,23 +2,62 @@ from dataclasses import dataclass
 from typing import Any
 
 @dataclass(frozen=True)
+class DeptMembership:
+    """One department the caller belongs to, and what they are in it."""
+    dept_id: int
+    team_id: int | None
+    role: str
+
+@dataclass(frozen=True)
 class TokenClaims:
     """What products get after verifying an access token. Everything they need to
-    make an authorization decision without touching identity's DB."""
+    make an authorization decision without touching identity's DB.
+
+    Memberships are a list because a person can belong to several departments
+    with a different role in each — ask `role_in(dept_id)`, never assume one."""
     user_id: int
     email: str
-    dept_id: int | None
-    role: str | None
+    memberships: tuple[DeptMembership, ...]
+    is_platform_admin: bool
     token_version: int
     raw: dict[str, Any]
 
+    def role_in(self, dept_id: int) -> str | None:
+        """The caller's role in one department, or None if they're not in it."""
+        for m in self.memberships:
+            if m.dept_id == dept_id:
+                return m.role
+        return None
+
+    def is_member_of(self, dept_id: int) -> bool:
+        return self.role_in(dept_id) is not None
+
+    def team_in(self, dept_id: int) -> int | None:
+        for m in self.memberships:
+            if m.dept_id == dept_id:
+                return m.team_id
+        return None
+
+    @property
+    def dept_ids(self) -> tuple[int, ...]:
+        return tuple(m.dept_id for m in self.memberships)
+
     @classmethod
     def from_payload(cls, payload: dict[str, Any]) -> "TokenClaims":
+        raw_memberships = payload.get("memberships") or []
         return cls(
             user_id=int(payload["sub"]),
             email=payload.get("email", ""),
-            dept_id=payload.get("dept_id"),
-            role=payload.get("role"),
+            memberships=tuple(
+                DeptMembership(
+                    dept_id=int(m["dept_id"]),
+                    team_id=m.get("team_id"),
+                    role=m.get("role", ""),
+                )
+                for m in raw_memberships
+                if m.get("dept_id") is not None
+            ),
+            is_platform_admin=bool(payload.get("is_platform_admin", False)),
             token_version=int(payload.get("tv", 0)),
             raw=payload,
         )

@@ -57,8 +57,8 @@ def sign_token(rsa_keypair):
         payload = {
             "sub": "42",
             "email": "test@example.com",
-            "dept_id": 1,
-            "role": "engineer",
+            "memberships": [{"dept_id": 1, "team_id": None, "role": "engineer"}],
+            "is_platform_admin": False,
             "tv": 0,
             "token_type": "access",
             "iss": ISSUER,

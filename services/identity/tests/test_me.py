@@ -1,4 +1,4 @@
-def test_returns_current_user_with_active_department(client, registered_user):
+def test_returns_current_user_with_memberships(client, registered_user):
     token = registered_user["tokens"]["access_token"]
     r = client.get("/me", headers={"Authorization": f"Bearer {token}"})
     assert r.status_code == 200
@@ -7,9 +7,13 @@ def test_returns_current_user_with_active_department(client, registered_user):
     assert body["first_name"] == "Alice"
     assert body["email_verified"] is False
     assert body["is_active"] is True
-    assert body["active_role"] == "admin"
-    assert body["active_dept_name"] == "Engineering"
-    assert body["active_dept_id"]
+    assert body["is_platform_admin"] is True  # bootstrap user
+    assert len(body["memberships"]) == 1
+    membership = body["memberships"][0]
+    assert membership["role"] == "admin"
+    assert membership["dept_name"] == "Engineering"
+    assert membership["dept_id"]
+    assert membership["team_id"] is None
 
 def test_without_auth_header_401(client):
     r = client.get("/me")

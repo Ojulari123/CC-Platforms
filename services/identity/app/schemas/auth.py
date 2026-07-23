@@ -32,8 +32,19 @@ class UserResponse(BaseModel):
     email_verified: bool
     created_at: datetime
 
+class MembershipResponse(BaseModel):
+    dept_id: int
+    dept_name: str
+    team_id: int | None = None
+    team_name: str | None = None
+    role: str
+
 class UserMeResponse(BaseModel):
-    """/me — full identity view plus the caller's currently active department + role."""
+    """/me — full identity view plus EVERY department the caller belongs to.
+
+    Deliberately a list, not one "active" department: a person can be an admin
+    in Engineering and an engineer in Data, and picking one for them silently
+    locked them out of the other."""
     id: int
     email: EmailStr
     first_name: str
@@ -41,10 +52,9 @@ class UserMeResponse(BaseModel):
     avatar_url: str | None = None
     email_verified: bool
     is_active: bool
+    is_platform_admin: bool = False
     created_at: datetime
-    active_dept_id: int | None = None
-    active_dept_name: str | None = None
-    active_role: str | None = None
+    memberships: list[MembershipResponse] = []
 
 class ProfileUpdate(BaseModel):
     """Fields a user may change about themselves. Email is deliberately absent —

@@ -30,23 +30,35 @@ def current_user_dep(jwks_client: JWKSClient, issuer: str) -> Callable[..., Toke
 
     return _current_user
 
-def require_role(current_user: Callable[..., TokenClaims], *allowed_roles: str) -> Callable[..., TokenClaims]:
-    """Factory: gate an endpoint on the caller's role claim. Wraps `current_user`
-    so FastAPI resolves auth + role in one chained dependency.
+def require_dept_role(current_user: Callable[..., TokenClaims], *allowed_roles: str) -> Callable[..., TokenClaims]:
+    """Factory: gate an endpoint on the caller's role IN THE DEPARTMENT NAMED IN
+    THE URL. `dept_id` is read from the path, so the check is always against the
+    department actually being acted on — someone who is a manager in Engineering
+    doesn't get manager rights in Data.
+
+    Platform admins pass every check. Pass no roles to require membership only.
 
     Example (in Pulse or Forge, after wiring up current_user at startup):
 
         jwks = JWKSClient("http://identity:8000/.well-known/jwks.json")
         current_user = current_user_dep(jwks, issuer="cyphercrescent-identity")
-        manager_only = require_role(current_user, "manager", "admin")
+        manager_only = require_dept_role(current_user, "manager", "admin")
 
-        @app.post("/reports/{id}/approve")
-        def approve(user: TokenClaims = Depends(manager_only)):
+        @app.post("/departments/{dept_id}/reports/{id}/approve")
+        def approve(dept_id: int, user: TokenClaims = Depends(manager_only)):
             ...
     """
 
-    def _check(user: TokenClaims = Depends(current_user)) -> TokenClaims:
-        if user.role not in allowed_roles:
+    def _check(dept_id: int, user: TokenClaims = Depends(current_user)) -> TokenClaims:
+        if user.is_platform_admin:
+            return user
+        role = user.role_in(dept_id)
+        if role is None:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Not a member of this department",
+            )
+        if allowed_roles and role not in allowed_roles:
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail=f"Requires one of roles: {', '.join(allowed_roles)}",

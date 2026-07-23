@@ -23,14 +23,19 @@ def _unique_dept_slug(db: Session, base: str) -> str:
         slug = f"{base}-{n}"
     return slug
 
-def _issue_token_pair(db: Session, user: User, membership: Membership | None, family_id: str | None = None) -> tuple[str, str]:
+def _membership_claims(db: Session, user_id: int) -> list[dict]:
+    """Every active membership, in a shape small enough to sit in a JWT."""
+    rows = db.scalars(select(Membership).where(Membership.user_id == user_id, Membership.is_active.is_(True)))
+    return [{"dept_id": m.dept_id, "team_id": m.team_id, "role": m.role} for m in rows]
+
+def _issue_token_pair(db: Session, user: User, family_id: str | None = None) -> tuple[str, str]:
     """Create an access + refresh pair. Returns (access_token, raw_refresh_token).
     Stores only the SHA-256 hash of the refresh token."""
     access = create_access_token(
         user_id=user.id,
         email=user.email,
-        dept_id=membership.dept_id if membership else None,
-        role=membership.role if membership else None,
+        memberships=_membership_claims(db, user.id),
+        is_platform_admin=user.is_platform_admin,
         token_version=user.token_version,
     )
     raw_refresh = secrets.token_urlsafe(64)
@@ -51,16 +56,24 @@ def _build_pair_response(access: str, refresh: str, user: User) -> TokenPair:
     )
 
 def register_user(db: Session, payload: RegisterRequest) -> TokenPair:
-    validate_password(payload.password)
+    """Bootstrap only. CypherCrescent is an in-house tool, so open self-signup
+    would let anyone create themselves an account and a department. The FIRST
+    registration sets up the platform admin and the first department; after
+    that the door is closed and people join by invite."""
+    if db.scalar(select(User.id).limit(1)) is not None:
+        raise HTTPException(
+            status_code=403,
+            detail="Registration is closed. Ask an admin to invite you.",
+        )
 
-    if db.scalar(select(User).where(User.email == payload.email.lower())):
-        raise HTTPException(status_code=400, detail="Email already registered")
+    validate_password(payload.password)
 
     user = User(
         email=payload.email.lower(),
         password_hash=hash_password(payload.password),
         first_name=payload.first_name,
         last_name=payload.last_name,
+        is_platform_admin=True,
     )
     db.add(user)
     db.flush()
@@ -69,11 +82,10 @@ def register_user(db: Session, payload: RegisterRequest) -> TokenPair:
     db.add(department)
     db.flush()
 
-    membership = Membership(user_id=user.id, dept_id=department.id, role="admin")
-    db.add(membership)
+    db.add(Membership(user_id=user.id, dept_id=department.id, role="admin"))
     db.flush()
 
-    access, refresh = _issue_token_pair(db, user, membership)
+    access, refresh = _issue_token_pair(db, user)
     db.commit()
     db.refresh(user)
     return _build_pair_response(access, refresh, user)
@@ -85,8 +97,7 @@ def login_user(db: Session, email: str, password: str) -> TokenPair:
     if not user.is_active:
         raise HTTPException(status_code=403, detail="Account is deactivated")
 
-    membership = db.scalar(select(Membership).where(Membership.user_id == user.id, Membership.is_active.is_(True)))
-    access, refresh = _issue_token_pair(db, user, membership)
+    access, refresh = _issue_token_pair(db, user)
     db.commit()
     return _build_pair_response(access, refresh, user)
 
@@ -117,10 +128,8 @@ def rotate_refresh_token(db: Session, raw_token: str) -> TokenPair:
         db.commit()
         raise HTTPException(status_code=401, detail="User not available")
 
-    membership = db.scalar(select(Membership).where(Membership.user_id == user.id, Membership.is_active.is_(True)))
-
     stored.is_revoked = True
-    access, new_refresh = _issue_token_pair(db, user, membership, family_id=stored.family_id)
+    access, new_refresh = _issue_token_pair(db, user, family_id=stored.family_id)
     stored.replaced_by = _hash_refresh(new_refresh)
     db.commit()
     return _build_pair_response(access, new_refresh, user)
@@ -153,8 +162,7 @@ def change_password(db: Session, user: User, current_password: str, new_password
     user.token_version = user.token_version + 1
     db.flush()
 
-    membership = db.scalar(select(Membership).where(Membership.user_id == user.id, Membership.is_active.is_(True)))
-    access, refresh = _issue_token_pair(db, user, membership)
+    access, refresh = _issue_token_pair(db, user)
     db.commit()
     db.refresh(user)
     return _build_pair_response(access, refresh, user)

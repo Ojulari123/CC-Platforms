@@ -8,8 +8,9 @@ def test_valid_token_returns_claims(jwks_client, sign_token):
     claims = verify_access_token(token, jwks_client, issuer=ISSUER)
     assert claims.user_id == 42
     assert claims.email == "test@example.com"
-    assert claims.dept_id == 1
-    assert claims.role == "engineer"
+    assert claims.role_in(1) == "engineer"
+    assert claims.dept_ids == (1,)
+    assert claims.is_platform_admin is False
     assert claims.token_version == 0
     assert claims.raw["jti"]
 

@@ -4,15 +4,18 @@ from pydantic import BaseModel, ConfigDict, EmailStr, Field
 
 Role = Literal["admin", "manager", "engineer"]
 
+class DepartmentCreate(BaseModel):
+    name: str = Field(min_length=1, max_length=200)
+
+class DepartmentUpdate(BaseModel):
+    name: str = Field(min_length=1, max_length=200)
+
 class DepartmentResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     id: int
     name: str
     slug: str
-
-class DepartmentUpdate(BaseModel):
-    name: str = Field(min_length=1, max_length=200)
 
 class TeamCreate(BaseModel):
     name: str = Field(min_length=1, max_length=200)
@@ -76,3 +79,12 @@ class InviteAccept(BaseModel):
     first_name: str | None = Field(default=None, max_length=100)
     last_name: str | None = Field(default=None, max_length=100)
     password: str | None = Field(default=None, max_length=128)
+
+class PlatformAdminResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    email: EmailStr
+    first_name: str
+    last_name: str
+    is_platform_admin: bool

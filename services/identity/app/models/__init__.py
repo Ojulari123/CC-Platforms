@@ -15,6 +15,10 @@ class User(Base):
     avatar_url = Column(String(500), nullable=True)
     is_active = Column(Boolean, nullable=False, server_default="true", default=True)
     email_verified = Column(Boolean, nullable=False, server_default="false", default=False)
+    # Platform admin = runs CypherCrescent's whole workspace: creates departments
+    # and can administer any of them. Distinct from the per-department "admin"
+    # role on Membership, which only covers that one department.
+    is_platform_admin = Column(Boolean, nullable=False, server_default="false", default=False)
     token_version = Column(Integer, nullable=False, server_default="0", default=0)
     created_at = Column(TIMESTAMP(timezone=True), server_default=func.now(), nullable=False)
     updated_at = Column(TIMESTAMP(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)

@@ -124,12 +124,11 @@ def accept_invite(db: Session, payload: InviteAccept) -> TokenPair:
     if not user.is_active:
         raise HTTPException(status_code=403, detail="Account is deactivated")
 
-    membership = Membership(user_id=user.id, dept_id=invite.dept_id, team_id=invite.team_id, role=invite.role)
-    db.add(membership)
+    db.add(Membership(user_id=user.id, dept_id=invite.dept_id, team_id=invite.team_id, role=invite.role))
     db.flush()
 
     invite.accepted_at = datetime.now(timezone.utc)
-    access, refresh = _issue_token_pair(db, user, membership)
+    access, refresh = _issue_token_pair(db, user)
     db.commit()
     db.refresh(user)
     return _build_pair_response(access, refresh, user)

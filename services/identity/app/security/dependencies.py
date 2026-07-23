@@ -28,27 +28,42 @@ def get_current_user(creds: HTTPAuthorizationCredentials | None = Depends(_beare
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Session revoked. Please log in again.", headers={"WWW-Authenticate": "Bearer"})
     return user
 
-def get_current_membership(user: User = Depends(get_current_user), db: Session = Depends(get_db)) -> Membership:
-    """The caller's active department membership — carries dept_id and role.
-    Callers never pass a dept_id: it comes from who they are, so there's no way
-    to aim a request at a department you don't belong to."""
-    membership = db.scalar(select(Membership).where(Membership.user_id == user.id, Membership.is_active.is_(True)))
-    if not membership:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="You do not belong to a department yet")
-    return membership
+def require_platform_admin(user: User = Depends(get_current_user)) -> User:
+    """Runs the whole CypherCrescent workspace — creates departments, can
+    administer any of them, and grants platform admin to others."""
+    if not user.is_platform_admin:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Requires a platform administrator")
+    return user
 
-def require_role(*roles: str):
-    """Factory: FastAPI dependency that requires the caller's department role to
-    be one of `roles`. Yields the membership so routes get dept_id for free.
+def get_membership(db: Session, user: User, dept_id: int) -> Membership | None:
+    return db.scalar(select(Membership).where(
+        Membership.user_id == user.id,
+        Membership.dept_id == dept_id,
+        Membership.is_active.is_(True),
+    ))
 
-        admin_only = require_role("admin")
+def require_dept_role(*roles: str):
+    """Factory: FastAPI dependency gating on the caller's role IN THE DEPARTMENT
+    NAMED IN THE URL. `dept_id` is read from the path, so permission is always
+    evaluated against the department actually being acted on — a person can be
+    an admin in one department and an engineer in another without either
+    leaking into the other.
 
-        @router.post("/teams")
-        def create(m: Membership = Depends(admin_only)): ..."""
+    Platform admins pass every check. Pass no roles to require membership only.
 
-    def _check(membership: Membership = Depends(get_current_membership)) -> Membership:
-        if membership.role not in roles:
+        admin_only = require_dept_role("admin")
+
+        @router.patch("/departments/{dept_id}")
+        def rename(dept_id: int, _=Depends(admin_only)): ..."""
+
+    def _check(dept_id: int, user: User = Depends(get_current_user), db: Session = Depends(get_db)) -> User:
+        if user.is_platform_admin:
+            return user
+        membership = get_membership(db, user, dept_id)
+        if not membership:
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Not a member of this department")
+        if roles and membership.role not in roles:
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=f"Requires one of roles: {', '.join(roles)}")
-        return membership
+        return user
 
     return _check
