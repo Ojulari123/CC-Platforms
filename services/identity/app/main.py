@@ -25,6 +25,7 @@ app.include_router(auth.router)
 app.include_router(me.router)
 app.include_router(departments.router)
 app.include_router(teams.router)
+app.include_router(teams.flat_router)
 app.include_router(platform.router)
 app.include_router(invites.router)
 

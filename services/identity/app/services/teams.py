@@ -7,10 +7,10 @@ across teams, this becomes a join table; see
 docs/decisions/2026-07-23-identity-structure.md."""
 import re
 from fastapi import HTTPException
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
-from app.models import Membership, Team, User
-from app.schemas.departments import MemberResponse, TeamCreate, TeamUpdate
+from app.models import Department, Membership, Team, User
+from app.schemas.departments import MemberResponse, TeamCreate, TeamListItem, TeamUpdate
 
 def _slugify(name: str) -> str:
     slug = re.sub(r"[^a-z0-9]+", "-", name.lower()).strip("-")
@@ -32,6 +32,33 @@ def get_team(db: Session, dept_id: int, team_id: int) -> Team:
 
 def list_teams(db: Session, dept_id: int) -> list[Team]:
     return list(db.scalars(select(Team).where(Team.dept_id == dept_id).order_by(Team.name)))
+
+def list_all_teams(db: Session, user: User) -> list[TeamListItem]:
+    """Every team the caller is allowed to see, across departments — a platform
+    admin sees the whole company; anyone else sees the departments they're in.
+    Saves hunting for a dept_id just to look around."""
+    member_count = (
+        select(Membership.team_id, func.count().label("n"))
+        .where(Membership.team_id.is_not(None))
+        .group_by(Membership.team_id)
+        .subquery()
+    )
+    q = (
+        select(Team, Department.name, func.coalesce(member_count.c.n, 0))
+        .join(Department, Department.id == Team.dept_id)
+        .outerjoin(member_count, member_count.c.team_id == Team.id)
+    )
+    if not user.is_platform_admin:
+        mine = select(Membership.dept_id).where(Membership.user_id == user.id, Membership.is_active.is_(True))
+        q = q.where(Team.dept_id.in_(mine))
+    rows = db.execute(q.order_by(Department.name, Team.name)).all()
+    return [
+        TeamListItem(
+            id=t.id, name=t.name, slug=t.slug,
+            dept_id=t.dept_id, dept_name=dept_name, member_count=count,
+        )
+        for t, dept_name, count in rows
+    ]
 
 def create_team(db: Session, dept_id: int, payload: TeamCreate) -> Team:
     team = Team(dept_id=dept_id, name=payload.name, slug=_unique_team_slug(db, dept_id, _slugify(payload.name)))

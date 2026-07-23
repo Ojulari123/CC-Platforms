@@ -7,8 +7,8 @@ from fastapi import APIRouter, Depends, status
 from sqlalchemy.orm import Session
 from app.db import get_db
 from app.models import User
-from app.schemas.departments import MemberResponse, TeamCreate, TeamResponse, TeamUpdate
-from app.security import require_dept_role, require_team_manager
+from app.schemas.departments import MemberResponse, TeamCreate, TeamListItem, TeamResponse, TeamUpdate
+from app.security import get_current_user, require_dept_role, require_team_manager
 from app.services import teams as team_service
 
 router = APIRouter(prefix="/departments/{dept_id}/teams", tags=["teams"])
@@ -49,3 +49,13 @@ def add_team_member(dept_id: int, team_id: int, member_user_id: int, _: User = D
 @router.delete("/{team_id}/members/{member_user_id}", status_code=status.HTTP_204_NO_CONTENT)
 def remove_team_member(dept_id: int, team_id: int, member_user_id: int, _: User = Depends(require_team_manager), db: Session = Depends(get_db)) -> None:
     team_service.remove_team_member(db, dept_id, team_id, member_user_id)
+
+# Separate router: a flat "all teams I can see" view, with no department in the
+# path. Mounted at /teams.
+flat_router = APIRouter(prefix="/teams", tags=["teams"])
+
+@flat_router.get("", response_model=list[TeamListItem])
+def list_all_teams(user: User = Depends(get_current_user), db: Session = Depends(get_db)) -> list[TeamListItem]:
+    """Every team you can see, across departments — platform admins get the whole
+    company, everyone else gets the departments they belong to."""
+    return team_service.list_all_teams(db, user)

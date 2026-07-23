@@ -31,6 +31,16 @@ class TeamResponse(BaseModel):
     name: str
     slug: str
 
+class TeamListItem(BaseModel):
+    """A team seen outside its department's URL, so it carries the department
+    with it — a bare list of team names across the company is ambiguous."""
+    id: int
+    name: str
+    slug: str
+    dept_id: int
+    dept_name: str
+    member_count: int
+
 class MemberResponse(BaseModel):
     user_id: int
     email: EmailStr

@@ -225,3 +225,36 @@ class TestManagerOwnTeamRoster:
         team_id = _team(client, dept, admin, "Platform")
         eng_id = client.get("/me", headers=auth(engineer_user)).json()["id"]
         assert client.put(f"/departments/{dept}/teams/{team_id}/members/{eng_id}", headers=auth(engineer_user)).status_code == 403
+
+
+class TestFlatTeamList:
+    """GET /teams — look at teams without knowing a department id first."""
+
+    def test_platform_admin_sees_every_team(self, client, dept, admin, second_dept):
+        _team(client, dept, admin, "Platform")
+        _team(client, second_dept, admin, "Data Infra")
+        r = client.get("/teams", headers=admin)
+        assert r.status_code == 200
+        assert [(t["name"], t["dept_name"]) for t in r.json()] == [
+            ("Data Infra", "Data"), ("Platform", "Engineering"),
+        ]
+
+    def test_ordinary_member_sees_only_their_departments(self, client, dept, admin, second_dept, engineer_user):
+        _team(client, dept, admin, "Platform")
+        _team(client, second_dept, admin, "Data Infra")
+        r = client.get("/teams", headers=auth(engineer_user))
+        assert [t["name"] for t in r.json()] == ["Platform"]
+
+    def test_includes_member_count(self, client, dept, admin, engineer_user):
+        team_id = _team(client, dept, admin, "Platform")
+        assert client.get("/teams", headers=admin).json()[0]["member_count"] == 0
+
+        eng_id = client.get("/me", headers=auth(engineer_user)).json()["id"]
+        client.put(f"/departments/{dept}/teams/{team_id}/members/{eng_id}", headers=admin)
+        assert client.get("/teams", headers=admin).json()[0]["member_count"] == 1
+
+    def test_empty_when_there_are_no_teams(self, client, admin):
+        assert client.get("/teams", headers=admin).json() == []
+
+    def test_requires_auth(self, client):
+        assert client.get("/teams").status_code == 401
