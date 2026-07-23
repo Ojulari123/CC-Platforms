@@ -119,6 +119,11 @@ def remove_member(db: Session, dept_id: int, member_user_id: int) -> None:
     if membership.role == "admin":
         _assert_not_last_admin(db, dept_id, member_user_id, "remove")
 
+    # Vacate any team they lead here, so no team is left pointing at someone
+    # who is no longer in the department.
+    db.query(Team).filter(Team.dept_id == dept_id, Team.manager_user_id == member_user_id).update(
+        {"manager_user_id": None}, synchronize_session=False
+    )
     db.delete(membership)
     db.commit()
     # Bump tokens *after* the membership is gone so re-issued claims are correct.

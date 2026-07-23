@@ -8,9 +8,9 @@ docs/decisions/2026-07-23-identity-structure.md."""
 import re
 from fastapi import HTTPException
 from sqlalchemy import func, select
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, aliased
 from app.models import Department, Membership, Team, User
-from app.schemas.departments import MemberResponse, TeamCreate, TeamListItem, TeamUpdate
+from app.schemas.departments import MemberResponse, TeamCreate, TeamListItem, TeamResponse, TeamUpdate
 
 def _slugify(name: str) -> str:
     slug = re.sub(r"[^a-z0-9]+", "-", name.lower()).strip("-")
@@ -30,8 +30,9 @@ def get_team(db: Session, dept_id: int, team_id: int) -> Team:
         raise HTTPException(status_code=404, detail="Team not found in this department")
     return team
 
-def list_teams(db: Session, dept_id: int) -> list[Team]:
-    return list(db.scalars(select(Team).where(Team.dept_id == dept_id).order_by(Team.name)))
+def list_teams(db: Session, dept_id: int) -> list[TeamResponse]:
+    teams = db.scalars(select(Team).where(Team.dept_id == dept_id).order_by(Team.name))
+    return [_to_team_response(db, t) for t in teams]
 
 def list_all_teams(db: Session, user: User) -> list[TeamListItem]:
     """Every team the caller is allowed to see, across departments — a platform
@@ -43,10 +44,12 @@ def list_all_teams(db: Session, user: User) -> list[TeamListItem]:
         .group_by(Membership.team_id)
         .subquery()
     )
+    lead = aliased(User)
     q = (
-        select(Team, Department.name, func.coalesce(member_count.c.n, 0))
+        select(Team, Department.name, func.coalesce(member_count.c.n, 0), lead)
         .join(Department, Department.id == Team.dept_id)
         .outerjoin(member_count, member_count.c.team_id == Team.id)
+        .outerjoin(lead, lead.id == Team.manager_user_id)
     )
     if not user.is_platform_admin:
         mine = select(Membership.dept_id).where(Membership.user_id == user.id, Membership.is_active.is_(True))
@@ -56,8 +59,10 @@ def list_all_teams(db: Session, user: User) -> list[TeamListItem]:
         TeamListItem(
             id=t.id, name=t.name, slug=t.slug,
             dept_id=t.dept_id, dept_name=dept_name, member_count=count,
+            manager_user_id=t.manager_user_id,
+            manager_name=f"{lead_user.first_name} {lead_user.last_name}" if lead_user else None,
         )
-        for t, dept_name, count in rows
+        for t, dept_name, count, lead_user in rows
     ]
 
 def create_team(db: Session, dept_id: int, payload: TeamCreate) -> Team:
@@ -67,13 +72,52 @@ def create_team(db: Session, dept_id: int, payload: TeamCreate) -> Team:
     db.refresh(team)
     return team
 
-def update_team(db: Session, dept_id: int, team_id: int, payload: TeamUpdate) -> Team:
+def _to_team_response(db: Session, team: Team) -> TeamResponse:
+    lead = db.get(User, team.manager_user_id) if team.manager_user_id else None
+    return TeamResponse(
+        id=team.id, dept_id=team.dept_id, name=team.name, slug=team.slug,
+        manager_user_id=team.manager_user_id,
+        manager_name=f"{lead.first_name} {lead.last_name}" if lead else None,
+    )
+
+def _set_manager(db: Session, team: Team, manager_user_id: int | None) -> None:
+    """Appoint (or clear) the team's lead.
+
+    The lead must already be in the department and hold manager or admin — an
+    engineer leading a team would be able to approve their own peers' reports
+    without that ever being an explicit decision. Appointing someone also puts
+    them ON the team, because a lead who isn't a member is a contradiction the
+    rest of the system would have to keep special-casing."""
+    if manager_user_id is None:
+        team.manager_user_id = None
+        return
+
+    membership = db.scalar(select(Membership).where(
+        Membership.user_id == manager_user_id,
+        Membership.dept_id == team.dept_id,
+        Membership.is_active.is_(True),
+    ))
+    if not membership:
+        raise HTTPException(status_code=400, detail="The team lead must be a member of this department")
+    if membership.role not in ("manager", "admin"):
+        raise HTTPException(status_code=400, detail="The team lead must have the manager or admin role")
+
+    team.manager_user_id = manager_user_id
+    membership.team_id = team.id
+
+def update_team(db: Session, dept_id: int, team_id: int, payload: TeamUpdate) -> TeamResponse:
     team = get_team(db, dept_id, team_id)
-    team.name = payload.name
-    team.slug = _unique_team_slug(db, dept_id, _slugify(payload.name), exclude_id=team_id)
+    changes = payload.model_dump(exclude_unset=True)
+
+    if "name" in changes and changes["name"] is not None:
+        team.name = changes["name"]
+        team.slug = _unique_team_slug(db, dept_id, _slugify(changes["name"]), exclude_id=team_id)
+    if "manager_user_id" in changes:
+        _set_manager(db, team, changes["manager_user_id"])
+
     db.commit()
     db.refresh(team)
-    return team
+    return _to_team_response(db, team)
 
 def delete_team(db: Session, dept_id: int, team_id: int) -> None:
     """Delete a team. Its people stay in the department — their team_id just goes
@@ -121,9 +165,13 @@ def add_team_member(db: Session, dept_id: int, team_id: int, user_id: int) -> Me
 
 def remove_team_member(db: Session, dept_id: int, team_id: int, user_id: int) -> None:
     """Take someone off the team. They stay in the department, just unassigned."""
-    get_team(db, dept_id, team_id)
+    team = get_team(db, dept_id, team_id)
     membership = _membership_in_dept(db, dept_id, user_id)
     if membership.team_id != team_id:
         raise HTTPException(status_code=404, detail="That person is not on this team")
     membership.team_id = None
+    if team.manager_user_id == user_id:
+        # Can't lead a team you're not on — vacate rather than leave a lead
+        # pointing at someone who left.
+        team.manager_user_id = None
     db.commit()

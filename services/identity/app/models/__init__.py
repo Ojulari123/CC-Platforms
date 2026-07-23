@@ -45,6 +45,11 @@ class Team(Base):
     dept_id = Column(Integer, ForeignKey("departments.id", ondelete="CASCADE"), nullable=False)
     name = Column(String(200), nullable=False)
     slug = Column(String(100), nullable=False)
+    # The team's lead — one named person, so "who approves this engineer's
+    # weekly report?" has exactly one answer in Pulse. Nullable: a team can sit
+    # without a lead between appointments. SET NULL rather than CASCADE, because
+    # deleting a user must never delete the team.
+    manager_user_id = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
     created_at = Column(TIMESTAMP(timezone=True), server_default=func.now(), nullable=False)
     updated_at = Column(TIMESTAMP(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
 

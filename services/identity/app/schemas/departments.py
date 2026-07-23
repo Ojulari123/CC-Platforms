@@ -21,7 +21,10 @@ class TeamCreate(BaseModel):
     name: str = Field(min_length=1, max_length=200)
 
 class TeamUpdate(BaseModel):
-    name: str = Field(min_length=1, max_length=200)
+    """Partial update — send only what changes. Passing manager_user_id: null
+    explicitly clears the lead; omitting it leaves the current one alone."""
+    name: str | None = Field(default=None, min_length=1, max_length=200)
+    manager_user_id: int | None = None
 
 class TeamResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
@@ -30,6 +33,8 @@ class TeamResponse(BaseModel):
     dept_id: int
     name: str
     slug: str
+    manager_user_id: int | None = None
+    manager_name: str | None = None
 
 class TeamListItem(BaseModel):
     """A team seen outside its department's URL, so it carries the department
@@ -40,6 +45,8 @@ class TeamListItem(BaseModel):
     dept_id: int
     dept_name: str
     member_count: int
+    manager_user_id: int | None = None
+    manager_name: str | None = None
 
 class MemberResponse(BaseModel):
     user_id: int

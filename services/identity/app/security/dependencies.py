@@ -3,7 +3,7 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 from app.db import get_db
-from app.models import Membership, User
+from app.models import Membership, Team, User
 from app.security.jwt import decode_access_token
 
 _bearer = HTTPBearer(auto_error=False)
@@ -44,9 +44,9 @@ def get_membership(db: Session, user: User, dept_id: int) -> Membership | None:
 
 def require_team_manager(dept_id: int, team_id: int, user: User = Depends(get_current_user), db: Session = Depends(get_db)) -> User:
     """Who may change a team's roster: department admins (any team), or the
-    manager OF THAT TEAM. A manager approves their team's weekly reports in
-    Pulse, so they should own who's on it — but only theirs, and they still
-    can't create or delete teams, or invite people into the department."""
+    team's named lead (theirs only). Reads Team.manager_user_id rather than
+    inferring from role+assignment, so there's one answer to "who runs this
+    team" and it's the same one Pulse uses to route report approvals."""
     if user.is_platform_admin:
         return user
     membership = get_membership(db, user, dept_id)
@@ -54,11 +54,12 @@ def require_team_manager(dept_id: int, team_id: int, user: User = Depends(get_cu
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Not a member of this department")
     if membership.role == "admin":
         return user
-    if membership.role == "manager" and membership.team_id == team_id:
+    team = db.scalar(select(Team).where(Team.id == team_id, Team.dept_id == dept_id))
+    if team and team.manager_user_id == user.id:
         return user
     raise HTTPException(
         status_code=status.HTTP_403_FORBIDDEN,
-        detail="Requires a department admin, or the manager of this team",
+        detail="Requires a department admin, or the lead of this team",
     )
 
 def require_dept_role(*roles: str):

@@ -78,12 +78,26 @@ in weeks 3–4.
 > new join table, a data migration, and re-deciding how report approval works.
 > Changing now is about half a day.
 
-**Who can put people on a team.** Department admins, for any team — plus the
-**manager of that team**, for their own team only. The reasoning: in Pulse the
-manager approves that team's weekly reports, so they should own who's on it
-without routing every change through an admin. Managers still can't create,
-rename or delete teams, invite people into the department, or change anyone's
-role — those stay with admins.
+**Each team has one named lead.** `Team.manager_user_id` — set by an admin, must
+already be in the department and hold manager or admin. Appointing someone also
+puts them on the team, and if they later leave the team or the department the
+role is vacated rather than left pointing at someone who's gone.
+
+This replaced an inferred rule (manager = "has the manager role and happens to
+be assigned to this team"), which allowed a team to have none or several. Pulse
+routes every weekly report to the engineer's team lead for approval, and that
+flow needs exactly one answer.
+
+> **QUESTION FOR REVIEW:** What happens when a lead is on leave? Right now
+> approvals would wait for them, or a department admin steps in. If cover is
+> needed routinely we'd add deputies — say so before Pulse's approval flow is
+> built in week 4.
+
+**Who can put people on a team.** Department admins, for any team — plus that
+team's lead, for their own team only. The reasoning: the lead approves the
+team's weekly reports, so they should own who's on it without routing every
+change through an admin. Leads still can't create, rename or delete teams,
+invite people into the department, or change anyone's role.
 
 **Two ways to join a team.** An invite carries an optional team, so someone can
 be hired straight onto Platform and land there on day one; the invite email and
