@@ -140,3 +140,67 @@ class TestAcceptInvite:
         members = client.get("/dept/members", headers=_auth(tokens)).json()
         invited = next(m for m in members["items"] if m["email"] == "dami@example.com")
         assert invited["team_id"] == team_id
+
+
+class TestListRevokeInvites:
+    def test_admin_lists_pending_invites(self, client, registered_user, sent_emails):
+        tokens = registered_user["tokens"]
+        _invite(client, tokens, email="a@example.com")
+        _invite(client, tokens, email="b@example.com", role="manager")
+        r = client.get("/dept/invites", headers=_auth(tokens))
+        assert r.status_code == 200
+        assert {i["email"] for i in r.json()} == {"a@example.com", "b@example.com"}
+
+    def test_accepted_invites_drop_off_the_list(self, client, registered_user, sent_emails):
+        tokens = registered_user["tokens"]
+        _invite(client, tokens)
+        client.post("/invites/accept", json={
+            "token": sent_emails[0]["raw_token"],
+            "first_name": "D", "last_name": "E", "password": "Test123!password",
+        })
+        assert client.get("/dept/invites", headers=_auth(tokens)).json() == []
+
+    def test_engineer_cannot_list_invites(self, client, registered_user, engineer_user):
+        assert client.get("/dept/invites", headers=_auth(engineer_user)).status_code == 403
+
+    def test_revoked_invite_link_stops_working(self, client, registered_user, sent_emails):
+        tokens = registered_user["tokens"]
+        invite_id = _invite(client, tokens).json()["id"]
+        assert client.delete(f"/dept/invites/{invite_id}", headers=_auth(tokens)).status_code == 204
+        r = client.post("/invites/accept", json={
+            "token": sent_emails[0]["raw_token"],
+            "first_name": "D", "last_name": "E", "password": "Test123!password",
+        })
+        assert r.status_code == 400
+
+    def test_cannot_revoke_another_departments_invite(self, client, registered_user, sent_emails):
+        invite_id = _invite(client, registered_user["tokens"]).json()["id"]
+        bob = client.post("/auth/register", json={
+            "email": "bob9@example.com", "password": "Test123!password",
+            "first_name": "Bob", "last_name": "B", "dept_name": "Bob Dept",
+        }).json()
+        assert client.delete(f"/dept/invites/{invite_id}", headers=_auth(bob)).status_code == 404
+
+
+class TestInvitePreview:
+    def test_preview_shows_department_and_role(self, client, registered_user, sent_emails):
+        _invite(client, registered_user["tokens"], role="manager")
+        r = client.get(f"/invites/preview?token={sent_emails[0]['raw_token']}")
+        assert r.status_code == 200
+        body = r.json()
+        assert body["dept_name"] == "Engineering"
+        assert body["role"] == "manager"
+        assert body["email"] == "dami@example.com"
+        assert body["needs_account"] is True
+
+    def test_preview_flags_existing_account(self, client, registered_user, sent_emails):
+        client.post("/auth/register", json={
+            "email": "known@example.com", "password": "Test123!password",
+            "first_name": "K", "last_name": "N", "dept_name": "Somewhere",
+        })
+        _invite(client, registered_user["tokens"], email="known@example.com")
+        r = client.get(f"/invites/preview?token={sent_emails[0]['raw_token']}")
+        assert r.json()["needs_account"] is False
+
+    def test_preview_rejects_bogus_token(self, client):
+        assert client.get("/invites/preview?token=nonsense").status_code == 400

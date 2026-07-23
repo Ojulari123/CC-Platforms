@@ -30,6 +30,14 @@ def refresh(request: Request, payload: RefreshRequest, db: Session = Depends(get
 def logout(payload: LogoutRequest, db: Session = Depends(get_db)) -> None:
     auth_service.revoke_refresh_token(db, payload.refresh_token)
 
+@router.post("/logout-all", status_code=status.HTTP_204_NO_CONTENT)
+def logout_all(user: User = Depends(get_current_user), db: Session = Depends(get_db)) -> None:
+    """Sign out on every device. Revokes all refresh tokens and bumps
+    token_version, so outstanding access tokens die at identity immediately
+    (products verifying via packages/core still honour theirs until expiry —
+    see the tv note in docs/backlog.md)."""
+    auth_service.revoke_all_for_user(db, user.id)
+
 @router.post("/change-password", response_model=TokenPair)
 @limiter.limit("5/minute")
 def change_password(request: Request, payload: ChangePasswordRequest, user: User = Depends(get_current_user), db: Session = Depends(get_db)) -> TokenPair:

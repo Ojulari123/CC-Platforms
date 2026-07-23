@@ -11,7 +11,13 @@ class DepartmentResponse(BaseModel):
     name: str
     slug: str
 
+class DepartmentUpdate(BaseModel):
+    name: str = Field(min_length=1, max_length=200)
+
 class TeamCreate(BaseModel):
+    name: str = Field(min_length=1, max_length=200)
+
+class TeamUpdate(BaseModel):
     name: str = Field(min_length=1, max_length=200)
 
 class TeamResponse(BaseModel):
@@ -54,6 +60,15 @@ class InviteResponse(BaseModel):
     role: str
     team_id: int | None
     expires_at: datetime
+
+class InvitePreview(BaseModel):
+    """What the accept page shows before asking for a password. Deliberately
+    thin — this is public, so it leaks nothing beyond what the invitee was
+    already told in their email."""
+    email: EmailStr
+    dept_name: str
+    role: str
+    needs_account: bool  # False when the invitee already has an account
 
 class InviteAccept(BaseModel):
     token: str

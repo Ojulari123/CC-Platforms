@@ -177,3 +177,33 @@ class TestChangePassword:
         new_access = r.json()["access_token"]
         r2 = client.get("/me", headers={"Authorization": f"Bearer {new_access}"})
         assert r2.status_code == 200
+
+class TestLogoutAll:
+    def test_kills_every_session(self, client, registered_user):
+        tokens = registered_user["tokens"]
+        auth = {"Authorization": f"Bearer {tokens['access_token']}"}
+        # A second session for the same user (a "different device").
+        other = client.post("/auth/login", json={
+            "email": registered_user["email"], "password": registered_user["password"],
+        }).json()
+
+        assert client.post("/auth/logout-all", headers=auth).status_code == 204
+
+        # Both access tokens are dead (token_version bumped)...
+        assert client.get("/me", headers=auth).status_code == 401
+        assert client.get("/me", headers={"Authorization": f"Bearer {other['access_token']}"}).status_code == 401
+        # ...and neither refresh token can resurrect a session.
+        assert client.post("/auth/refresh", json={"refresh_token": tokens["refresh_token"]}).status_code == 401
+        assert client.post("/auth/refresh", json={"refresh_token": other["refresh_token"]}).status_code == 401
+
+    def test_requires_auth(self, client):
+        assert client.post("/auth/logout-all").status_code == 401
+
+    def test_user_can_log_back_in_afterwards(self, client, registered_user):
+        auth = {"Authorization": f"Bearer {registered_user['tokens']['access_token']}"}
+        client.post("/auth/logout-all", headers=auth)
+        r = client.post("/auth/login", json={
+            "email": registered_user["email"], "password": registered_user["password"],
+        })
+        assert r.status_code == 200
+        assert client.get("/me", headers={"Authorization": f"Bearer {r.json()['access_token']}"}).status_code == 200

@@ -46,6 +46,13 @@ class UserMeResponse(BaseModel):
     active_dept_name: str | None = None
     active_role: str | None = None
 
+class ProfileUpdate(BaseModel):
+    """Fields a user may change about themselves. Email is deliberately absent —
+    changing it would need re-verification, so it gets its own flow later."""
+    first_name: str | None = Field(default=None, min_length=1, max_length=100)
+    last_name: str | None = Field(default=None, min_length=1, max_length=100)
+    avatar_url: str | None = Field(default=None, max_length=500)
+
 class TokenPair(BaseModel):
     access_token: str
     refresh_token: str

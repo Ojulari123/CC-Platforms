@@ -4,7 +4,18 @@ from fastapi import APIRouter, Depends, Query, status
 from sqlalchemy.orm import Session
 from app.db import get_db
 from app.models import Membership, User
-from app.schemas.departments import DepartmentResponse, InviteCreate, InviteResponse, MemberListResponse, MemberResponse, MemberUpdate, TeamCreate, TeamResponse
+from app.schemas.departments import (
+    DepartmentResponse,
+    DepartmentUpdate,
+    InviteCreate,
+    InviteResponse,
+    MemberListResponse,
+    MemberResponse,
+    MemberUpdate,
+    TeamCreate,
+    TeamResponse,
+    TeamUpdate,
+)
 from app.security import get_current_membership, get_current_user, require_role
 from app.services import departments as dept_service
 from app.services import invites as invites_service
@@ -17,6 +28,10 @@ admin_only = require_role("admin")
 def get_department(membership: Membership = Depends(get_current_membership), db: Session = Depends(get_db)) -> DepartmentResponse:
     return dept_service.get_department(db, membership.dept_id)
 
+@router.patch("", response_model=DepartmentResponse)
+def update_department(payload: DepartmentUpdate, membership: Membership = Depends(admin_only), db: Session = Depends(get_db)) -> DepartmentResponse:
+    return dept_service.update_department(db, membership.dept_id, payload)
+
 @router.post("/teams", response_model=TeamResponse, status_code=status.HTTP_201_CREATED)
 def create_team(payload: TeamCreate, membership: Membership = Depends(admin_only), db: Session = Depends(get_db)) -> TeamResponse:
     return dept_service.create_team(db, membership.dept_id, payload)
@@ -24,6 +39,14 @@ def create_team(payload: TeamCreate, membership: Membership = Depends(admin_only
 @router.get("/teams", response_model=list[TeamResponse])
 def list_teams(membership: Membership = Depends(get_current_membership), db: Session = Depends(get_db)) -> list[TeamResponse]:
     return dept_service.list_teams(db, membership.dept_id)
+
+@router.patch("/teams/{team_id}", response_model=TeamResponse)
+def update_team(team_id: int, payload: TeamUpdate, membership: Membership = Depends(admin_only), db: Session = Depends(get_db)) -> TeamResponse:
+    return dept_service.update_team(db, membership.dept_id, team_id, payload)
+
+@router.delete("/teams/{team_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_team(team_id: int, membership: Membership = Depends(admin_only), db: Session = Depends(get_db)) -> None:
+    dept_service.delete_team(db, membership.dept_id, team_id)
 
 @router.get("/members", response_model=MemberListResponse)
 def list_members(
@@ -38,6 +61,18 @@ def list_members(
 def update_member(member_user_id: int, payload: MemberUpdate, membership: Membership = Depends(admin_only), db: Session = Depends(get_db)) -> MemberResponse:
     return dept_service.update_member(db, membership.dept_id, member_user_id, payload)
 
+@router.delete("/members/{member_user_id}", status_code=status.HTTP_204_NO_CONTENT)
+def remove_member(member_user_id: int, membership: Membership = Depends(admin_only), db: Session = Depends(get_db)) -> None:
+    dept_service.remove_member(db, membership.dept_id, member_user_id)
+
 @router.post("/invites", response_model=InviteResponse, status_code=status.HTTP_201_CREATED)
 def create_invite(payload: InviteCreate, membership: Membership = Depends(admin_only), user: User = Depends(get_current_user), db: Session = Depends(get_db)) -> InviteResponse:
     return invites_service.create_invite(db, membership.dept_id, user, payload)
+
+@router.get("/invites", response_model=list[InviteResponse])
+def list_invites(membership: Membership = Depends(admin_only), db: Session = Depends(get_db)) -> list[InviteResponse]:
+    return invites_service.list_pending_invites(db, membership.dept_id)
+
+@router.delete("/invites/{invite_id}", status_code=status.HTTP_204_NO_CONTENT)
+def revoke_invite(invite_id: int, membership: Membership = Depends(admin_only), db: Session = Depends(get_db)) -> None:
+    invites_service.revoke_invite(db, membership.dept_id, invite_id)

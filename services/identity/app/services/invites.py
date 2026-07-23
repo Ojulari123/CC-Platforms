@@ -13,7 +13,7 @@ from sqlalchemy.orm import Session
 from app.config import settings
 from app.models import Invite, Membership, Department, Team, User
 from app.schemas.auth import TokenPair
-from app.schemas.departments import InviteAccept, InviteCreate
+from app.schemas.departments import InviteAccept, InviteCreate, InvitePreview
 from app.services import email as email_service
 from app.services.auth import _build_pair_response, _issue_token_pair
 from app.security import hash_password, validate_password
@@ -62,8 +62,26 @@ def create_invite(db: Session, dept_id: int, inviter: User, payload: InviteCreat
     db.refresh(invite)
     return invite
 
-def accept_invite(db: Session, payload: InviteAccept) -> TokenPair:
-    invite = db.scalar(select(Invite).where(Invite.token_hash == _hash_token(payload.token)))
+def list_pending_invites(db: Session, dept_id: int) -> list[Invite]:
+    """Invites that haven't been accepted yet. Expired ones are included on
+    purpose — an admin needs to see a dead invite to know why someone never
+    got in."""
+    return list(db.scalars(
+        select(Invite).where(Invite.dept_id == dept_id, Invite.accepted_at.is_(None)).order_by(Invite.created_at.desc())
+    ))
+
+def revoke_invite(db: Session, dept_id: int, invite_id: int) -> None:
+    """Cancel a pending invite — the emailed link stops working immediately."""
+    invite = db.scalar(select(Invite).where(Invite.id == invite_id, Invite.dept_id == dept_id))
+    if not invite:
+        raise HTTPException(status_code=404, detail="Invite not found in this department")
+    if invite.accepted_at is not None:
+        raise HTTPException(status_code=400, detail="That invite was already accepted — remove the member instead")
+    db.delete(invite)
+    db.commit()
+
+def _load_valid_invite(db: Session, raw_token: str) -> Invite:
+    invite = db.scalar(select(Invite).where(Invite.token_hash == _hash_token(raw_token)))
     if not invite:
         raise HTTPException(status_code=400, detail="Invalid invite link")
     if invite.accepted_at is not None:
@@ -71,6 +89,23 @@ def accept_invite(db: Session, payload: InviteAccept) -> TokenPair:
     expires = invite.expires_at if invite.expires_at.tzinfo else invite.expires_at.replace(tzinfo=timezone.utc)
     if expires < datetime.now(timezone.utc):
         raise HTTPException(status_code=400, detail="This invite has expired — ask for a new one")
+    return invite
+
+def preview_invite(db: Session, raw_token: str) -> InvitePreview:
+    """Public: lets the accept page say 'Join Engineering as engineer' and decide
+    whether to ask for a password, before anything is committed."""
+    invite = _load_valid_invite(db, raw_token)
+    department = db.get(Department, invite.dept_id)
+    existing_user = db.scalar(select(User).where(User.email == invite.email))
+    return InvitePreview(
+        email=invite.email,
+        dept_name=department.name if department else "",
+        role=invite.role,
+        needs_account=existing_user is None,
+    )
+
+def accept_invite(db: Session, payload: InviteAccept) -> TokenPair:
+    invite = _load_valid_invite(db, payload.token)
 
     user = db.scalar(select(User).where(User.email == invite.email))
     if user is None:
