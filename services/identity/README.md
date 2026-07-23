@@ -1,10 +1,10 @@
 # Identity service
 
-Single source of truth for accounts, orgs, teams, memberships, and tokens.
+Single source of truth for accounts, departments, teams, memberships, and tokens.
 Every product (Pulse, ML platform) trusts tokens issued here.
 
 ## What lives here vs elsewhere
-- **Here:** users, orgs, teams, memberships, passwords, refresh tokens, JWT signing.
+- **Here:** users, departments, teams, memberships, passwords, refresh tokens, JWT signing.
   Owns "who a person is" — name, email, avatar.
 - **Not here:** anything product-specific. Pulse owns its own copy of user info it
   needs (GitHub handle, etc.), keyed by `user_id`. Products never touch identity's DB.

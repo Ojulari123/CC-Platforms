@@ -3,7 +3,7 @@ from sqlalchemy.orm import Session
 from app.db import get_db
 from app.rate_limit import limiter
 from app.schemas.auth import TokenPair
-from app.schemas.orgs import InviteAccept
+from app.schemas.departments import InviteAccept
 from app.services import invites as invites_service
 
 router = APIRouter(prefix="/invites", tags=["invites"])

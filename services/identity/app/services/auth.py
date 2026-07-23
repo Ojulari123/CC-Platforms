@@ -4,7 +4,7 @@ from fastapi import HTTPException
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 from app.config import settings
-from app.models import Membership, Org, RefreshToken, User
+from app.models import Membership, Department, RefreshToken, User
 from app.schemas.auth import RegisterRequest, TokenPair, UserResponse
 from app.security import create_access_token, hash_password, validate_password, verify_password
 
@@ -13,12 +13,12 @@ def _hash_refresh(token: str) -> str:
 
 def _slugify(name: str) -> str:
     slug = re.sub(r"[^a-z0-9]+", "-", name.lower()).strip("-")
-    return slug or "org"
+    return slug or "department"
 
-def _unique_org_slug(db: Session, base: str) -> str:
+def _unique_dept_slug(db: Session, base: str) -> str:
     slug = base
     n = 1
-    while db.scalar(select(Org).where(Org.slug == slug)):
+    while db.scalar(select(Department).where(Department.slug == slug)):
         n += 1
         slug = f"{base}-{n}"
     return slug
@@ -29,7 +29,7 @@ def _issue_token_pair(db: Session, user: User, membership: Membership | None, fa
     access = create_access_token(
         user_id=user.id,
         email=user.email,
-        org_id=membership.org_id if membership else None,
+        dept_id=membership.dept_id if membership else None,
         role=membership.role if membership else None,
         token_version=user.token_version,
     )
@@ -65,11 +65,11 @@ def register_user(db: Session, payload: RegisterRequest) -> TokenPair:
     db.add(user)
     db.flush()
 
-    org = Org(name=payload.org_name, slug=_unique_org_slug(db, _slugify(payload.org_name)))
-    db.add(org)
+    department = Department(name=payload.dept_name, slug=_unique_dept_slug(db, _slugify(payload.dept_name)))
+    db.add(department)
     db.flush()
 
-    membership = Membership(user_id=user.id, org_id=org.id, role="admin")
+    membership = Membership(user_id=user.id, dept_id=department.id, role="admin")
     db.add(membership)
     db.flush()
 

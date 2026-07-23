@@ -1,19 +1,19 @@
-"""Invite flow — how anyone after the founder joins an org.
+"""Invite flow — how anyone after the founder joins a department.
 
 create: admin sends an invite → email with one-time link (raw token never stored).
 accept: recipient proves control of the email by presenting the token. New
 users set a password and get an account (email_verified=True — they clicked a
 link sent to that address); existing users just gain a membership. Both get a
-fresh token pair scoped to the inviting org."""
+fresh token pair scoped to the inviting department."""
 import hashlib, secrets
 from datetime import datetime, timedelta, timezone
 from fastapi import HTTPException
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 from app.config import settings
-from app.models import Invite, Membership, Org, Team, User
+from app.models import Invite, Membership, Department, Team, User
 from app.schemas.auth import TokenPair
-from app.schemas.orgs import InviteAccept, InviteCreate
+from app.schemas.departments import InviteAccept, InviteCreate
 from app.services import email as email_service
 from app.services.auth import _build_pair_response, _issue_token_pair
 from app.security import hash_password, validate_password
@@ -21,25 +21,25 @@ from app.security import hash_password, validate_password
 def _hash_token(token: str) -> str:
     return hashlib.sha256(token.encode()).hexdigest()
 
-def create_invite(db: Session, org_id: int, inviter: User, payload: InviteCreate) -> Invite:
-    org = db.get(Org, org_id)
+def create_invite(db: Session, dept_id: int, inviter: User, payload: InviteCreate) -> Invite:
+    department = db.get(Department, dept_id)
     invited_email = payload.email.lower()
 
     existing_user = db.scalar(select(User).where(User.email == invited_email))
-    if existing_user and db.scalar(select(Membership).where(Membership.user_id == existing_user.id, Membership.org_id == org_id)):
-        raise HTTPException(status_code=400, detail="That person is already a member of this organisation")
+    if existing_user and db.scalar(select(Membership).where(Membership.user_id == existing_user.id, Membership.dept_id == dept_id)):
+        raise HTTPException(status_code=400, detail="That person is already a member of this department")
 
     if payload.team_id is not None:
-        if not db.scalar(select(Team).where(Team.id == payload.team_id, Team.org_id == org_id)):
-            raise HTTPException(status_code=400, detail="Team does not belong to this organisation")
+        if not db.scalar(select(Team).where(Team.id == payload.team_id, Team.dept_id == dept_id)):
+            raise HTTPException(status_code=400, detail="Team does not belong to this department")
 
-    # One live invite per (org, email) — replace any pending one.
-    for old in db.scalars(select(Invite).where(Invite.org_id == org_id, Invite.email == invited_email, Invite.accepted_at.is_(None))):
+    # One live invite per (department, email) — replace any pending one.
+    for old in db.scalars(select(Invite).where(Invite.dept_id == dept_id, Invite.email == invited_email, Invite.accepted_at.is_(None))):
         db.delete(old)
 
     raw_token = secrets.token_urlsafe(32)
     invite = Invite(
-        org_id=org_id,
+        dept_id=dept_id,
         email=invited_email,
         role=payload.role,
         team_id=payload.team_id,
@@ -51,7 +51,7 @@ def create_invite(db: Session, org_id: int, inviter: User, payload: InviteCreate
     db.flush()
 
     try:
-        email_service.send_invite(to=invited_email, org_name=org.name, role=payload.role, raw_token=raw_token)
+        email_service.send_invite(to=invited_email, dept_name=department.name, role=payload.role, raw_token=raw_token)
     except email_service.EmailNotConfigured:
         raise HTTPException(status_code=503, detail="Email is not configured on the server (BREVO_API_KEY / EMAIL_FROM)")
     except email_service.EmailSendError:
@@ -89,7 +89,7 @@ def accept_invite(db: Session, payload: InviteAccept) -> TokenPair:
     if not user.is_active:
         raise HTTPException(status_code=403, detail="Account is deactivated")
 
-    membership = Membership(user_id=user.id, org_id=invite.org_id, team_id=invite.team_id, role=invite.role)
+    membership = Membership(user_id=user.id, dept_id=invite.dept_id, team_id=invite.team_id, role=invite.role)
     db.add(membership)
     db.flush()
 

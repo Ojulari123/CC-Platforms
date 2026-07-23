@@ -13,8 +13,8 @@ class TokenPayload(dict):
         return int(self["sub"])
 
     @property
-    def org_id(self) -> int | None:
-        return self.get("org_id")
+    def dept_id(self) -> int | None:
+        return self.get("dept_id")
 
     @property
     def role(self) -> str | None:
@@ -24,12 +24,12 @@ class TokenPayload(dict):
     def token_version(self) -> int:
         return int(self.get("tv", 0))
 
-def create_access_token(*, user_id: int, email: str, org_id: int | None, role: str | None, token_version: int) -> str:
+def create_access_token(*, user_id: int, email: str, dept_id: int | None, role: str | None, token_version: int) -> str:
     now = datetime.now(timezone.utc)
     payload = {
         "sub": str(user_id),
         "email": email,
-        "org_id": org_id,
+        "dept_id": dept_id,
         "role": role,
         "tv": token_version,
         "token_type": "access",

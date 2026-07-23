@@ -18,21 +18,23 @@ but building proceeds in parallel.
 - **Password reset (forgot password)** — public flow: enter email → get link →
   set new password. FindYourCribb has the same shape (6-digit code or magic
   link). Next email flow to build.
-- ~~Admin-invite flow~~ — **shipped session 03.** `POST /orgs/{id}/invites` +
+- ~~Admin-invite flow~~ — **shipped session 03.** `POST /dept/invites` +
   `POST /invites/accept`, `invites` table (migration 0002), 5/min rate limit
-  on accept. New users land in the inviting org with the invited role.
+  on accept. New users land in the inviting department with the invited role.
 
 ---
 
 ## Also open (larger, tackle later)
 
-- **Org switching / multi-org tokens** — a user can now belong to several orgs
-  (own org from register + invited orgs). Login picks their first active
+- **Department switching** — a user can belong to several departments (their own
+  from register, plus any they're invited to). Login picks their first active
   membership arbitrarily; accepting an invite issues tokens scoped to the
-  inviting org. Fine for now (CypherCrescent is effectively one org), but a
-  real `POST /auth/switch-org` should exist before multi-org is used in anger.
-- **`GET /orgs/{id}/members`** and other org-admin endpoints once multi-user
-  orgs exist (i.e. after admin-invite lands).
+  inviting department. Fine while nearly everyone is in one department, but a
+  real `POST /auth/switch-dept` is needed before anyone genuinely sits in two.
+- **Registration is still the founder flow** — `POST /auth/register` creates a
+  *new* department every time. Now that invites exist, self-registration should
+  probably be closed off (or restricted to a @cyphercrescent.com domain) so the
+  only way in is an invite. **Supervisor call.**
 - **`tv` (token_version) invalidation for downstream products** —
   **decision point when building Pulse/Forge, not a bug to fix now.**
 

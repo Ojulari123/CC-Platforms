@@ -1,10 +1,10 @@
-def _register(client, email="bob@example.com", password="Test123!password", org="Bob Co"):
+def _register(client, email="bob@example.com", password="Test123!password", department="Bob Co"):
     return client.post("/auth/register", json={
         "email": email,
         "password": password,
         "first_name": "Bob",
         "last_name": "Builder",
-        "org_name": org,
+        "dept_name": department,
     })
 
 class TestRegister:
@@ -36,7 +36,7 @@ class TestRegister:
             "password": "weakpass",
             "first_name": "W",
             "last_name": "K",
-            "org_name": "W Inc",
+            "dept_name": "W Inc",
         })
         assert r.status_code == 400
 
@@ -46,7 +46,7 @@ class TestRegister:
             "password": "Test123!password",
             "first_name": "X",
             "last_name": "Y",
-            "org_name": "X Inc",
+            "dept_name": "X Inc",
         })
         assert r.status_code == 422
 

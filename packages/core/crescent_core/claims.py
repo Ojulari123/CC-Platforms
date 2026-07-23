@@ -7,7 +7,7 @@ class TokenClaims:
     make an authorization decision without touching identity's DB."""
     user_id: int
     email: str
-    org_id: int | None
+    dept_id: int | None
     role: str | None
     token_version: int
     raw: dict[str, Any]
@@ -17,7 +17,7 @@ class TokenClaims:
         return cls(
             user_id=int(payload["sub"]),
             email=payload.get("email", ""),
-            org_id=payload.get("org_id"),
+            dept_id=payload.get("dept_id"),
             role=payload.get("role"),
             token_version=int(payload.get("tv", 0)),
             raw=payload,

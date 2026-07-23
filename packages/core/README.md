@@ -36,7 +36,7 @@ manager_only = require_role(current_user, "manager", "admin")
 
 @app.get("/me")
 def me(user: TokenClaims = Depends(current_user)):
-    return {"user_id": user.user_id, "org_id": user.org_id, "role": user.role}
+    return {"user_id": user.user_id, "dept_id": user.dept_id, "role": user.role}
 
 @app.post("/reports/{report_id}/approve")
 def approve(report_id: int, user: TokenClaims = Depends(manager_only)):
@@ -50,7 +50,7 @@ def approve(report_id: int, user: TokenClaims = Depends(manager_only)):
 - Issuer matches what you configured.
 - `token_type == "access"` (refresh tokens can't sneak through).
 
-Returns a `TokenClaims` object with `user_id`, `email`, `org_id`, `role`,
+Returns a `TokenClaims` object with `user_id`, `email`, `dept_id`, `role`,
 `token_version`, and the raw payload as `.raw`.
 
 ## What it does NOT do

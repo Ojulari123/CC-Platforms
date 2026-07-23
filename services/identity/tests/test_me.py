@@ -1,4 +1,4 @@
-def test_returns_current_user_with_active_org(client, registered_user):
+def test_returns_current_user_with_active_department(client, registered_user):
     token = registered_user["tokens"]["access_token"]
     r = client.get("/me", headers={"Authorization": f"Bearer {token}"})
     assert r.status_code == 200
@@ -8,8 +8,8 @@ def test_returns_current_user_with_active_org(client, registered_user):
     assert body["email_verified"] is False
     assert body["is_active"] is True
     assert body["active_role"] == "admin"
-    assert body["active_org_name"] == "Acme Corp"
-    assert body["active_org_id"]
+    assert body["active_dept_name"] == "Engineering"
+    assert body["active_dept_id"]
 
 def test_without_auth_header_401(client):
     r = client.get("/me")

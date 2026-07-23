@@ -50,6 +50,7 @@ from sqlalchemy.pool import StaticPool
 
 from app.db import Base, get_db
 from app.main import app
+from app.services import email as email_service
 
 _engine = create_engine(
     "sqlite:///:memory:",
@@ -83,6 +84,19 @@ def client() -> TestClient:
 
 
 @pytest.fixture
+def sent_emails(monkeypatch):
+    """Capture outgoing invites instead of calling Brevo. Each entry carries the
+    raw token, which is the only place it ever exists outside the email."""
+    captured = []
+
+    def fake_send_invite(to, dept_name, role, raw_token):
+        captured.append({"to": to, "dept_name": dept_name, "role": role, "raw_token": raw_token})
+
+    monkeypatch.setattr(email_service, "send_invite", fake_send_invite)
+    return captured
+
+
+@pytest.fixture
 def registered_user(client: TestClient) -> dict:
     """Register a user and return {'tokens': <register response>, 'password': ...}."""
     password = "Test123!password"
@@ -93,8 +107,24 @@ def registered_user(client: TestClient) -> dict:
             "password": password,
             "first_name": "Alice",
             "last_name": "Anderson",
-            "org_name": "Acme Corp",
+            "dept_name": "Engineering",
         },
     )
     assert resp.status_code == 201, resp.text
     return {"tokens": resp.json(), "password": password, "email": "alice@example.com"}
+
+
+@pytest.fixture
+def engineer_user(client: TestClient, registered_user: dict, sent_emails: list) -> dict:
+    """A second user in the SAME department as registered_user, role=engineer.
+    Used to prove role gating — the only way to get one is via an invite."""
+    admin_auth = {"Authorization": f"Bearer {registered_user['tokens']['access_token']}"}
+    client.post("/dept/invites", json={"email": "eng@example.com", "role": "engineer"}, headers=admin_auth)
+    resp = client.post("/invites/accept", json={
+        "token": sent_emails[-1]["raw_token"],
+        "first_name": "Enid",
+        "last_name": "Engineer",
+        "password": "Test123!password",
+    })
+    assert resp.status_code == 200, resp.text
+    return resp.json()

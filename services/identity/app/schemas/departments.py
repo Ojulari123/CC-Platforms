@@ -4,6 +4,13 @@ from pydantic import BaseModel, ConfigDict, EmailStr, Field
 
 Role = Literal["admin", "manager", "engineer"]
 
+class DepartmentResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    name: str
+    slug: str
+
 class TeamCreate(BaseModel):
     name: str = Field(min_length=1, max_length=200)
 
@@ -11,7 +18,7 @@ class TeamResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     id: int
-    org_id: int
+    dept_id: int
     name: str
     slug: str
 

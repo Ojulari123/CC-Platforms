@@ -31,7 +31,7 @@ def test_register_returns_429_after_5_attempts(client, rate_limited):
             "password": "Test123!password",
             "first_name": "U",
             "last_name": "Ser",
-            "org_name": f"Org {i}",
+            "dept_name": f"Department {i}",
         })
         assert r.status_code == 201
     r = client.post("/auth/register", json={
@@ -39,7 +39,7 @@ def test_register_returns_429_after_5_attempts(client, rate_limited):
         "password": "Test123!password",
         "first_name": "U",
         "last_name": "Ser",
-        "org_name": "Org 6",
+        "dept_name": "Department 6",
     })
     assert r.status_code == 429
 

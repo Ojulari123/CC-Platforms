@@ -6,7 +6,7 @@ class RegisterRequest(BaseModel):
     password: str = Field(min_length=8, max_length=128)
     first_name: str = Field(min_length=1, max_length=100)
     last_name: str = Field(min_length=1, max_length=100)
-    org_name: str = Field(min_length=1, max_length=200)
+    dept_name: str = Field(min_length=1, max_length=200)
 
 class LoginRequest(BaseModel):
     email: EmailStr
@@ -33,7 +33,7 @@ class UserResponse(BaseModel):
     created_at: datetime
 
 class UserMeResponse(BaseModel):
-    """/me — full identity view plus the caller's currently active org + role."""
+    """/me — full identity view plus the caller's currently active department + role."""
     id: int
     email: EmailStr
     first_name: str
@@ -42,8 +42,8 @@ class UserMeResponse(BaseModel):
     email_verified: bool
     is_active: bool
     created_at: datetime
-    active_org_id: int | None = None
-    active_org_name: str | None = None
+    active_dept_id: int | None = None
+    active_dept_name: str | None = None
     active_role: str | None = None
 
 class TokenPair(BaseModel):

@@ -9,7 +9,7 @@ Sits alongside the other product, **Forge** (`services/forge/`).
 
 ## Boundaries (from CLAUDE.md)
 - Owns its own database. Never reads identity's DB directly.
-- References people/teams by `user_id` / `team_id` / `org_id` from identity's tokens.
+- References people/teams by `user_id` / `team_id` / `dept_id` from identity's tokens.
 - Verifies tokens locally using identity's public key (fetched from
   `http://identity:8000/.well-known/jwks.json` in Docker, once identity publishes it).
 - Owns its own view of a user (e.g. `github_handle`) keyed by `user_id`. Never

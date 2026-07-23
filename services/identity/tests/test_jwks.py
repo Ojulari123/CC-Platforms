@@ -24,5 +24,5 @@ def test_access_token_verifies_against_jwks_public_key(client, registered_user):
     assert payload["email"] == registered_user["email"]
     assert payload["token_type"] == "access"
     assert payload["role"] == "admin"
-    assert payload["org_id"] is not None
+    assert payload["dept_id"] is not None
     assert payload["sub"]
