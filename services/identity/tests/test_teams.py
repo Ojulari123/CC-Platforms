@@ -284,14 +284,20 @@ class TestTeamLead:
         assert r.json()["manager_user_id"] == mgr_id
         assert r.json()["manager_name"] == "Mgr Tester"
 
-    def test_appointing_a_lead_puts_them_on_the_team(self, client, dept, admin, registered_user, invite_user):
-        """A lead who isn't a member would be a contradiction, so appointment
-        assigns them too."""
-        team_id = _team(client, dept, admin, "Platform")
+    def test_appointing_a_lead_moves_nobody(self, client, dept, admin, registered_user, invite_user):
+        """Leading a team and being on it are separate facts. Appointment is a
+        title change only — it must not quietly reassign anyone."""
+        alpha = _team(client, dept, admin, "Alpha")
+        beta = _team(client, dept, admin, "Beta")
         _, mgr_id = self._manager(client, dept, registered_user, invite_user)
-        client.put(f"/departments/{dept}/teams/{team_id}/manager/{mgr_id}", headers=admin)
-        roster = client.get(f"/departments/{dept}/teams/{team_id}/members", headers=admin).json()
-        assert mgr_id in [m["user_id"] for m in roster]
+        client.put(f"/departments/{dept}/teams/{alpha}/members/{mgr_id}", headers=admin)
+
+        client.put(f"/departments/{dept}/teams/{beta}/manager/{mgr_id}", headers=admin)
+
+        # Still rostered on Alpha, now leads Beta without being on it.
+        assert [m["user_id"] for m in client.get(f"/departments/{dept}/teams/{alpha}/members", headers=admin).json()] == [mgr_id]
+        assert client.get(f"/departments/{dept}/teams/{beta}", headers=admin).json()["manager_user_id"] == mgr_id
+        assert client.get(f"/departments/{dept}/teams/{beta}/members", headers=admin).json() == []
 
     def test_engineer_cannot_be_made_lead(self, client, dept, admin, engineer_user):
         team_id = _team(client, dept, admin, "Platform")
@@ -324,23 +330,27 @@ class TestTeamLead:
         assert r.json()["name"] == "Core Platform"
         assert r.json()["manager_user_id"] == mgr_id
 
-    def test_taking_the_lead_off_the_team_vacates_the_role(self, client, dept, admin, registered_user, invite_user):
+    def test_taking_the_lead_off_the_roster_keeps_them_leading(self, client, dept, admin, registered_user, invite_user):
+        """Rostering is independent of leading, so this is not a demotion."""
         team_id = _team(client, dept, admin, "Platform")
         _, mgr_id = self._manager(client, dept, registered_user, invite_user)
         client.put(f"/departments/{dept}/teams/{team_id}/manager/{mgr_id}", headers=admin)
+        client.put(f"/departments/{dept}/teams/{team_id}/members/{mgr_id}", headers=admin)
 
         client.delete(f"/departments/{dept}/teams/{team_id}/members/{mgr_id}", headers=admin)
-        body = client.get(f"/departments/{dept}/teams/{team_id}", headers=admin).json()
-        assert body["manager_user_id"] is None
+        assert client.get(f"/departments/{dept}/teams/{team_id}", headers=admin).json()["manager_user_id"] == mgr_id
 
-    def test_removing_the_lead_from_the_department_vacates_the_role(self, client, dept, admin, registered_user, invite_user):
+    def test_removing_the_lead_from_the_department_is_refused(self, client, dept, admin, registered_user, invite_user):
+        """The one gap decoupling can't prevent: they're leaving entirely."""
         team_id = _team(client, dept, admin, "Platform")
         _, mgr_id = self._manager(client, dept, registered_user, invite_user)
         client.put(f"/departments/{dept}/teams/{team_id}/manager/{mgr_id}", headers=admin)
 
-        client.delete(f"/departments/{dept}/members/{mgr_id}", headers=admin)
-        body = client.get(f"/departments/{dept}/teams/{team_id}", headers=admin).json()
-        assert body["manager_user_id"] is None
+        r = client.delete(f"/departments/{dept}/members/{mgr_id}", headers=admin)
+        assert r.status_code == 409
+        assert "leads Platform" in r.json()["detail"]
+        # Nothing happened — still a member, still the lead.
+        assert client.get(f"/departments/{dept}/teams/{team_id}", headers=admin).json()["manager_user_id"] == mgr_id
 
     def test_lead_appears_in_the_flat_team_list(self, client, dept, admin, registered_user, invite_user):
         team_id = _team(client, dept, admin, "Platform")
@@ -357,57 +367,39 @@ class TestTeamLead:
         assert r.status_code == 403
 
 
-class TestLeadNeverStrandsATeam:
-    """A team must never point at a lead who isn't on it. Every route that can
-    move someone between teams has to vacate the team they left."""
+class TestOneLeadManyTeams:
+    """Leading is decoupled from membership, so the schema already supports one
+    person leading several teams — the contingency if that's ever wanted."""
 
-    def _manager(self, client, dept, registered_user, invite_user):
-        mgr = invite_user(registered_user["tokens"], dept, "mgr@example.com", "manager")
-        return client.get("/me", headers=auth(mgr)).json()["id"]
+    def _manager(self, client, dept, registered_user, invite_user, email="mgr@example.com"):
+        mgr = invite_user(registered_user["tokens"], dept, email, "manager")
+        return mgr, client.get("/me", headers=auth(mgr)).json()["id"]
 
-    def test_appointing_lead_of_a_second_team_vacates_the_first(self, client, dept, admin, registered_user, invite_user):
+    def test_one_person_can_lead_two_teams(self, client, dept, admin, registered_user, invite_user):
         a = _team(client, dept, admin, "Alpha")
         b = _team(client, dept, admin, "Beta")
-        mgr_id = self._manager(client, dept, registered_user, invite_user)
+        _, mgr_id = self._manager(client, dept, registered_user, invite_user)
 
         client.put(f"/departments/{dept}/teams/{a}/manager/{mgr_id}", headers=admin)
         client.put(f"/departments/{dept}/teams/{b}/manager/{mgr_id}", headers=admin)
 
-        assert client.get(f"/departments/{dept}/teams/{a}", headers=admin).json()["manager_user_id"] is None
+        assert client.get(f"/departments/{dept}/teams/{a}", headers=admin).json()["manager_user_id"] == mgr_id
         assert client.get(f"/departments/{dept}/teams/{b}", headers=admin).json()["manager_user_id"] == mgr_id
-        assert client.get(f"/departments/{dept}/teams/{a}/members", headers=admin).json() == []
 
-    def test_moving_a_lead_via_the_roster_also_vacates(self, client, dept, admin, registered_user, invite_user):
+    def test_they_can_manage_the_roster_of_every_team_they_lead(self, client, dept, admin, registered_user, invite_user, engineer_user):
         a = _team(client, dept, admin, "Alpha")
         b = _team(client, dept, admin, "Beta")
-        mgr_id = self._manager(client, dept, registered_user, invite_user)
+        mgr, mgr_id = self._manager(client, dept, registered_user, invite_user)
         client.put(f"/departments/{dept}/teams/{a}/manager/{mgr_id}", headers=admin)
+        client.put(f"/departments/{dept}/teams/{b}/manager/{mgr_id}", headers=admin)
+        eng_id = client.get("/me", headers=auth(engineer_user)).json()["id"]
 
-        client.put(f"/departments/{dept}/teams/{b}/members/{mgr_id}", headers=admin)
-
-        assert client.get(f"/departments/{dept}/teams/{a}", headers=admin).json()["manager_user_id"] is None
+        assert client.put(f"/departments/{dept}/teams/{a}/members/{eng_id}", headers=auth(mgr)).status_code == 200
+        assert client.put(f"/departments/{dept}/teams/{b}/members/{eng_id}", headers=auth(mgr)).status_code == 200
 
     def test_reappointing_the_same_lead_is_stable(self, client, dept, admin, registered_user, invite_user):
         team_id = _team(client, dept, admin, "Alpha")
-        mgr_id = self._manager(client, dept, registered_user, invite_user)
+        _, mgr_id = self._manager(client, dept, registered_user, invite_user)
         client.put(f"/departments/{dept}/teams/{team_id}/manager/{mgr_id}", headers=admin)
         r = client.put(f"/departments/{dept}/teams/{team_id}/manager/{mgr_id}", headers=admin)
         assert r.json()["manager_user_id"] == mgr_id
-        assert [m["user_id"] for m in client.get(f"/departments/{dept}/teams/{team_id}/members", headers=admin).json()] == [mgr_id]
-
-    def test_get_team_reports_the_lead_name(self, client, dept, admin, registered_user, invite_user):
-        """Regression: this route returned the raw ORM row, so manager_name was
-        always null even when a lead was set."""
-        team_id = _team(client, dept, admin, "Alpha")
-        mgr_id = self._manager(client, dept, registered_user, invite_user)
-        client.put(f"/departments/{dept}/teams/{team_id}/manager/{mgr_id}", headers=admin)
-
-        body = client.get(f"/departments/{dept}/teams/{team_id}", headers=admin).json()
-        assert body["manager_user_id"] == mgr_id
-        assert body["manager_name"] == "Mgr Tester"
-
-    def test_list_teams_reports_the_lead_name(self, client, dept, admin, registered_user, invite_user):
-        team_id = _team(client, dept, admin, "Alpha")
-        mgr_id = self._manager(client, dept, registered_user, invite_user)
-        client.put(f"/departments/{dept}/teams/{team_id}/manager/{mgr_id}", headers=admin)
-        assert client.get(f"/departments/{dept}/teams", headers=admin).json()[0]["manager_name"] == "Mgr Tester"

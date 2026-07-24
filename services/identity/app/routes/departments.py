@@ -38,7 +38,7 @@ def list_departments(_: User = Depends(get_current_user), db: Session = Depends(
 
 @router.get("/{dept_id}", response_model=DepartmentResponse)
 def get_department(dept_id: int, _: User = Depends(dept_member), db: Session = Depends(get_db)) -> DepartmentResponse:
-    return dept_service.get_department(db, dept_id)
+    return dept_service.get_department_response(db, dept_id)
 
 @router.patch("/{dept_id}", response_model=DepartmentResponse)
 def update_department(dept_id: int, payload: DepartmentUpdate, _: User = Depends(dept_admin), db: Session = Depends(get_db)) -> DepartmentResponse:
@@ -47,6 +47,20 @@ def update_department(dept_id: int, payload: DepartmentUpdate, _: User = Depends
 @router.delete("/{dept_id}", status_code=status.HTTP_204_NO_CONTENT)
 def delete_department(dept_id: int, _: User = Depends(require_platform_admin), db: Session = Depends(get_db)) -> None:
     dept_service.delete_department(db, dept_id)
+
+@router.put("/{dept_id}/head/{head_user_id}", response_model=DepartmentResponse)
+def set_department_head(dept_id: int, head_user_id: int, _: User = Depends(require_platform_admin), db: Session = Depends(get_db)) -> DepartmentResponse:
+    """Name the head of the department. Platform-admin only: who runs a
+    department is a decision from above it, not one its own admins make.
+
+    They must already hold the admin role here — see set_head for why we don't
+    grant it silently. This is a title, not a team assignment, so nobody moves."""
+    return dept_service.set_head(db, dept_id, head_user_id)
+
+@router.delete("/{dept_id}/head", response_model=DepartmentResponse)
+def clear_department_head(dept_id: int, _: User = Depends(require_platform_admin), db: Session = Depends(get_db)) -> DepartmentResponse:
+    """Leave the department without a named head. They keep their admin role."""
+    return dept_service.set_head(db, dept_id, None)
 
 @router.get("/{dept_id}/members", response_model=MemberListResponse)
 def list_members(
@@ -63,8 +77,23 @@ def update_member(dept_id: int, member_user_id: int, payload: MemberUpdate, _: U
     return dept_service.update_member(db, dept_id, member_user_id, payload)
 
 @router.delete("/{dept_id}/members/{member_user_id}", status_code=status.HTTP_204_NO_CONTENT)
-def remove_member(dept_id: int, member_user_id: int, _: User = Depends(dept_admin), db: Session = Depends(get_db)) -> None:
-    dept_service.remove_member(db, dept_id, member_user_id)
+def remove_member(
+    dept_id: int,
+    member_user_id: int,
+    replacement_user_id: int | None = Query(default=None, description="Hand their team(s)/headship to this person instead of leaving them empty"),
+    allow_unled: bool = Query(default=False, description="Proceed even though teams or the department will be left without a lead"),
+    _: User = Depends(dept_admin),
+    db: Session = Depends(get_db),
+) -> None:
+    """Removing someone who leads a team (or heads the department) is refused
+    with a 409 naming what would be left leaderless — pass replacement_user_id
+    to hand it over, or allow_unled=true to accept the gap knowingly. Without
+    this, a team could silently end up with nobody able to approve its reports."""
+    dept_service.remove_member(
+        db, dept_id, member_user_id,
+        replacement_user_id=replacement_user_id,
+        allow_unled=allow_unled,
+    )
 
 @router.post("/{dept_id}/invites", response_model=InviteResponse, status_code=status.HTTP_201_CREATED)
 def create_invite(dept_id: int, payload: InviteCreate, user: User = Depends(dept_admin), db: Session = Depends(get_db)) -> InviteResponse:

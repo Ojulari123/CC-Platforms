@@ -16,6 +16,10 @@ class DepartmentResponse(BaseModel):
     id: int
     name: str
     slug: str
+    # The one named person who runs the department. Distinct from the set of
+    # people holding role="admin", and from platform admins (whole workspace).
+    head_user_id: int | None = None
+    head_name: str | None = None
 
 class TeamCreate(BaseModel):
     name: str = Field(min_length=1, max_length=200)

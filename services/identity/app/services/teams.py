@@ -83,41 +83,27 @@ def _to_team_response(db: Session, team: Team) -> TeamResponse:
 def set_manager(db: Session, dept_id: int, team_id: int, manager_user_id: int | None) -> TeamResponse:
     """Appoint (or clear) the team's lead.
 
-    The lead must already be in the department and hold manager or admin — an
-    engineer leading a team could approve their own peers' reports without that
-    ever being an explicit decision.
+    The lead must be in the department and hold manager or admin — an engineer
+    leading a team could approve their own peers' reports without that ever
+    being an explicit decision.
 
-    Appointing someone also puts them ON the team, because a lead who isn't a
-    member is a contradiction every other query would have to special-case. And
-    since a person holds one team per department, that MOVES them: they leave
-    whatever team they were on, and any team they used to lead here is vacated
-    rather than left pointing at someone who has gone."""
+    Leading a team and being ON it are separate facts. Appointing therefore
+    moves nobody and vacates nothing: it can't strand another team, and one
+    person can lead several teams if that's how the department works."""
     team = get_team(db, dept_id, team_id)
 
-    if manager_user_id is None:
-        team.manager_user_id = None
-        db.commit()
-        db.refresh(team)
-        return _to_team_response(db, team)
-
-    membership = db.scalar(select(Membership).where(
-        Membership.user_id == manager_user_id,
-        Membership.dept_id == dept_id,
-        Membership.is_active.is_(True),
-    ))
-    if not membership:
-        raise HTTPException(status_code=400, detail="The team lead must be a member of this department")
-    if membership.role not in ("manager", "admin"):
-        raise HTTPException(status_code=400, detail="The team lead must have the manager or admin role")
-
-    db.query(Team).filter(
-        Team.dept_id == dept_id,
-        Team.manager_user_id == manager_user_id,
-        Team.id != team_id,
-    ).update({"manager_user_id": None}, synchronize_session=False)
+    if manager_user_id is not None:
+        membership = db.scalar(select(Membership).where(
+            Membership.user_id == manager_user_id,
+            Membership.dept_id == dept_id,
+            Membership.is_active.is_(True),
+        ))
+        if not membership:
+            raise HTTPException(status_code=400, detail="The team lead must be a member of this department")
+        if membership.role not in ("manager", "admin"):
+            raise HTTPException(status_code=400, detail="The team lead must have the manager or admin role")
 
     team.manager_user_id = manager_user_id
-    membership.team_id = team_id
     db.commit()
     db.refresh(team)
     return _to_team_response(db, team)
@@ -168,14 +154,6 @@ def add_team_member(db: Session, dept_id: int, team_id: int, user_id: int) -> Me
     re-adding someone already on the team is a no-op rather than an error."""
     get_team(db, dept_id, team_id)
     membership = _membership_in_dept(db, dept_id, user_id)
-    if membership.team_id != team_id:
-        # Moving them off a team they led leaves that team without a lead,
-        # rather than pointing at someone who is no longer on it.
-        db.query(Team).filter(
-            Team.dept_id == dept_id,
-            Team.manager_user_id == user_id,
-            Team.id != team_id,
-        ).update({"manager_user_id": None}, synchronize_session=False)
     membership.team_id = team_id
     db.commit()
     db.refresh(membership)
@@ -186,16 +164,15 @@ def add_team_member(db: Session, dept_id: int, team_id: int, user_id: int) -> Me
     )
 
 def remove_team_member(db: Session, dept_id: int, team_id: int, user_id: int) -> None:
-    """Take someone off the team. They stay in the department, just unassigned."""
-    team = get_team(db, dept_id, team_id)
+    """Take someone off the team's roster. They stay in the department, just
+    unassigned — and if they lead this team they still lead it, since leading
+    and being rostered are separate facts. Use DELETE .../manager to step
+    someone down."""
+    get_team(db, dept_id, team_id)
     membership = _membership_in_dept(db, dept_id, user_id)
     if membership.team_id != team_id:
         raise HTTPException(status_code=404, detail="That person is not on this team")
     membership.team_id = None
-    if team.manager_user_id == user_id:
-        # Can't lead a team you're not on — vacate rather than leave a lead
-        # pointing at someone who left.
-        team.manager_user_id = None
     db.commit()
 
 def get_team_response(db: Session, dept_id: int, team_id: int) -> TeamResponse:

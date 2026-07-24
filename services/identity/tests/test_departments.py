@@ -242,3 +242,126 @@ class TestPlatformAdmins:
         r = client.delete(f"/platform/admins/{eng_id}", headers=auth(tokens))
         assert r.status_code == 200
         assert r.json()["is_platform_admin"] is False
+
+
+class TestDepartmentHead:
+    """Department.head_user_id — the one named person who runs a department,
+    as opposed to the SET of people holding role=admin, and distinct again from
+    platform admins who run the whole workspace."""
+
+    def _admin_member(self, client, registered_user, invite_user, email="head@example.com"):
+        dept = registered_user["dept_id"]
+        u = invite_user(registered_user["tokens"], dept, email, "admin")
+        return u, client.get("/me", headers=auth(u)).json()["id"]
+
+    def test_department_starts_with_no_head(self, client, registered_user):
+        body = client.get(f"/departments/{registered_user['dept_id']}", headers=auth(registered_user["tokens"])).json()
+        assert body["head_user_id"] is None
+        assert body["head_name"] is None
+
+    def test_platform_admin_names_a_head(self, client, registered_user, invite_user):
+        dept = registered_user["dept_id"]
+        _, head_id = self._admin_member(client, registered_user, invite_user)
+        r = client.put(f"/departments/{dept}/head/{head_id}", headers=auth(registered_user["tokens"]))
+        assert r.status_code == 200
+        assert r.json()["head_user_id"] == head_id
+        assert r.json()["head_name"] == "Head Tester"
+
+    def test_head_must_be_an_admin(self, client, registered_user, engineer_user):
+        dept = registered_user["dept_id"]
+        eng_id = client.get("/me", headers=auth(engineer_user)).json()["id"]
+        r = client.put(f"/departments/{dept}/head/{eng_id}", headers=auth(registered_user["tokens"]))
+        assert r.status_code == 400
+        assert "admin role" in r.json()["detail"]
+
+    def test_head_must_be_in_the_department(self, client, registered_user, second_dept, invite_user):
+        outsider = invite_user(registered_user["tokens"], second_dept, "out@example.com", "admin")
+        outsider_id = client.get("/me", headers=auth(outsider)).json()["id"]
+        r = client.put(f"/departments/{registered_user['dept_id']}/head/{outsider_id}", headers=auth(registered_user["tokens"]))
+        assert r.status_code == 400
+        assert "member of this department" in r.json()["detail"]
+
+    def test_naming_a_head_does_not_move_them_to_a_team(self, client, registered_user, invite_user):
+        dept = registered_user["dept_id"]
+        _, head_id = self._admin_member(client, registered_user, invite_user)
+        client.put(f"/departments/{dept}/head/{head_id}", headers=auth(registered_user["tokens"]))
+        members = client.get(f"/departments/{dept}/members", headers=auth(registered_user["tokens"])).json()
+        assert next(m for m in members["items"] if m["user_id"] == head_id)["team_id"] is None
+
+    def test_head_can_be_cleared(self, client, registered_user, invite_user):
+        dept = registered_user["dept_id"]
+        _, head_id = self._admin_member(client, registered_user, invite_user)
+        client.put(f"/departments/{dept}/head/{head_id}", headers=auth(registered_user["tokens"]))
+        r = client.delete(f"/departments/{dept}/head", headers=auth(registered_user["tokens"]))
+        assert r.json()["head_user_id"] is None
+
+    def test_dept_admin_cannot_name_the_head(self, client, registered_user, invite_user):
+        """Who runs a department is decided from above it."""
+        dept = registered_user["dept_id"]
+        other, other_id = self._admin_member(client, registered_user, invite_user)
+        r = client.put(f"/departments/{dept}/head/{other_id}", headers=auth(other))
+        assert r.status_code == 403
+        assert "platform administrator" in r.json()["detail"]
+
+    def test_head_shows_in_the_department_list(self, client, registered_user, invite_user):
+        dept = registered_user["dept_id"]
+        _, head_id = self._admin_member(client, registered_user, invite_user)
+        client.put(f"/departments/{dept}/head/{head_id}", headers=auth(registered_user["tokens"]))
+        row = next(d for d in client.get("/departments", headers=auth(registered_user["tokens"])).json() if d["id"] == dept)
+        assert row["head_name"] == "Head Tester"
+
+
+class TestRemovingSomeoneInCharge:
+    """Nothing may quietly end up with nobody running it."""
+
+    def _lead_of_a_team(self, client, registered_user, invite_user):
+        dept, admin = registered_user["dept_id"], auth(registered_user["tokens"])
+        team_id = client.post(f"/departments/{dept}/teams", json={"name": "Platform"}, headers=admin).json()["id"]
+        mgr = invite_user(registered_user["tokens"], dept, "mgr@example.com", "manager")
+        mgr_id = client.get("/me", headers=auth(mgr)).json()["id"]
+        client.put(f"/departments/{dept}/teams/{team_id}/manager/{mgr_id}", headers=admin)
+        return dept, admin, team_id, mgr_id
+
+    def test_removing_a_team_lead_is_refused_with_a_reason(self, client, registered_user, invite_user):
+        dept, admin, _, mgr_id = self._lead_of_a_team(client, registered_user, invite_user)
+        r = client.delete(f"/departments/{dept}/members/{mgr_id}", headers=admin)
+        assert r.status_code == 409
+        assert "leads Platform" in r.json()["detail"]
+        assert client.get(f"/departments/{dept}/members", headers=admin).json()["total"] == 2
+
+    def test_allow_unled_removes_them_and_empties_the_role(self, client, registered_user, invite_user):
+        dept, admin, team_id, mgr_id = self._lead_of_a_team(client, registered_user, invite_user)
+        r = client.delete(f"/departments/{dept}/members/{mgr_id}?allow_unled=true", headers=admin)
+        assert r.status_code == 204
+        assert client.get(f"/departments/{dept}/teams/{team_id}", headers=admin).json()["manager_user_id"] is None
+
+    def test_replacement_takes_over_the_team(self, client, registered_user, invite_user):
+        dept, admin, team_id, mgr_id = self._lead_of_a_team(client, registered_user, invite_user)
+        successor = invite_user(registered_user["tokens"], dept, "successor@example.com", "manager")
+        successor_id = client.get("/me", headers=auth(successor)).json()["id"]
+
+        r = client.delete(f"/departments/{dept}/members/{mgr_id}?replacement_user_id={successor_id}", headers=admin)
+        assert r.status_code == 204
+        assert client.get(f"/departments/{dept}/teams/{team_id}", headers=admin).json()["manager_user_id"] == successor_id
+
+    def test_replacement_must_be_a_manager_or_admin(self, client, registered_user, invite_user, engineer_user):
+        dept, admin, _, mgr_id = self._lead_of_a_team(client, registered_user, invite_user)
+        eng_id = client.get("/me", headers=auth(engineer_user)).json()["id"]
+        r = client.delete(f"/departments/{dept}/members/{mgr_id}?replacement_user_id={eng_id}", headers=admin)
+        assert r.status_code == 400
+        assert "manager or admin" in r.json()["detail"]
+
+    def test_removing_the_department_head_is_refused(self, client, registered_user, invite_user):
+        dept, admin = registered_user["dept_id"], auth(registered_user["tokens"])
+        head = invite_user(registered_user["tokens"], dept, "head@example.com", "admin")
+        head_id = client.get("/me", headers=auth(head)).json()["id"]
+        client.put(f"/departments/{dept}/head/{head_id}", headers=admin)
+
+        r = client.delete(f"/departments/{dept}/members/{head_id}", headers=admin)
+        assert r.status_code == 409
+        assert "heads Engineering" in r.json()["detail"]
+
+    def test_ordinary_member_removal_is_unaffected(self, client, registered_user, engineer_user):
+        dept, admin = registered_user["dept_id"], auth(registered_user["tokens"])
+        eng_id = client.get("/me", headers=auth(engineer_user)).json()["id"]
+        assert client.delete(f"/departments/{dept}/members/{eng_id}", headers=admin).status_code == 204

@@ -32,6 +32,10 @@ class Department(Base):
     id = Column(Integer, primary_key=True)
     name = Column(String(200), nullable=False)
     slug = Column(String(100), unique=True, index=True, nullable=False)
+    # The one named person who runs this department, as opposed to the SET of
+    # people holding role="admin". Same reason Team has a named lead: "who is
+    # in charge here" needs one answer, not a list.
+    head_user_id = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
     created_at = Column(TIMESTAMP(timezone=True), server_default=func.now(), nullable=False)
     updated_at = Column(TIMESTAMP(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
 
