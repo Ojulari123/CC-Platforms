@@ -3,10 +3,10 @@
 **Date:** 2026-07-23 · **Status:** implemented, pending review
 **Context:** Week 1–2 of the internship plan (identity service)
 
-This records four decisions about how people, departments and teams are
-modelled — and the four questions I'd like confirmed. Each decision is
-reversible, but the longer we build on one the more it costs to change, so
-they're worth a few minutes now.
+This records five decisions about how people, departments and teams are
+modelled — and the questions I'd like confirmed. Each decision is reversible,
+but the longer we build on one the more it costs to change, so they're worth a
+few minutes now.
 
 ---
 
@@ -78,15 +78,27 @@ in weeks 3–4.
 > new join table, a data migration, and re-deciding how report approval works.
 > Changing now is about half a day.
 
-**Each team has one named lead.** `Team.manager_user_id` — set by an admin, must
-already be in the department and hold manager or admin. Appointing someone also
-puts them on the team, and if they later leave the team or the department the
-role is vacated rather than left pointing at someone who's gone.
+**Each team has one named lead.** `Team.manager_user_id` — appointed by an
+admin via `PUT /departments/{d}/teams/{t}/manager/{user}`. They must be in the
+department and hold manager or admin.
 
 This replaced an inferred rule (manager = "has the manager role and happens to
 be assigned to this team"), which allowed a team to have none or several. Pulse
 routes every weekly report to the engineer's team lead for approval, and that
 flow needs exactly one answer.
+
+**Leading a team is separate from being on it.** The first version forced a
+lead onto the team they led, which — combined with one-team-per-person — meant
+appointing someone to a second team silently moved them and left the first team
+pointing at a lead who was no longer on it. Rather than patch that, leading and
+being rostered are now independent facts. Appointing moves nobody, so the
+problem cannot occur.
+
+> **Contingency, if you say a manager may run several teams:** this already
+> works. `manager_user_id` is an ordinary column with no uniqueness constraint,
+> so one person can lead Alpha and Beta today and manage both rosters. Zero
+> migration, zero code change — it's covered by tests. The only thing that ever
+> blocked it was the coupling described above, which is gone.
 
 > **QUESTION FOR REVIEW:** What happens when a lead is on leave? Right now
 > approvals would wait for them, or a department admin steps in. If cover is
@@ -102,7 +114,15 @@ invite people into the department, or change anyone's role.
 **Two ways to join a team.** An invite carries an optional team, so someone can
 be hired straight onto Platform and land there on day one; the invite email and
 the accept page both name the team. Otherwise they join the department
-unassigned and an admin or their manager adds them afterwards.
+unassigned and an admin or their team's lead adds them afterwards.
+
+**Nobody in charge disappears silently.** Removing a person who leads a team —
+or heads the department — is refused with a clear message naming what would be
+left with nobody running it. You then either name a successor
+(`?replacement_user_id=`) or confirm you accept the gap (`?allow_unled=true`).
+Ordinary members are removed with no friction. Without this, a team could end
+up with nobody able to approve its weekly reports and nobody would notice for
+weeks.
 
 ---
 
@@ -123,6 +143,54 @@ you control the address by opening the link.
 > `@cyphercrescent.com` address be able to self-register and wait for approval?
 > Invite-only is tighter and is what I've built; domain-based signup is more
 > convenient at larger headcounts.
+
+---
+
+## Decision 5 — Each department has one named head
+
+`Department.head_user_id`, appointed by a platform admin via
+`PUT /departments/{id}/head/{user_id}`.
+
+**Why.** "Who runs Engineering?" previously had no answer in the data. There was
+only the *set* of people holding `role: admin`, which can be empty or five
+people. That's the same ambiguity we'd just fixed for teams, one level up. An
+org chart needs one name, and Pulse will need one person to escalate to.
+
+Three different things that were previously easy to confuse:
+
+| | what it means | who sets it |
+|---|---|---|
+| `is_platform_admin` | runs the whole workspace, every department | another platform admin |
+| `role: "admin"` | a *permission* inside one department | a department admin |
+| `head_user_id` | the one named person who *runs* that department | a platform admin |
+
+Only a platform admin can appoint a head — who runs a department is decided
+from above it, not by the department itself. The head must already hold the
+admin role there, so naming someone head never silently grants them power; you
+promote them first, deliberately. Like a team lead, it's a title, not a team
+assignment: nobody is moved.
+
+> **QUESTION FOR REVIEW:** Should a department head be able to appoint their own
+> successor, or must that always come from a platform admin? Currently the
+> latter.
+
+---
+
+## A gap worth naming: what does `role: "manager"` actually do?
+
+**Today, on its own: nothing.** I checked every place the role is read, and both
+are eligibility gates — you must be manager-or-admin to *be appointed* a team
+lead, or to be a handover replacement. Every actual power comes from being named
+in `Team.manager_user_id`, not from the role.
+
+So a "manager" who leads no team currently has exactly the same permissions as
+an engineer. That's a reasonable starting point (the role is a job title plus
+eligibility) but it should be a decision rather than an accident.
+
+> **QUESTION FOR REVIEW:** When Pulse lands, should a department's managers see
+> or approve anything beyond the team they lead — for example, read all reports
+> in their department? If yes, the role starts carrying real permissions and we
+> should say so before the approval flow is written.
 
 ---
 
@@ -153,6 +221,10 @@ token that other services trust.
 | 2 | Platform admin flag + endpoint to appoint others | **Who holds it?** |
 | 3 | One team per person per department | **Is this true here?** |
 | 4 | Bootstrap-only registration, then invite-only | **Invite-only, or domain self-signup?** |
+| 5 | Each department has one named head | **Can a head name their successor?** |
+| — | `role: "manager"` grants no permissions by itself | **Should it, once Pulse exists?** |
+| — | A manager may lead several teams | **Not needed yet — already supported if you want it** |
 
 Also still open from earlier sessions: confirming **Brevo** as the email
-provider and the sender address it sends from.
+provider (it is sending for real now) and the sender address it sends from,
+currently `noreply@cyphercrescent.com`.
