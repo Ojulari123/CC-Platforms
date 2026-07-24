@@ -80,21 +80,29 @@ def _to_team_response(db: Session, team: Team) -> TeamResponse:
         manager_name=f"{lead.first_name} {lead.last_name}" if lead else None,
     )
 
-def _set_manager(db: Session, team: Team, manager_user_id: int | None) -> None:
+def set_manager(db: Session, dept_id: int, team_id: int, manager_user_id: int | None) -> TeamResponse:
     """Appoint (or clear) the team's lead.
 
     The lead must already be in the department and hold manager or admin — an
-    engineer leading a team would be able to approve their own peers' reports
-    without that ever being an explicit decision. Appointing someone also puts
-    them ON the team, because a lead who isn't a member is a contradiction the
-    rest of the system would have to keep special-casing."""
+    engineer leading a team could approve their own peers' reports without that
+    ever being an explicit decision.
+
+    Appointing someone also puts them ON the team, because a lead who isn't a
+    member is a contradiction every other query would have to special-case. And
+    since a person holds one team per department, that MOVES them: they leave
+    whatever team they were on, and any team they used to lead here is vacated
+    rather than left pointing at someone who has gone."""
+    team = get_team(db, dept_id, team_id)
+
     if manager_user_id is None:
         team.manager_user_id = None
-        return
+        db.commit()
+        db.refresh(team)
+        return _to_team_response(db, team)
 
     membership = db.scalar(select(Membership).where(
         Membership.user_id == manager_user_id,
-        Membership.dept_id == team.dept_id,
+        Membership.dept_id == dept_id,
         Membership.is_active.is_(True),
     ))
     if not membership:
@@ -102,19 +110,25 @@ def _set_manager(db: Session, team: Team, manager_user_id: int | None) -> None:
     if membership.role not in ("manager", "admin"):
         raise HTTPException(status_code=400, detail="The team lead must have the manager or admin role")
 
+    db.query(Team).filter(
+        Team.dept_id == dept_id,
+        Team.manager_user_id == manager_user_id,
+        Team.id != team_id,
+    ).update({"manager_user_id": None}, synchronize_session=False)
+
     team.manager_user_id = manager_user_id
-    membership.team_id = team.id
+    membership.team_id = team_id
+    db.commit()
+    db.refresh(team)
+    return _to_team_response(db, team)
 
 def update_team(db: Session, dept_id: int, team_id: int, payload: TeamUpdate) -> TeamResponse:
+    """Rename only. The lead has its own endpoint — appointing one has side
+    effects (moves the person, vacates their old team) that don't belong hidden
+    inside a rename."""
     team = get_team(db, dept_id, team_id)
-    changes = payload.model_dump(exclude_unset=True)
-
-    if "name" in changes and changes["name"] is not None:
-        team.name = changes["name"]
-        team.slug = _unique_team_slug(db, dept_id, _slugify(changes["name"]), exclude_id=team_id)
-    if "manager_user_id" in changes:
-        _set_manager(db, team, changes["manager_user_id"])
-
+    team.name = payload.name
+    team.slug = _unique_team_slug(db, dept_id, _slugify(payload.name), exclude_id=team_id)
     db.commit()
     db.refresh(team)
     return _to_team_response(db, team)
@@ -154,6 +168,14 @@ def add_team_member(db: Session, dept_id: int, team_id: int, user_id: int) -> Me
     re-adding someone already on the team is a no-op rather than an error."""
     get_team(db, dept_id, team_id)
     membership = _membership_in_dept(db, dept_id, user_id)
+    if membership.team_id != team_id:
+        # Moving them off a team they led leaves that team without a lead,
+        # rather than pointing at someone who is no longer on it.
+        db.query(Team).filter(
+            Team.dept_id == dept_id,
+            Team.manager_user_id == user_id,
+            Team.id != team_id,
+        ).update({"manager_user_id": None}, synchronize_session=False)
     membership.team_id = team_id
     db.commit()
     db.refresh(membership)
@@ -175,3 +197,8 @@ def remove_team_member(db: Session, dept_id: int, team_id: int, user_id: int) ->
         # pointing at someone who left.
         team.manager_user_id = None
     db.commit()
+
+def get_team_response(db: Session, dept_id: int, team_id: int) -> TeamResponse:
+    """get_team returns the ORM row (callers that need the object); this returns
+    the API shape, which carries the lead's name."""
+    return _to_team_response(db, get_team(db, dept_id, team_id))

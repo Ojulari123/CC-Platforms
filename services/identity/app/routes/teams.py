@@ -26,7 +26,7 @@ def list_teams(dept_id: int, _: User = Depends(dept_member), db: Session = Depen
 
 @router.get("/{team_id}", response_model=TeamResponse)
 def get_team(dept_id: int, team_id: int, _: User = Depends(dept_member), db: Session = Depends(get_db)) -> TeamResponse:
-    return team_service.get_team(db, dept_id, team_id)
+    return team_service.get_team_response(db, dept_id, team_id)
 
 @router.patch("/{team_id}", response_model=TeamResponse)
 def update_team(dept_id: int, team_id: int, payload: TeamUpdate, _: User = Depends(dept_admin), db: Session = Depends(get_db)) -> TeamResponse:
@@ -35,6 +35,20 @@ def update_team(dept_id: int, team_id: int, payload: TeamUpdate, _: User = Depen
 @router.delete("/{team_id}", status_code=status.HTTP_204_NO_CONTENT)
 def delete_team(dept_id: int, team_id: int, _: User = Depends(dept_admin), db: Session = Depends(get_db)) -> None:
     team_service.delete_team(db, dept_id, team_id)
+
+@router.put("/{team_id}/manager/{manager_user_id}", response_model=TeamResponse)
+def set_team_manager(dept_id: int, team_id: int, manager_user_id: int, _: User = Depends(dept_admin), db: Session = Depends(get_db)) -> TeamResponse:
+    """Appoint the team's lead — the person who approves its weekly reports.
+
+    Side effects, deliberately: they're added to this team (a lead who isn't a
+    member makes no sense), which means they leave whatever team they were on,
+    and any other team they led here is left without a lead."""
+    return team_service.set_manager(db, dept_id, team_id, manager_user_id)
+
+@router.delete("/{team_id}/manager", response_model=TeamResponse)
+def clear_team_manager(dept_id: int, team_id: int, _: User = Depends(dept_admin), db: Session = Depends(get_db)) -> TeamResponse:
+    """Leave the team without a lead. They stay on the team as a member."""
+    return team_service.set_manager(db, dept_id, team_id, None)
 
 @router.get("/{team_id}/members", response_model=list[MemberResponse])
 def list_team_members(dept_id: int, team_id: int, _: User = Depends(dept_member), db: Session = Depends(get_db)) -> list[MemberResponse]:

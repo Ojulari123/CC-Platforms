@@ -21,10 +21,8 @@ class TeamCreate(BaseModel):
     name: str = Field(min_length=1, max_length=200)
 
 class TeamUpdate(BaseModel):
-    """Partial update — send only what changes. Passing manager_user_id: null
-    explicitly clears the lead; omitting it leaves the current one alone."""
-    name: str | None = Field(default=None, min_length=1, max_length=200)
-    manager_user_id: int | None = None
+    """Rename only — the lead is appointed via .../teams/{id}/manager/{user_id}."""
+    name: str = Field(min_length=1, max_length=200)
 
 class TeamResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
