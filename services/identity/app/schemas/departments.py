@@ -25,7 +25,6 @@ class TeamCreate(BaseModel):
     name: str = Field(min_length=1, max_length=200)
 
 class TeamUpdate(BaseModel):
-    """Rename only — the lead is appointed via .../teams/{id}/manager/{user_id}."""
     name: str = Field(min_length=1, max_length=200)
 
 class TeamResponse(BaseModel):
@@ -39,8 +38,6 @@ class TeamResponse(BaseModel):
     manager_name: str | None = None
 
 class TeamListItem(BaseModel):
-    """A team seen outside its department's URL, so it carries the department
-    with it — a bare list of team names across the company is ambiguous."""
     id: int
     name: str
     slug: str

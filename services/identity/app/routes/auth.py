@@ -9,8 +9,6 @@ from app.services import auth as auth_service
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
-# Limits ported from FindYourCribb. slowapi needs the `request` param to key by IP.
-
 @router.post("/register", response_model=TokenPair, status_code=status.HTTP_201_CREATED)
 @limiter.limit("5/minute")
 def register(request: Request, payload: RegisterRequest, db: Session = Depends(get_db)) -> TokenPair:

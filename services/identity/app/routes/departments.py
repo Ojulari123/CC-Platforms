@@ -1,22 +1,8 @@
-"""Departments, their member roster, and their invites.
-
-Every path names the department it acts on, and permission is checked against
-THAT department. Someone can be an admin in Engineering and an engineer in Data
-without either bleeding into the other. Teams are in routes/teams.py."""
 from fastapi import APIRouter, Depends, Query, status
 from sqlalchemy.orm import Session
 from app.db import get_db
 from app.models import User
-from app.schemas.departments import (
-    DepartmentCreate,
-    DepartmentResponse,
-    DepartmentUpdate,
-    InviteCreate,
-    InviteResponse,
-    MemberListResponse,
-    MemberResponse,
-    MemberUpdate,
-)
+from app.schemas.departments import DepartmentCreate, DepartmentResponse, DepartmentUpdate, InviteCreate, InviteResponse, MemberListResponse, MemberResponse, MemberUpdate
 from app.security import get_current_user, require_dept_role, require_platform_admin
 from app.services import departments as dept_service
 from app.services import invites as invites_service
@@ -63,13 +49,7 @@ def clear_department_head(dept_id: int, _: User = Depends(require_platform_admin
     return dept_service.set_head(db, dept_id, None)
 
 @router.get("/{dept_id}/members", response_model=MemberListResponse)
-def list_members(
-    dept_id: int,
-    limit: int = Query(default=50, ge=1, le=200),
-    offset: int = Query(default=0, ge=0),
-    _: User = Depends(dept_member),
-    db: Session = Depends(get_db),
-) -> MemberListResponse:
+def list_members(dept_id: int, limit: int = Query(default=50, ge=1, le=200), offset: int = Query(default=0, ge=0), _: User = Depends(dept_member), db: Session = Depends(get_db)) -> MemberListResponse:
     return dept_service.list_members(db, dept_id, limit=limit, offset=offset)
 
 @router.patch("/{dept_id}/members/{member_user_id}", response_model=MemberResponse)
@@ -77,14 +57,7 @@ def update_member(dept_id: int, member_user_id: int, payload: MemberUpdate, _: U
     return dept_service.update_member(db, dept_id, member_user_id, payload)
 
 @router.delete("/{dept_id}/members/{member_user_id}", status_code=status.HTTP_204_NO_CONTENT)
-def remove_member(
-    dept_id: int,
-    member_user_id: int,
-    replacement_user_id: int | None = Query(default=None, description="Hand their team(s)/headship to this person instead of leaving them empty"),
-    allow_unled: bool = Query(default=False, description="Proceed even though teams or the department will be left without a lead"),
-    _: User = Depends(dept_admin),
-    db: Session = Depends(get_db),
-) -> None:
+def remove_member(dept_id: int, member_user_id: int, replacement_user_id: int | None = Query(default=None, description="Hand their team(s)/headship to this person instead of leaving them empty"), allow_unled: bool = Query(default=False, description="Proceed even though teams or the department will be left without a lead"), _: User = Depends(dept_admin), db: Session = Depends(get_db)) -> None:
     """Removing someone who leads a team (or heads the department) is refused
     with a 409 naming what would be left leaderless — pass replacement_user_id
     to hand it over, or allow_unled=true to accept the gap knowingly. Without

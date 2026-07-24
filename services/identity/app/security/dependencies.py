@@ -63,8 +63,7 @@ def require_team_manager(dept_id: int, team_id: int, user: User = Depends(get_cu
     )
 
 def require_dept_role(*roles: str):
-    """Factory: FastAPI dependency gating on the caller's role IN THE DEPARTMENT
-    NAMED IN THE URL. `dept_id` is read from the path, so permission is always
+    """`Dept_id` is read from the path, so permission is always
     evaluated against the department actually being acted on — a person can be
     an admin in one department and an engineer in another without either
     leaking into the other.
