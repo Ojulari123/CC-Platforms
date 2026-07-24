@@ -95,7 +95,20 @@ class InviteAccept(BaseModel):
     # Required only when the invitee doesn't have an account yet.
     first_name: str | None = Field(default=None, max_length=100)
     last_name: str | None = Field(default=None, max_length=100)
-    password: str | None = Field(default=None, max_length=128)
+    password: str | None = Field(default=None, max_length=72)
+
+class UserAccountResponse(BaseModel):
+    """Returned when an account is deactivated or reactivated. `still_leads` and
+    `still_heads` surface what the person remains responsible for, so a leaver
+    who runs a team doesn't quietly leave it with a lead who can't log in."""
+    id: int
+    email: EmailStr
+    first_name: str
+    last_name: str
+    is_active: bool
+    is_platform_admin: bool
+    still_leads: list[str] = []
+    still_heads: list[str] = []
 
 class PlatformAdminResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)

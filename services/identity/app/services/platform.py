@@ -3,9 +3,10 @@ whole (create departments, administer any of them, appoint other platform
 admins). Distinct from the per-department "admin" role, which is scoped to one
 department."""
 from fastapi import HTTPException
+from app.schemas.departments import UserAccountResponse
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
-from app.models import User
+from app.models import Department, Team, User
 
 def list_platform_admins(db: Session) -> list[User]:
     return list(db.scalars(select(User).where(User.is_platform_admin.is_(True)).order_by(User.first_name, User.last_name)))
@@ -15,6 +16,60 @@ def _get_user(db: Session, user_id: int) -> User:
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
     return user
+
+def deactivate_user(db: Session, user_id: int, acting_user: User) -> UserAccountResponse:
+    """Offboarding. The account survives (so reports, approvals and audit trails
+    keep pointing at a real person) but the person can no longer log in, and
+    every existing session dies immediately.
+
+    Titles are deliberately NOT vacated. Deactivation is reversible and often
+    temporary — long leave, a suspended account — and silently dismantling
+    someone's teams on the way out would be worse than leaving them in place.
+    The response lists what they still run so it's visible rather than silent;
+    to hand those over properly, remove them from the department instead."""
+    user = _get_user(db, user_id)
+    # This alone prevents locking the workspace out: deactivating requires being
+    # a platform admin, so the only person who could deactivate the last one is
+    # that person. (A separate "is this the last admin" count would be
+    # unreachable code — the self-check always fires first.)
+    if user.id == acting_user.id:
+        raise HTTPException(status_code=400, detail="You cannot deactivate your own account")
+
+    user.is_active = False
+    db.commit()
+    db.refresh(user)
+    from app.services.auth import revoke_all_for_user
+    revoke_all_for_user(db, user_id)
+    return _account_response(db, user)
+
+def reactivate_user(db: Session, user_id: int) -> UserAccountResponse:
+    """Undo a deactivation. Memberships and titles were never touched, so they
+    come back exactly as they were. They must log in again."""
+    user = _get_user(db, user_id)
+    user.is_active = True
+    db.commit()
+    db.refresh(user)
+    return _account_response(db, user)
+
+def _account_response(db: Session, user: User) -> UserAccountResponse:
+    """Surfaces anything the person still runs, so deactivating someone who
+    leads a team doesn't quietly leave it without a working lead."""
+    led = db.execute(
+        select(Team.name, Department.name)
+        .join(Department, Department.id == Team.dept_id)
+        .where(Team.manager_user_id == user.id)
+    ).all()
+    headed = db.scalars(select(Department.name).where(Department.head_user_id == user.id)).all()
+    return UserAccountResponse(
+        id=user.id,
+        email=user.email,
+        first_name=user.first_name,
+        last_name=user.last_name,
+        is_active=user.is_active,
+        is_platform_admin=user.is_platform_admin,
+        still_leads=[f"{team} ({dept})" for team, dept in led],
+        still_heads=list(headed),
+    )
 
 def grant_platform_admin(db: Session, user_id: int) -> User:
     user = _get_user(db, user_id)

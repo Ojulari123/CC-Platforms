@@ -53,8 +53,24 @@ def list_members(dept_id: int, limit: int = Query(default=50, ge=1, le=200), off
     return dept_service.list_members(db, dept_id, limit=limit, offset=offset)
 
 @router.patch("/{dept_id}/members/{member_user_id}", response_model=MemberResponse)
-def update_member(dept_id: int, member_user_id: int, payload: MemberUpdate, _: User = Depends(dept_admin), db: Session = Depends(get_db)) -> MemberResponse:
-    return dept_service.update_member(db, dept_id, member_user_id, payload)
+def update_member(
+    dept_id: int,
+    member_user_id: int,
+    payload: MemberUpdate,
+    replacement_user_id: int | None = Query(default=None, description="Hand any team(s)/headship the demotion costs them to this person"),
+    allow_unled: bool = Query(default=False, description="Demote anyway, leaving those without anyone in charge"),
+    _: User = Depends(dept_admin),
+    db: Session = Depends(get_db),
+) -> MemberResponse:
+    """Demoting someone out of the role a title requires is refused with a 409
+    naming what they'd stop being able to run — same handover choice as removal.
+    Otherwise a demoted engineer would keep leading a team and keep managing its
+    roster."""
+    return dept_service.update_member(
+        db, dept_id, member_user_id, payload,
+        replacement_user_id=replacement_user_id,
+        allow_unled=allow_unled,
+    )
 
 @router.delete("/{dept_id}/members/{member_user_id}", status_code=status.HTTP_204_NO_CONTENT)
 def remove_member(dept_id: int, member_user_id: int, replacement_user_id: int | None = Query(default=None, description="Hand their team(s)/headship to this person instead of leaving them empty"), allow_unled: bool = Query(default=False, description="Proceed even though teams or the department will be left without a lead"), _: User = Depends(dept_admin), db: Session = Depends(get_db)) -> None:

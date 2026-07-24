@@ -131,12 +131,37 @@ def _to_member_response(db: Session, membership: Membership) -> MemberResponse:
         role=membership.role, team_id=membership.team_id, is_active=membership.is_active,
     )
 
-def update_member(db: Session, dept_id: int, member_user_id: int, payload: MemberUpdate) -> MemberResponse:
+def update_member(
+    db: Session,
+    dept_id: int,
+    member_user_id: int,
+    payload: MemberUpdate,
+    replacement_user_id: int | None = None,
+    allow_unled: bool = False,
+) -> MemberResponse:
+    """Change someone's role or team.
+
+    A role is only validated when a title is *granted* — so without the handover
+    check below, demoting a team lead to engineer left them still leading the
+    team AND still able to manage its roster, because permission is read from
+    Team.manager_user_id and never re-checks the role. Demotion is exactly when
+    access is expected to stop, so a role change now has to resolve any title it
+    invalidates."""
     membership = _get_membership(db, dept_id, member_user_id)
 
     changes = payload.model_dump(exclude_unset=True)
-    if "role" in changes and changes["role"] != "admin" and membership.role == "admin":
-        _assert_not_last_admin(db, dept_id, member_user_id, "demote")
+    new_role = changes.get("role")
+    if new_role is not None and new_role != membership.role:
+        if membership.role == "admin" and new_role != "admin":
+            _assert_not_last_admin(db, dept_id, member_user_id, "demote")
+        _handover(
+            db, dept_id, member_user_id, replacement_user_id, allow_unled,
+            # Leading a team needs manager-or-admin; heading a department needs admin.
+            losing_team_leadership=new_role not in ("manager", "admin"),
+            losing_headship=new_role != "admin",
+            action=f"Demoting them to {new_role}",
+        )
+
     if "team_id" in changes and changes["team_id"] is not None:
         if not db.scalar(select(Team).where(Team.id == changes["team_id"], Team.dept_id == dept_id)):
             raise HTTPException(status_code=400, detail="Team does not belong to this department")
@@ -147,19 +172,40 @@ def update_member(db: Session, dept_id: int, member_user_id: int, payload: Membe
     db.refresh(membership)
     return _to_member_response(db, membership)
 
-def _handover(db: Session, dept_id: int, leaving_user_id: int, replacement_user_id: int | None, allow_unled: bool) -> None:
-    """Deal with whatever this person is in charge of before they leave.
+def _handover(
+    db: Session,
+    dept_id: int,
+    user_id: int,
+    replacement_user_id: int | None,
+    allow_unled: bool,
+    *,
+    losing_team_leadership: bool = True,
+    losing_headship: bool = True,
+    action: str = "Removing them",
+) -> None:
+    """Deal with whatever this person is in charge of before they stop being able
+    to do it — whether that's because they're leaving the department, or because
+    they've been demoted out of the role the title requires.
 
     Refuses rather than silently creating a gap: a team with no lead has nobody
     to approve its weekly reports, and that's the kind of thing you only notice
-    weeks later. The caller either names a successor or says they accept it."""
+    weeks later. The caller either names a successor or says they accept it.
+
+    The two `losing_*` flags exist because a demotion doesn't always invalidate
+    both titles — manager→admin keeps you eligible to lead teams, while
+    admin→manager still costs you the headship."""
     department = get_department(db, dept_id)
-    led_teams = list(db.scalars(select(Team).where(Team.dept_id == dept_id, Team.manager_user_id == leaving_user_id)))
-    heads_dept = department.head_user_id == leaving_user_id
+    led_teams = (
+        list(db.scalars(select(Team).where(Team.dept_id == dept_id, Team.manager_user_id == user_id)))
+        if losing_team_leadership else []
+    )
+    heads_dept = losing_headship and department.head_user_id == user_id
     if not led_teams and not heads_dept:
         return
 
     if replacement_user_id is not None:
+        if replacement_user_id == user_id:
+            raise HTTPException(status_code=400, detail="The replacement cannot be the same person")
         replacement = db.scalar(select(Membership).where(
             Membership.user_id == replacement_user_id,
             Membership.dept_id == dept_id,
@@ -167,15 +213,13 @@ def _handover(db: Session, dept_id: int, leaving_user_id: int, replacement_user_
         ))
         if not replacement:
             raise HTTPException(status_code=400, detail="The replacement must be a member of this department")
-        if replacement_user_id == leaving_user_id:
-            raise HTTPException(status_code=400, detail="The replacement cannot be the person being removed")
         if replacement.role not in ("manager", "admin"):
             raise HTTPException(status_code=400, detail="The replacement must have the manager or admin role")
+        if heads_dept and replacement.role != "admin":
+            raise HTTPException(status_code=400, detail="The replacement must have the admin role to head the department")
         for team in led_teams:
             team.manager_user_id = replacement_user_id
         if heads_dept:
-            if replacement.role != "admin":
-                raise HTTPException(status_code=400, detail="The replacement must have the admin role to head the department")
             department.head_user_id = replacement_user_id
         return
 
@@ -192,8 +236,8 @@ def _handover(db: Session, dept_id: int, leaving_user_id: int, replacement_user_
     raise HTTPException(
         status_code=409,
         detail=(
-            f"That person {' and '.join(what)}. Removing them leaves that without anyone in charge. "
-            "Pass replacement_user_id to hand it over, or allow_unled=true to remove them anyway."
+            f"That person {' and '.join(what)}. {action} leaves that without anyone in charge. "
+            "Pass replacement_user_id to hand it over, or allow_unled=true to proceed anyway."
         ),
     )
 

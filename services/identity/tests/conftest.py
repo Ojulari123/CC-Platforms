@@ -131,7 +131,14 @@ def invite_user(client: TestClient, sent_emails: list):
     """Invite someone into a department and accept it — returns their token pair.
     The only way to add people now that self-signup is closed."""
 
-    def _invite(inviter_tokens: dict, dept_id: int, email: str, role: str = "engineer", team_id: int | None = None) -> dict:
+    def _invite(
+        inviter_tokens: dict,
+        dept_id: int,
+        email: str,
+        role: str = "engineer",
+        team_id: int | None = None,
+        password: str = "Test123!password",
+    ) -> dict:
         r = client.post(
             f"/departments/{dept_id}/invites",
             json={"email": email, "role": role, "team_id": team_id},
@@ -142,7 +149,7 @@ def invite_user(client: TestClient, sent_emails: list):
             "token": sent_emails[-1]["raw_token"],
             "first_name": email.split("@")[0].title(),
             "last_name": "Tester",
-            "password": "Test123!password",
+            "password": password,
         })
         assert resp.status_code == 200, resp.text
         return resp.json()

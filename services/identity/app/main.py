@@ -27,6 +27,7 @@ app.include_router(departments.router)
 app.include_router(teams.router)
 app.include_router(teams.flat_router)
 app.include_router(platform.router)
+app.include_router(platform.accounts_router)
 app.include_router(invites.router)
 
 @app.get("/")

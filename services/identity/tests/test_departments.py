@@ -365,3 +365,94 @@ class TestRemovingSomeoneInCharge:
         dept, admin = registered_user["dept_id"], auth(registered_user["tokens"])
         eng_id = client.get("/me", headers=auth(engineer_user)).json()["id"]
         assert client.delete(f"/departments/{dept}/members/{eng_id}", headers=admin).status_code == 204
+
+
+class TestDemotionCannotStrandATitle:
+    """A role is checked when a title is granted, never after. Without these
+    guards, demoting a team lead to engineer left them still leading the team
+    AND still able to manage its roster — permission reads
+    Team.manager_user_id, which never re-checks the role."""
+
+    def _lead(self, client, registered_user, invite_user, email="mgr@example.com"):
+        dept, admin = registered_user["dept_id"], auth(registered_user["tokens"])
+        team = client.post(f"/departments/{dept}/teams", json={"name": "Platform"}, headers=admin).json()["id"]
+        mgr = invite_user(registered_user["tokens"], dept, email, "manager")
+        mgr_id = client.get("/me", headers=auth(mgr)).json()["id"]
+        client.put(f"/departments/{dept}/teams/{team}/manager/{mgr_id}", headers=admin)
+        return dept, admin, team, mgr, mgr_id
+
+    def test_demoting_a_team_lead_is_refused(self, client, registered_user, invite_user):
+        dept, admin, team, _, mgr_id = self._lead(client, registered_user, invite_user)
+        r = client.patch(f"/departments/{dept}/members/{mgr_id}", json={"role": "engineer"}, headers=admin)
+        assert r.status_code == 409
+        assert "leads Platform" in r.json()["detail"]
+        # Nothing changed: still a manager, still the lead.
+        assert client.get(f"/departments/{dept}/teams/{team}", headers=admin).json()["manager_user_id"] == mgr_id
+        members = client.get(f"/departments/{dept}/members", headers=admin).json()["items"]
+        assert next(m for m in members if m["user_id"] == mgr_id)["role"] == "manager"
+
+    def test_demotion_with_allow_unled_vacates_the_team(self, client, registered_user, invite_user):
+        dept, admin, team, _, mgr_id = self._lead(client, registered_user, invite_user)
+        r = client.patch(f"/departments/{dept}/members/{mgr_id}?allow_unled=true", json={"role": "engineer"}, headers=admin)
+        assert r.status_code == 200
+        assert r.json()["role"] == "engineer"
+        assert client.get(f"/departments/{dept}/teams/{team}", headers=admin).json()["manager_user_id"] is None
+
+    def test_demoted_lead_loses_roster_power(self, client, registered_user, invite_user, engineer_user):
+        """The actual privilege bug: demotion must end their access."""
+        dept, admin, team, _, mgr_id = self._lead(client, registered_user, invite_user)
+        client.patch(f"/departments/{dept}/members/{mgr_id}?allow_unled=true", json={"role": "engineer"}, headers=admin)
+
+        fresh = client.post("/auth/login", json={"email": "mgr@example.com", "password": "Test123!password"}).json()
+        eng_id = client.get("/me", headers=auth(engineer_user)).json()["id"]
+        r = client.put(f"/departments/{dept}/teams/{team}/members/{eng_id}", headers=auth(fresh))
+        assert r.status_code == 403
+
+    def test_demotion_with_a_replacement_hands_the_team_over(self, client, registered_user, invite_user):
+        dept, admin, team, _, mgr_id = self._lead(client, registered_user, invite_user)
+        successor = invite_user(registered_user["tokens"], dept, "successor@example.com", "manager")
+        successor_id = client.get("/me", headers=auth(successor)).json()["id"]
+
+        r = client.patch(f"/departments/{dept}/members/{mgr_id}?replacement_user_id={successor_id}", json={"role": "engineer"}, headers=admin)
+        assert r.status_code == 200
+        assert client.get(f"/departments/{dept}/teams/{team}", headers=admin).json()["manager_user_id"] == successor_id
+
+    def test_manager_to_admin_keeps_the_team(self, client, registered_user, invite_user):
+        """Promotion doesn't cost eligibility, so it must not trigger handover."""
+        dept, admin, team, _, mgr_id = self._lead(client, registered_user, invite_user)
+        r = client.patch(f"/departments/{dept}/members/{mgr_id}", json={"role": "admin"}, headers=admin)
+        assert r.status_code == 200
+        assert client.get(f"/departments/{dept}/teams/{team}", headers=admin).json()["manager_user_id"] == mgr_id
+
+    def test_admin_to_manager_costs_the_headship_but_not_the_team(self, client, registered_user, invite_user):
+        """Heading needs admin; leading only needs manager. So this demotion
+        invalidates one title and not the other."""
+        dept, admin = registered_user["dept_id"], auth(registered_user["tokens"])
+        team = client.post(f"/departments/{dept}/teams", json={"name": "Platform"}, headers=admin).json()["id"]
+        head = invite_user(registered_user["tokens"], dept, "head@example.com", "admin")
+        head_id = client.get("/me", headers=auth(head)).json()["id"]
+        client.put(f"/departments/{dept}/teams/{team}/manager/{head_id}", headers=admin)
+        client.put(f"/departments/{dept}/head/{head_id}", headers=admin)
+
+        blocked = client.patch(f"/departments/{dept}/members/{head_id}", json={"role": "manager"}, headers=admin)
+        assert blocked.status_code == 409
+        assert "heads Engineering" in blocked.json()["detail"]
+        assert "leads Platform" not in blocked.json()["detail"]
+
+        ok = client.patch(f"/departments/{dept}/members/{head_id}?allow_unled=true", json={"role": "manager"}, headers=admin)
+        assert ok.status_code == 200
+        assert client.get(f"/departments/{dept}", headers=admin).json()["head_user_id"] is None
+        assert client.get(f"/departments/{dept}/teams/{team}", headers=admin).json()["manager_user_id"] == head_id
+
+    def test_changing_only_the_team_never_triggers_handover(self, client, registered_user, invite_user):
+        dept, admin, team, _, mgr_id = self._lead(client, registered_user, invite_user)
+        r = client.patch(f"/departments/{dept}/members/{mgr_id}", json={"team_id": team}, headers=admin)
+        assert r.status_code == 200
+        assert client.get(f"/departments/{dept}/teams/{team}", headers=admin).json()["manager_user_id"] == mgr_id
+
+    def test_demoting_someone_with_no_title_is_unaffected(self, client, registered_user, invite_user):
+        dept, admin = registered_user["dept_id"], auth(registered_user["tokens"])
+        plain = invite_user(registered_user["tokens"], dept, "plain@example.com", "manager")
+        plain_id = client.get("/me", headers=auth(plain)).json()["id"]
+        r = client.patch(f"/departments/{dept}/members/{plain_id}", json={"role": "engineer"}, headers=admin)
+        assert r.status_code == 200
