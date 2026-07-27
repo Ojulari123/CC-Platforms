@@ -194,6 +194,39 @@ eligibility) but it should be a decision rather than an accident.
 
 ---
 
+## Decision 6 — Report visibility vs approval in Pulse (agreed session 04, not yet built)
+
+This answers the two questions left open above — what `role: "manager"` should
+do, and what happens when a lead is away — now that the supervisor has weighed
+in. It's enforced in **Pulse**, not identity; identity keeps modelling
+who-leads-what, and Pulse reads that from the token to decide who-sees-what.
+
+**Approving a report** is the job of the report's **team lead** — the one person
+named in `Team.manager_user_id` for that engineer's team — and only for their own
+team's reports. One report, one approver, no tie to break. *Confirmed: one team
+per person is correct at CypherCrescent (Decision 3), so this holds.*
+
+**Reading reports** widens by role:
+
+| who | can read |
+|---|---|
+| engineer | their own reports |
+| team lead (`Team.manager_user_id`) | their team's reports |
+| department `manager` role | **every** report in the department — read-only |
+| department `admin` / head | every report in the department |
+| platform admin | everything, every department |
+
+So `role: "manager"` finally carries a real permission — department-wide
+visibility — **without** gaining approval power. Reading and approving are
+deliberately separate: a manager can see how the whole department is doing, but
+only the named team lead signs a report off.
+
+**Absent leads:** no dedicated deputy yet. If a lead is on leave, a **department
+admin** approves as the fallback. Add real deputies only if that turns out to be
+routine — decide before the Week 4 approval flow if so.
+
+---
+
 ## One consequence worth knowing about
 
 Access tokens now carry **every** membership a person has, not one:
@@ -219,10 +252,10 @@ token that other services trust.
 |---|---|---|
 | 1 | Department id in the URL; role scoped per department | Mostly technical — no action needed |
 | 2 | Platform admin flag + endpoint to appoint others | **Who holds it?** |
-| 3 | One team per person per department | **Is this true here?** |
+| 3 | One team per person per department | ✅ Confirmed session 04 — one team per person |
 | 4 | Bootstrap-only registration, then invite-only | **Invite-only, or domain self-signup?** |
 | 5 | Each department has one named head | **Can a head name their successor?** |
-| — | `role: "manager"` grants no permissions by itself | **Should it, once Pulse exists?** |
+| 6 | Pulse: `manager` reads all dept reports, team lead approves; admin covers absent leads | ✅ Agreed session 04 — build with Pulse |
 | — | A manager may lead several teams | **Not needed yet — already supported if you want it** |
 
 Also still open from earlier sessions: confirming **Brevo** as the email

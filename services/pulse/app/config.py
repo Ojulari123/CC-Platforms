@@ -4,19 +4,13 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
     DATABASE_URL: str
-    JWT_PRIVATE_KEY_PATH: str = "./keys/private.pem"
-    JWT_PUBLIC_KEY_PATH: str = "./keys/public.pem"
-    JWT_ALGORITHM: str = "RS256"
+    # How Pulse verifies identity's tokens: fetch the public keys from identity's
+    # JWKS endpoint. The signing key never leaves identity (CLAUDE.md rule 4).
+    IDENTITY_JWKS_URL: str = "http://identity:8000/.well-known/jwks.json"
+    # Must match identity's JWT_ISSUER, or every token is rejected.
     JWT_ISSUER: str = "cyphercrescent-identity"
-    ACCESS_TOKEN_EXPIRE_MINUTES: int = 15
-    REFRESH_TOKEN_EXPIRE_DAYS: int = 7
+    JWKS_TTL_SECONDS: int = 3600
     CORS_ORIGINS: str = "http://localhost:3000"
-    RATE_LIMIT_ENABLED: bool = True
-    BREVO_API_KEY: str = ""
-    EMAIL_FROM: str = ""
-    FRONTEND_URL: str = "http://localhost:3000"
-    INVITE_EXPIRE_DAYS: int = 7
-    PASSWORD_RESET_EXPIRE_MINUTES: int = 30
 
     @property
     def cors_origins_list(self) -> list[str]:

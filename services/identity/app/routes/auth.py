@@ -3,7 +3,7 @@ from sqlalchemy.orm import Session
 from app.db import get_db
 from app.models import User
 from app.rate_limit import limiter
-from app.schemas.auth import ChangePasswordRequest, LoginRequest, LogoutRequest, RefreshRequest, RegisterRequest, TokenPair
+from app.schemas.auth import ChangePasswordRequest, ForgotPasswordRequest, LoginRequest, LogoutRequest, RefreshRequest, RegisterRequest, ResetPasswordRequest, TokenPair
 from app.security import get_current_user
 from app.services import auth as auth_service
 
@@ -40,3 +40,18 @@ def logout_all(user: User = Depends(get_current_user), db: Session = Depends(get
 @limiter.limit("5/minute")
 def change_password(request: Request, payload: ChangePasswordRequest, user: User = Depends(get_current_user), db: Session = Depends(get_db)) -> TokenPair:
     return auth_service.change_password(db, user, payload.current_password, payload.new_password)
+
+@router.post("/forgot-password", status_code=status.HTTP_204_NO_CONTENT)
+@limiter.limit("5/minute")
+def forgot_password(request: Request, payload: ForgotPasswordRequest, db: Session = Depends(get_db)) -> None:
+    """Public. Always 204 whether or not the address has an account, so the
+    response can't be used to enumerate users. A 503 only means email is
+    misconfigured on the server — and it fires the same way for every address."""
+    auth_service.request_password_reset(db, payload.email)
+
+@router.post("/reset-password", status_code=status.HTTP_204_NO_CONTENT)
+@limiter.limit("5/minute")
+def reset_password(request: Request, payload: ResetPasswordRequest, db: Session = Depends(get_db)) -> None:
+    """Public — the emailed token is the credential. Sets the new password and
+    logs the account out everywhere; the user then signs in fresh."""
+    auth_service.reset_password(db, payload.token, payload.new_password)

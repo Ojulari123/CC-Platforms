@@ -57,5 +57,34 @@ services:
              uvicorn app.main:app --host 0.0.0.0 --port 8000
              --reload --reload-dir app"
 
+  pulse:
+    # Build context is the repo ROOT (not services/pulse) so the image can pull
+    # in the shared packages/core. See services/pulse/Dockerfile.
+    build:
+      context: .
+      dockerfile: services/pulse/Dockerfile
+    env_file:
+      - ./services/pulse/.env
+    # Same as identity: `environment:` beats `env_file:`, so in Docker Pulse
+    # always talks to the local sandbox Postgres (its own `pulse` database), and
+    # verifies tokens against identity's in-cluster JWKS URL.
+    environment:
+      DATABASE_URL: postgresql+psycopg://${CC_POSTGRES_USER:-crescent}:${CC_POSTGRES_PASSWORD:-crescent}@postgres:5432/pulse
+      IDENTITY_JWKS_URL: http://identity:8000/.well-known/jwks.json
+    ports:
+      - "8002:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      identity:
+        condition: service_started
+    volumes:
+      - ./services/pulse:/app
+      - ./packages/core:/packages/core
+    command: >
+      sh -c "alembic upgrade head &&
+             uvicorn app.main:app --host 0.0.0.0 --port 8000
+             --reload --reload-dir app"
+
 volumes:
   postgres_data:

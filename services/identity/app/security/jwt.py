@@ -31,17 +31,27 @@ class TokenPayload(dict):
     def token_version(self) -> int:
         return int(self.get("tv", 0))
 
-def create_access_token(*, user_id: int, email: str, memberships: list[dict], is_platform_admin: bool, token_version: int) -> str:
+    @property
+    def leads(self) -> list[int]:
+        return self.get("leads", [])
+
+def create_access_token(*, user_id: int, email: str, memberships: list[dict], is_platform_admin: bool, token_version: int, leads: list[int] | None = None) -> str:
     """Carries EVERY department membership, not one 'active' one. A person can be
     an admin in Engineering and an engineer in Data at the same time; a single
     dept_id claim would have to pick one arbitrarily and silently lock them out
-    of the other."""
+    of the other.
+
+    `leads` is the team ids this person is the named lead of (Team.manager_user_id).
+    Pulse needs it to route report approvals — "may this caller approve a report
+    for team 3?" — without calling identity's DB on every request. Approval is a
+    Pulse decision made purely from the token."""
     now = datetime.now(timezone.utc)
     payload = {
         "sub": str(user_id),
         "email": email,
         "memberships": memberships,
         "is_platform_admin": is_platform_admin,
+        "leads": leads or [],
         "tv": token_version,
         "token_type": "access",
         "iss": settings.JWT_ISSUER,

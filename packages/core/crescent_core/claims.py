@@ -21,6 +21,10 @@ class TokenClaims:
     is_platform_admin: bool
     token_version: int
     raw: dict[str, Any]
+    # Team ids this person is the named lead of (identity's Team.manager_user_id).
+    # Products use it to route things only a team's lead may do — approving a
+    # Pulse report, for instance — straight from the token.
+    leads: tuple[int, ...] = ()
 
     def role_in(self, dept_id: int) -> str | None:
         """The caller's role in one department, or None if they're not in it."""
@@ -37,6 +41,10 @@ class TokenClaims:
             if m.dept_id == dept_id:
                 return m.team_id
         return None
+
+    def leads_team(self, team_id: int) -> bool:
+        """Whether the caller is the named lead of this team."""
+        return team_id in self.leads
 
     @property
     def dept_ids(self) -> tuple[int, ...]:
@@ -59,5 +67,6 @@ class TokenClaims:
             ),
             is_platform_admin=bool(payload.get("is_platform_admin", False)),
             token_version=int(payload.get("tv", 0)),
+            leads=tuple(int(t) for t in (payload.get("leads") or [])),
             raw=payload,
         )

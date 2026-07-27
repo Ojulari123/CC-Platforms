@@ -119,3 +119,19 @@ class Invite(Base):
     created_at = Column(TIMESTAMP(timezone=True), server_default=func.now(), nullable=False)
 
     department = relationship("Department")
+
+class PasswordResetToken(Base):
+    """One-time forgot-password token. Same hashing pattern as RefreshToken and
+    Invite — only the SHA-256 hash is stored; the raw value lives solely in the
+    emailed link. Short-lived and single-use; requesting a new one invalidates
+    any earlier unused token for the same user."""
+    __tablename__ = "password_reset_tokens"
+
+    id = Column(Integer, primary_key=True)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    token_hash = Column(String(64), unique=True, index=True, nullable=False)
+    expires_at = Column(TIMESTAMP(timezone=True), nullable=False)
+    used_at = Column(TIMESTAMP(timezone=True), nullable=True)
+    created_at = Column(TIMESTAMP(timezone=True), server_default=func.now(), nullable=False)
+
+    user = relationship("User")

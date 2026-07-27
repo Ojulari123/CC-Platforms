@@ -1,0 +1,11 @@
+fastapi>=0.115,<0.120
+uvicorn[standard]>=0.34,<0.40
+sqlalchemy>=2.0,<2.1
+alembic>=1.14,<2.0
+psycopg[binary]>=3.2,<4.0
+pydantic-settings>=2.6,<3.0
+# crescent-core (the shared token verifier + pagination) is installed
+# separately, from the monorepo path — it is not on PyPI:
+#   Docker: pip install /packages/core      (see Dockerfile)
+#   CI/dev: pip install -e packages/core
+# It brings fastapi, python-jose[cryptography], httpx and cryptography with it.

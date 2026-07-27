@@ -15,6 +15,12 @@ class EmailNotConfigured(Exception):
 class EmailSendError(Exception):
     """Brevo rejected the request or was unreachable."""
 
+def is_configured() -> bool:
+    """Whether outbound email can be sent at all. Checked up-front by flows that
+    must not leak, via their response, whether a given address has an account —
+    a 503 for global misconfig has to fire the same way regardless of the user."""
+    return bool(settings.BREVO_API_KEY and settings.EMAIL_FROM)
+
 def send(to: str, subject: str, html: str) -> None:
     if not settings.BREVO_API_KEY or not settings.EMAIL_FROM:
         raise EmailNotConfigured("Set BREVO_API_KEY and EMAIL_FROM in .env")
@@ -59,5 +65,19 @@ def send_invite(to: str, dept_name: str, role: str, raw_token: str, team_name: s
             + f'<p><a href="{link}">Accept your invitation</a> '
             f"(link expires in {settings.INVITE_EXPIRE_DAYS} days).</p>"
             f"<p>If you weren't expecting this, you can ignore this email.</p>"
+        ),
+    )
+
+def send_password_reset(to: str, raw_token: str) -> None:
+    link = f"{settings.FRONTEND_URL}/reset-password?token={raw_token}"
+    send(
+        to=to,
+        subject="Reset your CypherCrescent Platforms password",
+        html=(
+            "<p>We got a request to reset your password. "
+            f'<a href="{link}">Choose a new password</a> '
+            f"(link expires in {settings.PASSWORD_RESET_EXPIRE_MINUTES} minutes).</p>"
+            "<p>If you didn't ask for this, you can ignore this email — your "
+            "password stays the same.</p>"
         ),
     )

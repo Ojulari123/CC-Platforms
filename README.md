@@ -77,22 +77,37 @@ CC-Platforms/
 | GET | `/` | — | Service ping |
 | GET | `/health` | — | DB reachable check |
 | GET | `/.well-known/jwks.json` | — | Public key for products to verify tokens |
-| POST | `/auth/register` | — | Create user + new department (self-signup founder) |
+| POST | `/auth/register` | — | Bootstrap only: first user → platform admin + first department; 403 after |
 | POST | `/auth/login` | — | Email + password → token pair |
 | POST | `/auth/refresh` | — | Rotate refresh token, get new pair |
 | POST | `/auth/logout` | — | Revoke a refresh token |
+| POST | `/auth/logout-all` | Bearer | Revoke every session (bumps token_version) |
 | POST | `/auth/change-password` | Bearer | Change password, kill all other sessions |
-| GET | `/me` | Bearer | Current user + active department/role |
-| GET | `/dept` | Bearer | The caller's department |
-| POST | `/dept/teams` | admin | Create a team |
-| GET | `/dept/teams` | Bearer | Teams in the caller's department |
-| GET | `/dept/members` | Bearer | Members (paginated: `limit`, `offset`) |
-| PATCH | `/dept/members/{user_id}` | admin | Change a member's role / team |
-| POST | `/dept/invites` | admin | Email someone a one-time invite link |
+| POST | `/auth/forgot-password` | — | Email a reset link (always 204; no account enumeration) |
+| POST | `/auth/reset-password` | — | Redeem a reset token, set a new password, kill all sessions |
+| GET / PATCH | `/me` | Bearer | Current user + **every** department/role; PATCH edits own name/avatar |
+| GET | `/departments` | Bearer | List departments (org chart) |
+| POST / DELETE | `/departments` · `/departments/{id}` | platform admin | Create / delete a department |
+| GET / PATCH | `/departments/{id}` | member / admin | View / rename a department |
+| PUT / DELETE | `/departments/{id}/head[/{user_id}]` | platform admin | Set / clear the department head |
+| GET | `/departments/{id}/members` | member | Roster (paginated: `limit`,`offset`; filters: `role`,`team_id`,`q`) |
+| PATCH / DELETE | `/departments/{id}/members/{user_id}` | admin | Change role/team · remove (with handover) |
+| POST / GET / DELETE | `/departments/{id}/invites[/{invite_id}]` | admin | Create / list / revoke invites |
+| POST / GET | `/departments/{id}/teams` | admin / member | Create / list teams |
+| GET / PATCH / DELETE | `/departments/{id}/teams/{tid}` | member / admin | View / rename / delete a team |
+| PUT / DELETE | `/departments/{id}/teams/{tid}/manager[/{user_id}]` | admin | Set / clear the team lead |
+| GET | `/departments/{id}/teams/{tid}/members` | member | Team roster |
+| PUT / DELETE | `/departments/{id}/teams/{tid}/members/{user_id}` | admin / team lead | Add / remove from team |
+| GET | `/teams` | Bearer | Flat "all teams I can see" across departments |
+| POST | `/platform/users/{id}/deactivate` · `/reactivate` | platform admin | Offboard / restore an account |
+| GET / PUT / DELETE | `/platform/admins[/{id}]` | platform admin | List / grant / revoke platform admin |
+| GET | `/invites/preview` | — | Public invite preview (who invited you, which dept) |
 | POST | `/invites/accept` | — | Redeem an invite (token from the email) |
 
-**No endpoint takes a `dept_id`** — it comes from your token, so you can only
-ever act on your own department.
+**Department actions name the `dept_id` in the path** (e.g. `PATCH
+/departments/12`), and permission is checked against *that* department — so
+someone who is admin in Engineering and an engineer in Data can only administer
+Engineering. The token carries every membership; there is no "active department".
 
 Interactive versions at `/docs`. In Swagger's **Authorize** box paste the raw
 token only (starts `eyJ`) — it adds the `Bearer ` prefix itself, and pasting it

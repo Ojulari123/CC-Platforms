@@ -38,6 +38,7 @@ def test_every_claim_survives_the_round_trip(mint, jwks_client, issuer):
         ],
         is_platform_admin=True,
         token_version=5,
+        leads=[3, 8],
     )
     claims = verify_access_token(token, jwks_client, issuer)
 
@@ -50,6 +51,17 @@ def test_every_claim_survives_the_round_trip(mint, jwks_client, issuer):
     assert claims.role_in(2) == "engineer"
     assert claims.team_in(1) == 3
     assert claims.team_in(2) is None
+    assert claims.leads == (3, 8)
+    assert claims.leads_team(3) and not claims.leads_team(99)
+
+
+def test_leads_defaults_to_empty_when_absent(mint, jwks_client, issuer):
+    """Old tokens (and anyone who leads nothing) carry no leads — must parse as
+    an empty tuple, never crash."""
+    token = mint(user_id=1, email="a@b.com", memberships=[], is_platform_admin=False, token_version=0)
+    claims = verify_access_token(token, jwks_client, issuer)
+    assert claims.leads == ()
+    assert not claims.leads_team(1)
 
 
 def test_role_does_not_leak_between_departments(mint, jwks_client, issuer):

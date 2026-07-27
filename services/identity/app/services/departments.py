@@ -1,7 +1,7 @@
 """Departments and their member roster. Teams live in services/teams.py."""
 import re
 from fastapi import HTTPException
-from sqlalchemy import func, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
 from app.models import Department, Membership, Team, User
 from app.schemas.departments import DepartmentCreate, DepartmentResponse, DepartmentUpdate, MemberListResponse, MemberResponse, MemberUpdate
@@ -91,13 +91,39 @@ def delete_department(db: Session, dept_id: int) -> None:
     db.delete(department)
     db.commit()
 
-def list_members(db: Session, dept_id: int, limit: int, offset: int) -> MemberListResponse:
-    total = db.scalar(select(func.count()).select_from(Membership).where(Membership.dept_id == dept_id))
-    rows = db.execute(
-        select(Membership, User).join(User, User.id == Membership.user_id)
+def list_members(
+    db: Session,
+    dept_id: int,
+    limit: int,
+    offset: int,
+    role: str | None = None,
+    team_id: int | None = None,
+    q: str | None = None,
+) -> MemberListResponse:
+    """Paginated roster, with optional filters — by role, by team, or a name/email
+    search. `total` reflects the filters, so the client can page within a
+    filtered result set. This is the same shape the Pulse reports list will use
+    (crescent_core.pagination.Page)."""
+    base = (
+        select(Membership, User)
+        .join(User, User.id == Membership.user_id)
         .where(Membership.dept_id == dept_id)
-        .order_by(User.first_name, User.last_name)
-        .limit(limit).offset(offset)
+    )
+    if role is not None:
+        base = base.where(Membership.role == role)
+    if team_id is not None:
+        base = base.where(Membership.team_id == team_id)
+    if q:
+        like = f"%{q.lower()}%"
+        base = base.where(or_(
+            func.lower(User.first_name).like(like),
+            func.lower(User.last_name).like(like),
+            func.lower(User.email).like(like),
+        ))
+
+    total = db.scalar(select(func.count()).select_from(base.subquery()))
+    rows = db.execute(
+        base.order_by(User.first_name, User.last_name).limit(limit).offset(offset)
     ).all()
     items = [
         MemberResponse(

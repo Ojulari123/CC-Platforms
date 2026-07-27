@@ -6,17 +6,26 @@ something's still open. **Updated per session, not per commit.**
 
 ---
 
-## Next up (Week 2 is not finished)
+## Next up
 
-- **Pulse service does not exist yet.** Week 2's larger half: `services/pulse/`
-  with reports, approvals and comments, its own database, its own Alembic, its
-  own CI job, auth via `packages/core` against identity's JWKS. The ERD was
-  agreed in session 03 (weekly report per engineer; approvals as an append-only
-  history; flat comments) but nothing is built.
-- **Password reset (forgot password)** — the last email flow identity is
-  missing. Public: enter email → emailed link → set new password. Same shape as
-  the invite flow (hashed single-use token, expiry), so it's mostly a repeat of
-  work already done. FindYourCribb has the same flow to crib from.
+- ~~**Pulse service**~~ — **scaffolded (session 04).** `services/pulse/` with
+  reports, approvals and comments, its own `pulse` database, its own Alembic
+  (`0001`), its own CI jobs (tests + Postgres migration/drift check), and auth via
+  `packages/core` against identity's JWKS. Draft → submit → approve/reject/
+  request-changes flow, append-only approval history, flat comments, and the
+  Decision-6 permission model (team lead approves; `manager` role reads
+  department-wide; admin covers an absent lead). ERD: [docs/erd.md](erd.md).
+  **Still to come on Pulse:** GitHub sync (Week 3), AI summaries + PDF + email
+  (Week 4), name-resolution via identity's API (Week 5).
+- **Token now carries `leads`** — identity adds the team ids a user is the named
+  lead of (`Team.manager_user_id`) to the access token, and `crescent_core`
+  parses it (`claims.leads`, `claims.leads_team(id)`). This is what lets Pulse
+  route approvals statelessly. Backward-compatible: absent `leads` → empty.
+- ~~**Password reset (forgot password)**~~ — **shipped (session 04).**
+  `POST /auth/forgot-password` (always 204, no account enumeration; 503 only on
+  global email misconfig) + `POST /auth/reset-password` (single-use hashed
+  token, `PASSWORD_RESET_EXPIRE_MINUTES` expiry, bumps `token_version` and
+  revokes all refresh tokens). Table `password_reset_tokens` (migration 0007).
 
 ---
 
@@ -43,17 +52,16 @@ is confirmed sending for real.
 
 ## Open questions that are really design decisions
 
-- **`role: "manager"` currently grants nothing on its own.** Verified in
-  session 03: the only places the role is read are eligibility checks — you must
-  be manager-or-admin to *be appointed* a team lead, or to be a handover
-  replacement. All actual authority comes from being named in
-  `Team.manager_user_id`. So today "manager" is a job title plus eligibility,
-  not a permission. That's defensible, but it should be a deliberate choice:
-  when Pulse lands, decide whether department-level managers can see/approve
-  things beyond the team they lead.
-- **Deputies / cover for absent leads** — if a team lead is on leave, Pulse
-  approvals wait for them or a department admin steps in. If cover is routine,
-  we need deputies before the Week 4 approval flow, not after.
+- **`role: "manager"` grants nothing on its own — resolved for Pulse (session 04).**
+  Decision recorded in the decisions doc (Decision 6): in Pulse, the department
+  `manager` role carries **department-wide read** of every team's reports, but
+  **no approval power**. Approval stays with the report's named team lead
+  (`Team.manager_user_id`). Inside identity the role is still eligibility-only;
+  the read permission lives in Pulse, evaluated from the token claims.
+- **Deputies / cover for absent leads — deferred, with a fallback (session 04).**
+  No dedicated deputy for now. When a team lead is away, a **department admin**
+  is the approval fallback. Revisit real deputies only if leads turn out to be
+  away often (before the Week 4 approval flow if so).
 - **`tv` (token_version) invalidation for downstream products** —
   **decision point when building Pulse/Forge, not a bug to fix now.**
 
@@ -92,6 +100,20 @@ is confirmed sending for real.
   membership. Revisit if that ever feels wrong.
 
 ---
+
+## Done in session 04 (review follow-ups)
+
+- ~~**JWT issuer default was stale**~~ — `config.py` defaulted `JWT_ISSUER` to
+  `crescent-identity` while everything else uses `cyphercrescent-identity`.
+  Running without the env var set would have made every product reject valid
+  tokens. Default now matches the canonical value.
+- ~~**`accept_invite` could 500**~~ — a double-submit / race of the same invite
+  token tripped `uq_membership_user_dept` as an unhandled `IntegrityError`. Now a
+  clean 409, guarded both by a pre-check and a rollback-on-IntegrityError.
+- ~~**Shared pagination helper**~~ — `crescent_core.pagination` (`Page[T]`,
+  `PageParams`, `page_params`), ready for the Pulse reports/comments lists.
+  Identity's members list gained filtering (`role`, `team_id`, `q`) on top of the
+  pagination it already had.
 
 ## Done in previous sessions (kept for reference)
 

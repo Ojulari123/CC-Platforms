@@ -4,9 +4,10 @@ from fastapi import HTTPException
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 from app.config import settings
-from app.models import Membership, Department, RefreshToken, User
+from app.models import Membership, Department, PasswordResetToken, RefreshToken, Team, User
 from app.schemas.auth import RegisterRequest, TokenPair, UserResponse
 from app.security import create_access_token, hash_password, validate_password, verify_password
+from app.services import email as email_service
 
 def _hash_refresh(token: str) -> str:
     return hashlib.sha256(token.encode()).hexdigest()
@@ -28,6 +29,11 @@ def _membership_claims(db: Session, user_id: int) -> list[dict]:
     rows = db.scalars(select(Membership).where(Membership.user_id == user_id, Membership.is_active.is_(True)))
     return [{"dept_id": m.dept_id, "team_id": m.team_id, "role": m.role} for m in rows]
 
+def _led_team_ids(db: Session, user_id: int) -> list[int]:
+    """Teams this user is the named lead of. Goes in the token so Pulse can route
+    report approvals to the right person without reading identity's DB."""
+    return list(db.scalars(select(Team.id).where(Team.manager_user_id == user_id)))
+
 def _issue_token_pair(db: Session, user: User, family_id: str | None = None) -> tuple[str, str]:
     """Create an access + refresh pair. Returns (access_token, raw_refresh_token).
     Stores only the SHA-256 hash of the refresh token."""
@@ -37,6 +43,7 @@ def _issue_token_pair(db: Session, user: User, family_id: str | None = None) -> 
         memberships=_membership_claims(db, user.id),
         is_platform_admin=user.is_platform_admin,
         token_version=user.token_version,
+        leads=_led_team_ids(db, user.id),
     )
     raw_refresh = secrets.token_urlsafe(64)
     db.add(RefreshToken(
@@ -89,6 +96,66 @@ def register_user(db: Session, payload: RegisterRequest) -> TokenPair:
     db.commit()
     db.refresh(user)
     return _build_pair_response(access, refresh, user)
+
+def request_password_reset(db: Session, email: str) -> None:
+    """Public 'forgot password'. Emails a reset link if the address has an active
+    account, and does the exact same visible thing (nothing) if it doesn't — the
+    response must never reveal whether an account exists. A global email misconfig
+    raises 503 *before* the user lookup, so that 503 can't be used to probe which
+    addresses are registered either."""
+    if not email_service.is_configured():
+        raise HTTPException(status_code=503, detail="Email is not configured on the server (BREVO_API_KEY / EMAIL_FROM)")
+
+    user = db.scalar(select(User).where(User.email == email.lower()))
+    if not user or not user.is_active:
+        return  # silent no-op — no account enumeration
+
+    # Only the newest link should work: drop any earlier unused token first.
+    db.query(PasswordResetToken).filter(
+        PasswordResetToken.user_id == user.id, PasswordResetToken.used_at.is_(None)
+    ).delete(synchronize_session=False)
+
+    raw_token = secrets.token_urlsafe(32)
+    db.add(PasswordResetToken(
+        user_id=user.id,
+        token_hash=_hash_refresh(raw_token),
+        expires_at=datetime.now(timezone.utc) + timedelta(minutes=settings.PASSWORD_RESET_EXPIRE_MINUTES),
+    ))
+    db.commit()
+
+    try:
+        email_service.send_password_reset(to=user.email, raw_token=raw_token)
+    except email_service.EmailSendError:
+        # Never surface a transport failure to the caller — it would leak that
+        # this address has an account. Logged inside the email layer; the token
+        # just goes unused and expires.
+        pass
+
+def reset_password(db: Session, raw_token: str, new_password: str) -> None:
+    """Complete a reset. Validates the token, sets the new password, then — like a
+    password change — bumps token_version and revokes every refresh token, so a
+    reset also logs the account out everywhere. No auto-login: the user signs in
+    fresh with the new password."""
+    row = db.scalar(select(PasswordResetToken).where(PasswordResetToken.token_hash == _hash_refresh(raw_token)))
+    if not row or row.used_at is not None:
+        raise HTTPException(status_code=400, detail="Invalid or already-used reset link")
+    expires = row.expires_at if row.expires_at.tzinfo else row.expires_at.replace(tzinfo=timezone.utc)
+    if expires < datetime.now(timezone.utc):
+        raise HTTPException(status_code=400, detail="This reset link has expired — request a new one")
+
+    user = db.get(User, row.user_id)
+    if not user or not user.is_active:
+        raise HTTPException(status_code=400, detail="Invalid or already-used reset link")
+
+    validate_password(new_password)
+
+    user.password_hash = hash_password(new_password)
+    row.used_at = datetime.now(timezone.utc)
+    db.query(RefreshToken).filter(
+        RefreshToken.user_id == user.id, RefreshToken.is_revoked.is_(False)
+    ).update({"is_revoked": True}, synchronize_session=False)
+    user.token_version = user.token_version + 1
+    db.commit()
 
 def login_user(db: Session, email: str, password: str) -> TokenPair:
     user = db.scalar(select(User).where(User.email == email.lower()))

@@ -2,7 +2,7 @@ from fastapi import APIRouter, Depends, Query, status
 from sqlalchemy.orm import Session
 from app.db import get_db
 from app.models import User
-from app.schemas.departments import DepartmentCreate, DepartmentResponse, DepartmentUpdate, InviteCreate, InviteResponse, MemberListResponse, MemberResponse, MemberUpdate
+from app.schemas.departments import DepartmentCreate, DepartmentResponse, DepartmentUpdate, InviteCreate, InviteResponse, MemberListResponse, MemberResponse, MemberUpdate, Role
 from app.security import get_current_user, require_dept_role, require_platform_admin
 from app.services import departments as dept_service
 from app.services import invites as invites_service
@@ -49,8 +49,17 @@ def clear_department_head(dept_id: int, _: User = Depends(require_platform_admin
     return dept_service.set_head(db, dept_id, None)
 
 @router.get("/{dept_id}/members", response_model=MemberListResponse)
-def list_members(dept_id: int, limit: int = Query(default=50, ge=1, le=200), offset: int = Query(default=0, ge=0), _: User = Depends(dept_member), db: Session = Depends(get_db)) -> MemberListResponse:
-    return dept_service.list_members(db, dept_id, limit=limit, offset=offset)
+def list_members(
+    dept_id: int,
+    limit: int = Query(default=50, ge=1, le=200),
+    offset: int = Query(default=0, ge=0),
+    role: Role | None = Query(default=None, description="Only members with this role"),
+    team_id: int | None = Query(default=None, description="Only members on this team"),
+    q: str | None = Query(default=None, description="Search first name, last name or email"),
+    _: User = Depends(dept_member),
+    db: Session = Depends(get_db),
+) -> MemberListResponse:
+    return dept_service.list_members(db, dept_id, limit=limit, offset=offset, role=role, team_id=team_id, q=q)
 
 @router.patch("/{dept_id}/members/{member_user_id}", response_model=MemberResponse)
 def update_member(

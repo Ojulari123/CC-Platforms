@@ -9,6 +9,7 @@ import hashlib, secrets
 from datetime import datetime, timedelta, timezone
 from fastapi import HTTPException
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 from app.config import settings
 from app.models import Invite, Membership, Department, Team, User
@@ -134,10 +135,27 @@ def accept_invite(db: Session, payload: InviteAccept) -> TokenPair:
     if not user.is_active:
         raise HTTPException(status_code=403, detail="Account is deactivated")
 
-    db.add(Membership(user_id=user.id, dept_id=invite.dept_id, team_id=invite.team_id, role=invite.role))
-    db.flush()
+    # Guard the (user_id, dept_id) uniqueness explicitly. create_invite already
+    # refuses inviting someone who's already a member, but a stale invite or a
+    # double-submit of the same token can still reach here. Without this the
+    # second insert trips uq_membership_user_dept and surfaces as a raw 500
+    # instead of a clear 409. The try/except covers the concurrent-accept race
+    # the pre-check can't (two requests both passing the SELECT before either
+    # commits).
+    already_member = db.scalar(select(Membership).where(
+        Membership.user_id == user.id, Membership.dept_id == invite.dept_id
+    ))
+    if already_member:
+        raise HTTPException(status_code=409, detail="You're already a member of this department.")
 
+    db.add(Membership(user_id=user.id, dept_id=invite.dept_id, team_id=invite.team_id, role=invite.role))
     invite.accepted_at = datetime.now(timezone.utc)
+    try:
+        db.flush()
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(status_code=409, detail="You're already a member of this department.")
+
     access, refresh = _issue_token_pair(db, user)
     db.commit()
     db.refresh(user)
