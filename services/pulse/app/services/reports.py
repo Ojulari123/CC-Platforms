@@ -1,16 +1,16 @@
 """Report domain: the draft → submit → approve flow, the append-only approval
 history, and flat comments.
 
-Every authorization decision is made purely from the caller's token claims
-(`TokenClaims`) — Pulse never reads identity's database. The rules come from the
-decisions doc (Decision 6):
+Every authorization decision is made from the caller's token claims (`TokenClaims`)
+plus the repo's own row (its lead/deputy/dept) — Pulse never reads identity's
+database. Rules per docs/decisions/2026-07-30-repo-centric-reporting.md:
 
-- **Read** a report: the author; anyone with the `manager` or `admin` role in the
-  report's department (department-wide visibility); a platform admin.
-- **Approve / reject / request changes**: the report's team lead, a department `admin` (the fallback for an absent
-  lead), or a platform admin. Note the manager *role* alone can read but not
-  approve — only the *named team lead* signs off.
-- **Create / edit / submit**: the author, and only their own report.
+- A report is about a **repo**; one per (author, repo, week).
+- **Read**: the author; the repo's lead or deputy; an admin of the repo's
+  department; a platform admin.
+- **Approve / reject / request changes**: the repo's lead OR deputy (co-approvers),
+  a department admin (override), or a platform admin.
+- **Create / edit / submit / delete**: the author, and only their own report.
 """
 from datetime import date, datetime, timedelta, timezone
 from fastapi import HTTPException
@@ -21,7 +21,7 @@ from crescent_core import TokenClaims
 from app.models import (
     ACTION_APPROVED, ACTION_CHANGES_REQUESTED, ACTION_REJECTED, ACTION_SUBMITTED,
     STATUS_APPROVED, STATUS_CHANGES_REQUESTED, STATUS_DRAFT, STATUS_REJECTED, STATUS_SUBMITTED,
-    Approval, Comment, Report,
+    Approval, Comment, Report, Repository,
 )
 from app.schemas.reports import ReportCreate, ReportUpdate
 
@@ -46,38 +46,50 @@ def _get_report(db: Session, report_id: int) -> Report:
     return report
 
 
-# ── permission checks (token-only) ────────────────────────────────────────────
-def _can_read(user: TokenClaims, report: Report) -> bool:
+def _repo_of(db: Session, report: Report) -> Repository | None:
+    return db.get(Repository, report.repo_id)
+
+
+# ── permission checks (token + the repo's own row) ─────────────────────────────
+def _can_read(user: TokenClaims, report: Report, repo: Repository | None) -> bool:
     if user.is_platform_admin:
         return True
     if report.author_user_id == user.user_id:
         return True
-    return user.role_in(report.dept_id) in ("manager", "admin")
+    if repo is not None and user.user_id in (repo.lead_user_id, repo.deputy_user_id):
+        return True
+    return report.dept_id is not None and user.role_in(report.dept_id) == "admin"
 
-def _require_can_read(user: TokenClaims, report: Report) -> None:
-    if not _can_read(user, report):
+def _require_can_read(user: TokenClaims, report: Report, repo: Repository | None) -> None:
+    if not _can_read(user, report, repo):
         raise HTTPException(status_code=403, detail="You don't have access to this report")
 
-def _can_approve(user: TokenClaims, report: Report) -> bool:
+def _can_approve(user: TokenClaims, report: Report, repo: Repository | None) -> bool:
     if user.is_platform_admin:
         return True
-    if user.role_in(report.dept_id) == "admin":  # department admin covers an absent lead
+    if repo is not None and user.user_id in (repo.lead_user_id, repo.deputy_user_id):
         return True
-    return report.team_id is not None and user.leads_team(report.team_id)
+    return report.dept_id is not None and user.role_in(report.dept_id) == "admin"
 
 def _require_author(user: TokenClaims, report: Report, verb: str) -> None:
     if report.author_user_id != user.user_id:
         raise HTTPException(status_code=403, detail=f"Only the author can {verb} this report")
 
+
 # ── operations ────────────────────────────────────────────────────────────────
 def create_report(db: Session, user: TokenClaims, payload: ReportCreate) -> Report:
-    if not user.is_platform_admin and not user.is_member_of(payload.dept_id):
-        raise HTTPException(status_code=403, detail="Not a member of this department")
+    repo = db.get(Repository, payload.repo_id)
+    if not repo:
+        raise HTTPException(status_code=404, detail="Repository not found")
+    # If the repo is filed under a department, you must be in it (or a platform
+    # admin) to report on it. A repo not yet assigned to a department is open.
+    if repo.dept_id is not None and not user.is_platform_admin and not user.is_member_of(repo.dept_id):
+        raise HTTPException(status_code=403, detail="Not a member of this repository's department")
     week = _monday(payload.week_start or date.today())
     report = Report(
         author_user_id=user.user_id,
-        dept_id=payload.dept_id,
-        team_id=user.team_in(payload.dept_id),
+        repo_id=repo.id,
+        dept_id=repo.dept_id,
         week_start=week,
         status=STATUS_DRAFT,
         summary_manager=payload.summary_manager,
@@ -89,38 +101,46 @@ def create_report(db: Session, user: TokenClaims, payload: ReportCreate) -> Repo
         db.commit()
     except IntegrityError:
         db.rollback()
-        raise HTTPException(status_code=409, detail=f"You already have a report for the week of {week.isoformat()}")
+        raise HTTPException(status_code=409, detail=f"You already have a report for this repo for the week of {week.isoformat()}")
     db.refresh(report)
     return report
 
-def list_reports(db: Session,user: TokenClaims, dept_id: int, limit: int, offset: int, team_id: int | None = None, author_user_id: int | None = None, status: str | None = None) -> tuple[list[Report], int]:
-    """Reports in one department the caller can see. Managers/admins (and platform
-    admins) see the whole department; everyone else sees only their own, so the
-    author filter can narrow that set but never widen it."""
-    if not user.is_platform_admin and not user.is_member_of(dept_id):
-        raise HTTPException(status_code=403, detail="Not a member of this department")
+def list_reports(db: Session, user: TokenClaims, limit: int, offset: int, repo_id: int | None = None, dept_id: int | None = None, author_user_id: int | None = None, status: str | None = None) -> tuple[list[Report], int]:
+    """Reports the caller can see. A platform admin sees everything; a repo's lead/
+    deputy (or an admin of the repo's dept) sees that repo; a department admin sees
+    their department; everyone else sees only their own. Filters narrow, never
+    widen — the author filter can't reveal someone else's reports."""
+    wide = user.is_platform_admin
+    if not wide and repo_id is not None:
+        repo = db.get(Repository, repo_id)
+        if repo is not None and (
+            user.user_id in (repo.lead_user_id, repo.deputy_user_id)
+            or (repo.dept_id is not None and user.role_in(repo.dept_id) == "admin")
+        ):
+            wide = True
+    if not wide and dept_id is not None and user.role_in(dept_id) == "admin":
+        wide = True
 
-    filters = [Report.dept_id == dept_id]
-    dept_wide = user.is_platform_admin or user.role_in(dept_id) in ("manager", "admin")
-    if not dept_wide:
+    filters = []
+    if not wide:
         filters.append(Report.author_user_id == user.user_id)
+    if repo_id is not None:
+        filters.append(Report.repo_id == repo_id)
+    if dept_id is not None:
+        filters.append(Report.dept_id == dept_id)
     if author_user_id is not None:
         filters.append(Report.author_user_id == author_user_id)
-    if team_id is not None:
-        filters.append(Report.team_id == team_id)
     if status is not None:
         filters.append(Report.status == status)
 
-    base = select(Report).where(*filters)
+    base = select(Report).where(*filters) if filters else select(Report)
     total = db.scalar(select(func.count()).select_from(base.subquery())) or 0
-    rows = db.scalars(
-        base.order_by(Report.week_start.desc(), Report.id.desc()).limit(limit).offset(offset)
-    )
+    rows = db.scalars(base.order_by(Report.week_start.desc(), Report.id.desc()).limit(limit).offset(offset))
     return list(rows), total
 
 def get_report(db: Session, user: TokenClaims, report_id: int) -> Report:
     report = _get_report(db, report_id)
-    _require_can_read(user, report)
+    _require_can_read(user, report, _repo_of(db, report))
     return report
 
 def update_report(db: Session, user: TokenClaims, report_id: int, payload: ReportUpdate) -> Report:
@@ -146,12 +166,11 @@ def submit_report(db: Session, user: TokenClaims, report_id: int) -> Report:
     return report
 
 def decide_report(db: Session, user: TokenClaims, report_id: int, action: str, note: str | None = None) -> Report:
-    """Approve / reject / request-changes on a submitted report. One approver:
-    the report's team lead, with a department admin (or platform admin) as the
-    fallback for an absent lead."""
+    """Approve / reject / request-changes on a submitted report. Either of the
+    repo's two approvers (lead or deputy) may decide, plus a dept/platform admin."""
     report = _get_report(db, report_id)
-    if not _can_approve(user, report):
-        raise HTTPException(status_code=403, detail="Only this team's lead (or a department admin) can decide this report")
+    if not _can_approve(user, report, _repo_of(db, report)):
+        raise HTTPException(status_code=403, detail="Only this repo's lead or deputy (or a department admin) can decide this report")
     if report.status != STATUS_SUBMITTED:
         raise HTTPException(status_code=409, detail=f"Only a submitted report can be decided (this one is {report.status})")
     report.status = _ACTION_TO_STATUS[action]
@@ -162,11 +181,8 @@ def decide_report(db: Session, user: TokenClaims, report_id: int, action: str, n
 
 def delete_report(db: Session, user: TokenClaims, report_id: int) -> None:
     """Delete a report and, by cascade, its comments. Only a **draft** can be
-    deleted, and only by its author — it's their own unsent work.
-
-    Once a report is submitted it becomes part of the permanent record and can
-    never be deleted, by anyone, including admins. That immutability is the whole
-    point: a report that was seen and approved/rejected can't quietly disappear."""
+    deleted, and only by its author — their own unsent work. Once submitted a
+    report is part of the permanent record and can never be deleted, by anyone."""
     report = _get_report(db, report_id)
     if report.status != STATUS_DRAFT:
         raise HTTPException(status_code=409, detail="A submitted report is part of the record and can't be deleted")
@@ -177,7 +193,7 @@ def delete_report(db: Session, user: TokenClaims, report_id: int) -> None:
 
 def list_approvals(db: Session, user: TokenClaims, report_id: int, limit: int, offset: int) -> tuple[list[Approval], int]:
     report = _get_report(db, report_id)
-    _require_can_read(user, report)
+    _require_can_read(user, report, _repo_of(db, report))
     base = select(Approval).where(Approval.report_id == report.id)
     total = db.scalar(select(func.count()).select_from(base.subquery())) or 0
     rows = db.scalars(base.order_by(Approval.created_at, Approval.id).limit(limit).offset(offset))
@@ -191,7 +207,7 @@ def _get_comment(db: Session, report_id: int, comment_id: int) -> Comment:
 
 def add_comment(db: Session, user: TokenClaims, report_id: int, body: str) -> Comment:
     report = _get_report(db, report_id)
-    _require_can_read(user, report)  # if you can see the report, you can comment on it
+    _require_can_read(user, report, _repo_of(db, report))  # if you can see it, you can comment
     comment = Comment(report_id=report.id, author_user_id=user.user_id, body=body)
     db.add(comment)
     db.commit()
@@ -219,7 +235,7 @@ def delete_comment(db: Session, user: TokenClaims, report_id: int, comment_id: i
 
 def list_comments(db: Session, user: TokenClaims, report_id: int, limit: int, offset: int) -> tuple[list[Comment], int]:
     report = _get_report(db, report_id)
-    _require_can_read(user, report)
+    _require_can_read(user, report, _repo_of(db, report))
     base = select(Comment).where(Comment.report_id == report.id)
     total = db.scalar(select(func.count()).select_from(base.subquery())) or 0
     rows = db.scalars(base.order_by(Comment.created_at, Comment.id).limit(limit).offset(offset))

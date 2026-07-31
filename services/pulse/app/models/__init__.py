@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, Text, Date, TIMESTAMP, ForeignKey, UniqueConstraint, func
+from sqlalchemy import BigInteger, Boolean, Column, Date, ForeignKey, Integer, String, Text, TIMESTAMP, UniqueConstraint, func
 from sqlalchemy.orm import relationship
 from app.db import Base
 
@@ -26,9 +26,12 @@ class Report(Base):
 
     id = Column(Integer, primary_key=True)
     author_user_id = Column(Integer, nullable=False, index=True)
-    dept_id = Column(Integer, nullable=False, index=True)
-    team_id = Column(Integer, nullable=True, index=True)
-    # The Monday of the report week. One report per author per week.
+    # The repo the report is about — the unit of reporting (session 05). dept_id is
+    # denormalised from the repo's department for department-admin visibility; it's
+    # nullable because a freshly-synced repo may not be assigned to a dept yet.
+    repo_id = Column(Integer, ForeignKey("repositories.id", ondelete="CASCADE"), nullable=False, index=True)
+    dept_id = Column(Integer, nullable=True, index=True)
+    # The Monday of the report week. One report per author, per repo, per week.
     week_start = Column(Date, nullable=False)
     status = Column(String(30), nullable=False, server_default=STATUS_DRAFT, default=STATUS_DRAFT)
     summary_manager = Column(Text, nullable=True)
@@ -37,10 +40,11 @@ class Report(Base):
     created_at = Column(TIMESTAMP(timezone=True), server_default=func.now(), nullable=False)
     updated_at = Column(TIMESTAMP(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
 
+    repository = relationship("Repository", back_populates="reports")
     approvals = relationship("Approval", back_populates="report", cascade="all, delete-orphan", order_by="Approval.created_at")
     comments = relationship("Comment", back_populates="report", cascade="all, delete-orphan", order_by="Comment.created_at")
 
-    __table_args__ = (UniqueConstraint("author_user_id", "week_start", name="uq_report_author_week"),)
+    __table_args__ = (UniqueConstraint("author_user_id", "repo_id", "week_start", name="uq_report_author_repo_week"),)
 
 class Approval(Base):
     """Append-only history of what happened to a report — who did what, when, and
@@ -70,3 +74,147 @@ class Comment(Base):
     edited_at = Column(TIMESTAMP(timezone=True), nullable=True)
 
     report = relationship("Report", back_populates="comments")
+
+# ── GitHub integration (Week 3) ────────────────────────────────────────────────
+# Everything below mirrors data pulled from GitHub on a scheduled sync. People are
+# still referenced by identity's user id where we can resolve them (author_user_id
+# etc., nullable until a GitHub login is linked to an account); GitHub's own ids
+# and logins are kept so a re-sync updates rather than duplicates. Still no cross-
+# database foreign keys into identity (CLAUDE.md rule 3).
+
+class GitHubAccount(Base):
+    """Links an identity user to their GitHub identity, and stores the OAuth access
+    token — encrypted at rest, never plaintext, never logged. One per user."""
+    __tablename__ = "github_accounts"
+
+    id = Column(Integer, primary_key=True)
+    user_id = Column(Integer, unique=True, index=True, nullable=False)  # identity user id
+    github_user_id = Column(BigInteger, unique=True, index=True, nullable=False)
+    github_login = Column(String(255), index=True, nullable=False)
+    access_token_encrypted = Column(Text, nullable=False)
+    scopes = Column(String(500), nullable=True)
+    connected_at = Column(TIMESTAMP(timezone=True), server_default=func.now(), nullable=False)
+    created_at = Column(TIMESTAMP(timezone=True), server_default=func.now(), nullable=False)
+    updated_at = Column(TIMESTAMP(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
+
+class Repository(Base):
+    """A GitHub repo we track. The Week-3 sync scope is an org/allowlist, so repos
+    are seeded from config, not per-user. is_tracked toggles a repo off without
+    losing its history; last_synced_at is the cursor for incremental pulls."""
+    __tablename__ = "repositories"
+
+    id = Column(Integer, primary_key=True)
+    github_repo_id = Column(BigInteger, unique=True, index=True, nullable=False)
+    full_name = Column(String(400), index=True, nullable=False)  # owner/name
+    owner = Column(String(255), nullable=False)
+    name = Column(String(255), nullable=False)
+    private = Column(Boolean, nullable=False, server_default="false", default=False)
+    is_tracked = Column(Boolean, nullable=False, server_default="true", default=True)
+    default_branch = Column(String(255), nullable=True)
+    last_synced_at = Column(TIMESTAMP(timezone=True), nullable=True)
+    # Repo-centric reporting (session 05): a repo belongs to a department and has a
+    # named lead + deputy who BOTH approve its reports. All reference identity by
+    # id; nullable until an admin assigns them. See
+    # docs/decisions/2026-07-30-repo-centric-reporting.md.
+    dept_id = Column(Integer, index=True, nullable=True)
+    lead_user_id = Column(Integer, index=True, nullable=True)
+    deputy_user_id = Column(Integer, index=True, nullable=True)
+    created_at = Column(TIMESTAMP(timezone=True), server_default=func.now(), nullable=False)
+    updated_at = Column(TIMESTAMP(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
+
+    commits = relationship("Commit", back_populates="repository", cascade="all, delete-orphan")
+    pull_requests = relationship("PullRequest", back_populates="repository", cascade="all, delete-orphan")
+    issues = relationship("Issue", back_populates="repository", cascade="all, delete-orphan")
+    reports = relationship("Report", back_populates="repository", cascade="all, delete-orphan")
+
+class Commit(Base):
+    """A commit on a tracked repo. Attributed to an engineer (author_user_id) when
+    the commit's GitHub login matches a connected account; otherwise just the login."""
+    __tablename__ = "commits"
+
+    id = Column(Integer, primary_key=True)
+    repo_id = Column(Integer, ForeignKey("repositories.id", ondelete="CASCADE"), index=True, nullable=False)
+    sha = Column(String(40), nullable=False)
+    author_user_id = Column(Integer, index=True, nullable=True)
+    author_github_login = Column(String(255), nullable=True)
+    message = Column(Text, nullable=True)
+    additions = Column(Integer, nullable=True)
+    deletions = Column(Integer, nullable=True)
+    url = Column(String(500), nullable=True)
+    committed_at = Column(TIMESTAMP(timezone=True), index=True, nullable=False)
+    created_at = Column(TIMESTAMP(timezone=True), server_default=func.now(), nullable=False)
+
+    repository = relationship("Repository", back_populates="commits")
+
+    __table_args__ = (UniqueConstraint("repo_id", "sha", name="uq_commit_repo_sha"),)
+
+class PullRequest(Base):
+    __tablename__ = "pull_requests"
+
+    id = Column(Integer, primary_key=True)
+    repo_id = Column(Integer, ForeignKey("repositories.id", ondelete="CASCADE"), index=True, nullable=False)
+    github_pr_id = Column(BigInteger, unique=True, index=True, nullable=False)
+    number = Column(Integer, nullable=False)
+    title = Column(Text, nullable=True)
+    state = Column(String(20), nullable=False)  # open | closed
+    merged = Column(Boolean, nullable=False, server_default="false", default=False)
+    author_user_id = Column(Integer, index=True, nullable=True)
+    author_github_login = Column(String(255), nullable=True)
+    gh_created_at = Column(TIMESTAMP(timezone=True), nullable=True)
+    gh_updated_at = Column(TIMESTAMP(timezone=True), nullable=True)
+    merged_at = Column(TIMESTAMP(timezone=True), nullable=True)
+    url = Column(String(500), nullable=True)
+    created_at = Column(TIMESTAMP(timezone=True), server_default=func.now(), nullable=False)
+
+    repository = relationship("Repository", back_populates="pull_requests")
+    reviews = relationship("Review", back_populates="pull_request", cascade="all, delete-orphan")
+
+    __table_args__ = (UniqueConstraint("repo_id", "number", name="uq_pr_repo_number"),)
+
+class Review(Base):
+    """A review left on a pull request — approved / changes requested / commented."""
+    __tablename__ = "reviews"
+
+    id = Column(Integer, primary_key=True)
+    pull_request_id = Column(Integer, ForeignKey("pull_requests.id", ondelete="CASCADE"), index=True, nullable=False)
+    github_review_id = Column(BigInteger, unique=True, index=True, nullable=False)
+    reviewer_user_id = Column(Integer, index=True, nullable=True)
+    reviewer_github_login = Column(String(255), nullable=True)
+    state = Column(String(30), nullable=False)  # approved | changes_requested | commented | dismissed
+    submitted_at = Column(TIMESTAMP(timezone=True), nullable=True)
+    url = Column(String(500), nullable=True)
+    created_at = Column(TIMESTAMP(timezone=True), server_default=func.now(), nullable=False)
+
+    pull_request = relationship("PullRequest", back_populates="reviews")
+
+class Issue(Base):
+    __tablename__ = "issues"
+
+    id = Column(Integer, primary_key=True)
+    repo_id = Column(Integer, ForeignKey("repositories.id", ondelete="CASCADE"), index=True, nullable=False)
+    github_issue_id = Column(BigInteger, unique=True, index=True, nullable=False)
+    number = Column(Integer, nullable=False)
+    title = Column(Text, nullable=True)
+    state = Column(String(20), nullable=False)  # open | closed
+    author_user_id = Column(Integer, index=True, nullable=True)
+    author_github_login = Column(String(255), nullable=True)
+    gh_created_at = Column(TIMESTAMP(timezone=True), nullable=True)
+    closed_at = Column(TIMESTAMP(timezone=True), nullable=True)
+    url = Column(String(500), nullable=True)
+    created_at = Column(TIMESTAMP(timezone=True), server_default=func.now(), nullable=False)
+
+    repository = relationship("Repository", back_populates="issues")
+
+    __table_args__ = (UniqueConstraint("repo_id", "number", name="uq_issue_repo_number"),)
+
+class SyncRun(Base):
+    """Audit log of sync jobs — when we pulled, for which repo, and how it went.
+    Makes 'why is the data stale?' answerable and gives the scheduled job a trail."""
+    __tablename__ = "sync_runs"
+
+    id = Column(Integer, primary_key=True)
+    repo_id = Column(Integer, ForeignKey("repositories.id", ondelete="CASCADE"), index=True, nullable=True)
+    status = Column(String(20), nullable=False)  # running | success | error
+    detail = Column(Text, nullable=True)
+    started_at = Column(TIMESTAMP(timezone=True), server_default=func.now(), nullable=False)
+    finished_at = Column(TIMESTAMP(timezone=True), nullable=True)

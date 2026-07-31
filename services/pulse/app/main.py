@@ -1,7 +1,7 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from app.config import settings
-from app.routes import health, reports
+from app.routes import activity, github, health, reports, repositories
 
 app = FastAPI(title="Crescent Pulse", version="0.0.1")
 
@@ -15,6 +15,9 @@ app.add_middleware(
 
 app.include_router(health.router)
 app.include_router(reports.router)
+app.include_router(github.router)
+app.include_router(repositories.router)
+app.include_router(activity.router)
 
 @app.get("/")
 def root():

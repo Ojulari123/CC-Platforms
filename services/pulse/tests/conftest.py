@@ -11,6 +11,14 @@ import os
 os.environ.setdefault("DATABASE_URL", "sqlite:///:memory:")
 os.environ.setdefault("IDENTITY_JWKS_URL", "http://identity-not-called/.well-known/jwks.json")
 
+# GitHub OAuth: fixed dummy id/secret and a fresh Fernet key so the connect flow
+# is fully exercisable without real credentials. GitHub itself is monkeypatched.
+from cryptography.fernet import Fernet as _Fernet
+
+os.environ.setdefault("GITHUB_CLIENT_ID", "test-client-id")
+os.environ.setdefault("GITHUB_CLIENT_SECRET", "test-client-secret")
+os.environ.setdefault("GITHUB_TOKEN_ENC_KEY", _Fernet.generate_key().decode())
+
 import pytest
 from fastapi import HTTPException, status
 from fastapi.testclient import TestClient
@@ -65,6 +73,18 @@ def _fresh_db():
 @pytest.fixture
 def client() -> TestClient:
     return TestClient(app)
+
+
+@pytest.fixture
+def db():
+    """A session on the same in-memory engine the app uses in tests — for
+    service-layer tests (e.g. the sync job) that call the DB directly rather
+    than through an HTTP request."""
+    session = _TestSession()
+    try:
+        yield session
+    finally:
+        session.close()
 
 
 @pytest.fixture

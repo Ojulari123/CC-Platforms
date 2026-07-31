@@ -7,10 +7,10 @@ from pydantic import BaseModel, ConfigDict, Field
 ReportStatus = Literal["draft", "submitted", "changes_requested", "approved", "rejected"]
 
 class ReportCreate(BaseModel):
-    """An engineer opens their weekly report. dept_id says which department it's
-    for (a person can be in more than one); team_id is derived server-side from
-    their membership. week_start defaults to the current week's Monday."""
-    dept_id: int
+    """An engineer opens their weekly report for one repo. The report's department
+    is taken from the repo; week_start defaults to the current week's Monday. One
+    report per (engineer, repo, week)."""
+    repo_id: int
     week_start: date | None = None
     summary_manager: str | None = None
     summary_exec: str | None = None
@@ -28,8 +28,8 @@ class ReportResponse(BaseModel):
 
     id: int
     author_user_id: int
-    dept_id: int
-    team_id: int | None
+    repo_id: int
+    dept_id: int | None
     week_start: date
     status: str
     summary_manager: str | None

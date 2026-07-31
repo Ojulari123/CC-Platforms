@@ -19,13 +19,14 @@ router = APIRouter(prefix="/reports", tags=["reports"])
 def create_report(payload: ReportCreate, user: TokenClaims = Depends(current_user), db: Session = Depends(get_db)) -> ReportResponse:
     return reports_service.create_report(db, user, payload)
 
-# Lists all the reports in one department. Managers/admins see the whole department; everyone else sees only their own.
+# Reports, filtered. A repo's lead/deputy (or the dept's admin) sees that repo/
+# department; everyone else sees only their own. Give repo_id or dept_id to scope.
 @router.get("", response_model=Page[ReportResponse])
-def list_reports(dept_id: int = Query(..., description="The department whose reports to list"), team_id: int | None = Query(default=None), author_user_id: int | None = Query(default=None), status: ReportStatus | None = Query(default=None, description="Filter by state; an unknown value is rejected with a 422"),
+def list_reports(repo_id: int | None = Query(default=None), dept_id: int | None = Query(default=None), author_user_id: int | None = Query(default=None), status: ReportStatus | None = Query(default=None, description="Filter by state; an unknown value is rejected with a 422"),
     page: PageParams = Depends(page_params), user: TokenClaims = Depends(current_user), db: Session = Depends(get_db)) -> Page[ReportResponse]:
     items, total = reports_service.list_reports(
-        db, user, dept_id, limit=page.limit, offset=page.offset,
-        team_id=team_id, author_user_id=author_user_id, status=status,
+        db, user, limit=page.limit, offset=page.offset,
+        repo_id=repo_id, dept_id=dept_id, author_user_id=author_user_id, status=status,
     )
     return Page.of([ReportResponse.model_validate(r) for r in items], total=total, params=page)
 
