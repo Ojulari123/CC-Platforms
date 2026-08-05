@@ -14,12 +14,6 @@ import pytest
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import rsa
 
-os.environ["DATABASE_URL"] = "sqlite:///:memory:"
-os.environ["JWT_PRIVATE_KEY_PATH"] = _priv
-os.environ["JWT_PUBLIC_KEY_PATH"] = _pub
-os.environ["BREVO_API_KEY"] = ""
-os.environ["EMAIL_FROM"] = ""
-
 _ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(_ROOT / "services" / "identity"))
 sys.path.insert(0, str(_ROOT / "packages" / "core"))
@@ -37,6 +31,12 @@ Path(_pub).write_bytes(_key.public_key().public_bytes(
     encoding=serialization.Encoding.PEM,
     format=serialization.PublicFormat.SubjectPublicKeyInfo,
 ))
+
+os.environ["DATABASE_URL"] = "sqlite:///:memory:"
+os.environ["JWT_PRIVATE_KEY_PATH"] = _priv
+os.environ["JWT_PUBLIC_KEY_PATH"] = _pub
+os.environ["BREVO_API_KEY"] = ""
+os.environ["EMAIL_FROM"] = ""
 
 @pytest.fixture(scope="session")
 def issuer():

@@ -7,18 +7,6 @@ from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
-from app.db import Base, get_db
-from app.main import app
-from app.services import email as email_service
-
-os.environ["DATABASE_URL"] = "sqlite:///:memory:"
-os.environ["JWT_PRIVATE_KEY_PATH"] = _priv_path
-os.environ["JWT_PUBLIC_KEY_PATH"] = _pub_path
-os.environ["ACCESS_TOKEN_EXPIRE_MINUTES"] = "15"
-os.environ["REFRESH_TOKEN_EXPIRE_DAYS"] = "7"
-os.environ["RATE_LIMIT_ENABLED"] = "false"
-os.environ["BREVO_API_KEY"] = ""
-os.environ["EMAIL_FROM"] = ""
 
 _keys_dir = tempfile.mkdtemp(prefix="identity_test_keys_")
 _priv_path = os.path.join(_keys_dir, "private.pem")
@@ -40,6 +28,19 @@ with open(_pub_path, "wb") as f:
             format=serialization.PublicFormat.SubjectPublicKeyInfo,
         )
     )
+
+os.environ["DATABASE_URL"] = "sqlite:///:memory:"
+os.environ["JWT_PRIVATE_KEY_PATH"] = _priv_path
+os.environ["JWT_PUBLIC_KEY_PATH"] = _pub_path
+os.environ["ACCESS_TOKEN_EXPIRE_MINUTES"] = "15"
+os.environ["REFRESH_TOKEN_EXPIRE_DAYS"] = "7"
+os.environ["RATE_LIMIT_ENABLED"] = "false"
+os.environ["BREVO_API_KEY"] = ""
+os.environ["EMAIL_FROM"] = ""
+
+from app.db import Base, get_db
+from app.main import app
+from app.services import email as email_service
 
 _engine = create_engine(
     "sqlite:///:memory:",

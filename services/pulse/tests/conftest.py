@@ -7,9 +7,6 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 from crescent_core import TokenClaims
-from app.auth import current_user
-from app.db import Base, get_db
-from app.main import app
 
 os.environ.setdefault("GITHUB_CLIENT_ID", "test-client-id")
 os.environ.setdefault("GITHUB_CLIENT_SECRET", "test-client-secret")
@@ -17,6 +14,10 @@ os.environ.setdefault("GITHUB_TOKEN_ENC_KEY", _Fernet.generate_key().decode())
 os.environ.setdefault("DATABASE_URL", "sqlite:///:memory:")
 os.environ.setdefault("IDENTITY_JWKS_URL", "http://identity-not-called/.well-known/jwks.json")
 os.environ.setdefault("RATE_LIMIT_ENABLED", "false")  # don't throttle the test client
+
+from app.auth import current_user
+from app.db import Base, get_db
+from app.main import app
 
 _engine = create_engine(
     "sqlite:///:memory:",
