@@ -4,11 +4,11 @@ sqlalchemy>=2.0,<2.1
 alembic>=1.14,<2.0
 psycopg[binary]>=3.2,<4.0
 pydantic-settings>=2.6,<3.0
-# Background jobs: Celery runs the scheduled GitHub sync; Redis is its broker.
 celery>=5.4,<6.0
 redis>=5.0,<6.0
-# Per-IP rate limiting on the GitHub endpoints.
 slowapi>=0.1.9,<0.2
+openai>=1.0,<2.0
+reportlab>=4.0,<5.0
 # crescent-core (the shared token verifier + pagination) is installed
 # separately, from the monorepo path — it is not on PyPI:
 #   Docker: pip install /packages/core      (see Dockerfile)

@@ -7,11 +7,13 @@ reference identity by id"* (see `CLAUDE.md`):
 
 1. **Identity DB** — `services/identity`. **Built & migrated `0001`–`0007`.**
    People, departments, teams, memberships, sessions, invites, password resets.
-2. **Pulse DB** — `services/pulse`. **Built & migrated `0001`–`0003`.** Two
-   domains: the **reporting** domain (reports, approvals, comments) and the
-   **GitHub sync** domain (connected accounts, repos, commits, PRs, reviews,
-   issues, sync runs). Reporting is **repo-centric** (session 05): a report is
-   about a repo, and each repo has a department, a lead, and a deputy.
+2. **Pulse DB** — `services/pulse`. **Built & migrated `0001`–`0004`.** Two
+   domains: the **reporting** domain (reports, approvals, comments, plus the
+   Week-4 `llm_usage` ledger) and the **GitHub sync** domain (connected accounts,
+   repos, commits, PRs, reviews, issues, sync runs). Reporting is **repo-centric**
+   (session 05): a report is about a repo, and each repo has a department, a lead,
+   and a deputy. Week 4 (session 06) adds AI-drafted summaries — `reports` gains
+   `generated_at` — and a token-usage ledger (`llm_usage`).
 
 > **Cross-service references are by id, not foreign keys.** Pulse stores
 > `author_user_id`, `dept_id`, `lead_user_id`, etc. as plain integers pointing at
@@ -246,8 +248,16 @@ erDiagram
         text summary_manager "AI-drafted, editable (Week 4)"
         text summary_exec "AI-drafted, editable (Week 4)"
         text next_week_goals "AI-drafted, editable (Week 4)"
+        timestamptz generated_at "nullable; set when AI-drafted, null if hand-written (Week 4)"
         timestamptz created_at
         timestamptz updated_at
+    }
+    llm_usage {
+        int id PK
+        int report_id "-> reports.id (by id, nullable; NOT an FK, survives report deletion)"
+        int user_id "-> identity.users (by id); who triggered the generation"
+        int tokens "total tokens for the generation call"
+        timestamptz created_at
     }
     approvals {
         int id PK

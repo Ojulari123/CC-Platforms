@@ -4,7 +4,7 @@ from slowapi import _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 from app.config import settings
 from app.rate_limit import limiter
-from app.routes import activity, github, health, reports, repositories
+from app.routes import activity, admin, github, health, reports, repositories
 
 app = FastAPI(title="Crescent Pulse", version="0.0.1")
 
@@ -24,6 +24,7 @@ app.include_router(reports.router)
 app.include_router(github.router)
 app.include_router(repositories.router)
 app.include_router(activity.router)
+app.include_router(admin.router)
 
 @app.get("/")
 def root():

@@ -26,6 +26,7 @@ class Report(Base):
     summary_manager = Column(Text, nullable=True)
     summary_exec = Column(Text, nullable=True)
     next_week_goals = Column(Text, nullable=True)
+    generated_at = Column(TIMESTAMP(timezone=True), nullable=True)  # when the AI drafted the summaries; null if written by hand
     created_at = Column(TIMESTAMP(timezone=True), server_default=func.now(), nullable=False)
     updated_at = Column(TIMESTAMP(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
 
@@ -63,6 +64,19 @@ class Comment(Base):
     edited_at = Column(TIMESTAMP(timezone=True), nullable=True)
 
     report = relationship("Report", back_populates="comments")
+
+class LlmUsage(Base):
+    """One row per successful generation call, for the platform admin's consumption
+    view. Report viewers never see token counts; usage rolls up here so the admin knows
+    when to top up the account. report_id is nullable so a row survives report deletion.
+    Only one model is ever in use, so we don't store which one."""
+    __tablename__ = "llm_usage"
+
+    id = Column(Integer, primary_key=True)
+    report_id = Column(Integer, nullable=True, index=True)
+    user_id = Column(Integer, nullable=False, index=True)  # who triggered the generation
+    tokens = Column(Integer, nullable=False)
+    created_at = Column(TIMESTAMP(timezone=True), server_default=func.now(), nullable=False)
 
 class GitHubAccount(Base):
     """Links an identity user to their GitHub identity, and stores the OAuth access

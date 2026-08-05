@@ -160,7 +160,7 @@ jobs:
 
       - name: Run tests (SQLite in-memory, auth dependency overridden, no external services)
         working-directory: services/pulse
-        run: pytest -ra
+        run: pytest -ra --cov=app --cov-fail-under=90
 
   pulse-migrations:
     name: pulse migrations — apply from scratch on Postgres, check for drift

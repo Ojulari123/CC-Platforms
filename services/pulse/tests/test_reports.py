@@ -1,14 +1,3 @@
-"""
-Cast (department 1 unless noted). Approval now comes from the REPO's lead/deputy,
-not a token claim:
-- ENGINEER (10) / ENGINEER_2 (11) — authors; see only their own
-- LEAD (20)      — the repo's lead_user_id (an approver)
-- DEPUTY (25)    — the repo's deputy_user_id (also an approver)
-- MANAGER_NOLEAD (21) — role manager but not this repo's lead/deputy: no access
-- DEPT_ADMIN (30) — role admin: reads the department, approves (override)
-- OUTSIDER (40)  — a different department
-- PLATFORM (99)  — platform admin: everything
-"""
 from datetime import date, datetime, timedelta, timezone
 import pytest
 from app.models import Commit, Repository
@@ -54,6 +43,9 @@ def repo(db):
 
 def _create(client, repo_id, **body):
     body["repo_id"] = repo_id
+    # A report needs content to be submittable, so give drafts a summary by default;
+    # tests that care about the empty case pass summary_manager="" to override.
+    body.setdefault("summary_manager", "did the work")
     return client.post("/reports", json=body)
 
 def _open_submitted(client, act_as, repo_id):
@@ -221,6 +213,25 @@ class TestWorkflow:
         assert r.status_code == 200 and r.json()["status"] == "submitted"
         history = client.get(f"/reports/{rid}/approvals").json()["items"]
         assert [h["action"] for h in history] == ["submitted"]
+
+    def test_cannot_submit_an_empty_report(self, client, act_as, repo):
+        # An all-empty draft has nothing to review — it must not reach an approver.
+        act_as(**ENGINEER)
+        rid = _create(client, repo, summary_manager="", summary_exec="", next_week_goals="").json()["id"]
+        r = client.post(f"/reports/{rid}/submit")
+        assert r.status_code == 422, r.text
+        assert client.get(f"/reports/{rid}").json()["status"] == "draft"
+
+    def test_whitespace_only_report_cannot_be_submitted(self, client, act_as, repo):
+        act_as(**ENGINEER)
+        rid = _create(client, repo, summary_manager="   ", summary_exec="\n", next_week_goals="").json()["id"]
+        assert client.post(f"/reports/{rid}/submit").status_code == 422
+
+    def test_a_report_with_one_summary_submits(self, client, act_as, repo):
+        act_as(**ENGINEER)
+        rid = _create(client, repo, summary_manager="shipped the auth work").json()["id"]
+        r = client.post(f"/reports/{rid}/submit")
+        assert r.status_code == 200 and r.json()["status"] == "submitted"
 
     def test_non_author_cannot_submit(self, client, act_as, repo):
         act_as(**ENGINEER)

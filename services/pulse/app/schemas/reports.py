@@ -16,6 +16,13 @@ class ReportCreate(BaseModel):
     summary_exec: str | None = None
     next_week_goals: str | None = None
 
+class GenerateRequest(BaseModel):
+    """Draft a weekly report for one repo from the caller's synced activity that
+    week. Same eligibility as manual create; week_start defaults to this week's
+    Monday. The three summaries come back AI-written."""
+    repo_id: int
+    week_start: date | None = None
+
 class ReportUpdate(BaseModel):
     """Edit the draft. Author-only, and only while the report is still a draft or
     has been sent back for changes."""
@@ -35,6 +42,7 @@ class ReportResponse(BaseModel):
     summary_manager: str | None
     summary_exec: str | None
     next_week_goals: str | None
+    generated_at: datetime | None  # set when the summaries were AI-drafted; null if hand-written
     created_at: datetime
     updated_at: datetime
 

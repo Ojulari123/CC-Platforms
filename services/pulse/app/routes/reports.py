@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from sqlalchemy.orm import Session
 from crescent_core import TokenClaims, Page, PageParams, page_params
 from app.auth import current_user
@@ -6,15 +6,31 @@ from app.db import get_db
 from app.models import ACTION_APPROVED, ACTION_CHANGES_REQUESTED, ACTION_REJECTED
 from app.schemas.reports import (
     ApprovalResponse, CommentCreate, CommentResponse, CommentUpdate, DecisionRequest,
-    ReportCreate, ReportResponse, ReportStatus, ReportUpdate,
+    GenerateRequest, ReportCreate, ReportResponse, ReportStatus, ReportUpdate,
 )
-from app.services import reports as reports_service
+from app.services import generation as generation_service, pdf as pdf_service, reports as reports_service
+from app.services.generation import NoActivityError, ReportConflictError
+from app.services.llm import LLMError
 
 router = APIRouter(prefix="/reports", tags=["reports"])
 
 @router.post("", response_model=ReportResponse, status_code=status.HTTP_201_CREATED)
 def create_report(payload: ReportCreate, user: TokenClaims = Depends(current_user), db: Session = Depends(get_db)) -> ReportResponse:
     return reports_service.create_report(db, user, payload)
+
+@router.post("/generate", response_model=ReportResponse, status_code=status.HTTP_201_CREATED)
+def generate_report(payload: GenerateRequest, user: TokenClaims = Depends(current_user), db: Session = Depends(get_db)) -> ReportResponse:
+    """AI-draft the caller's weekly report for a repo from their synced activity.
+    Additive to POST /reports (manual). Typed generation errors map to clean codes:
+    empty week -> 422, already-decided report -> 409, LLM failure -> 502."""
+    try:
+        return generation_service.generate_report(db, user, payload.repo_id, payload.week_start)
+    except NoActivityError as exc:
+        raise HTTPException(status_code=422, detail=str(exc))
+    except ReportConflictError as exc:
+        raise HTTPException(status_code=409, detail=str(exc))
+    except LLMError as exc:
+        raise HTTPException(status_code=502, detail=f"Report generation is unavailable right now: {exc}")
 
 @router.get("", response_model=Page[ReportResponse])
 def list_reports(repo_id: int | None = Query(default=None), dept_id: int | None = Query(default=None), author_user_id: int | None = Query(default=None), status: ReportStatus | None = Query(default=None, description="Filter by state; an unknown value is rejected with a 422"),
@@ -34,6 +50,19 @@ def review_queue(status: ReportStatus | None = Query(default="submitted", descri
 @router.get("/{report_id}", response_model=ReportResponse)
 def get_report(report_id: int, user: TokenClaims = Depends(current_user), db: Session = Depends(get_db)) -> ReportResponse:
     return reports_service.get_report(db, user, report_id)
+
+@router.get("/{report_id}/pdf")
+def report_pdf(report_id: int, user: TokenClaims = Depends(current_user), db: Session = Depends(get_db)) -> Response:
+    """Download the report as a PDF. Gated behind the same read permission as viewing
+    it — get_report raises 404/403 if you can't see it — then rendered with reportlab."""
+    report = reports_service.get_report(db, user, report_id)
+    body = pdf_service.render_report_pdf(db, report)
+    filename = f"report-{report.id}-week-{report.week_start.isoformat()}.pdf"
+    return Response(
+        content=body,
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'inline; filename="{filename}"'},
+    )
 
 @router.patch("/{report_id}", response_model=ReportResponse)
 def update_report(report_id: int, payload: ReportUpdate, user: TokenClaims = Depends(current_user), db: Session = Depends(get_db)) -> ReportResponse:

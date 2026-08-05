@@ -1,3 +1,4 @@
+from pydantic import AliasChoices, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 class Settings(BaseSettings):
@@ -23,6 +24,20 @@ class Settings(BaseSettings):
     GITHUB_TOKEN_ENC_KEY: str = ""
     GITHUB_ORG: str = ""
     GITHUB_REPOS: str = ""
+
+    # LLM (report generation). Key is blank by default so imports/CI never need it;
+    # a real deploy sets it. Accept OPENAI_API_KEY too, since that's what the OpenAI
+    # tooling names the key — either env var populates this one setting.
+    LLM_API_KEY: str = Field("", validation_alias=AliasChoices("LLM_API_KEY", "OPENAI_API_KEY"))
+    LLM_MODEL: str = "gpt-4o-mini"
+    LLM_TIMEOUT_SECONDS: float = 30.0
+    LLM_MAX_OUTPUT_TOKENS: int = 1000
+
+    # Outbound email (Brevo). Blank by default so imports/CI never need it; a real
+    # deploy sets these. FRONTEND_URL builds the report link in notification emails.
+    BREVO_API_KEY: str = ""
+    EMAIL_FROM: str = ""
+    FRONTEND_URL: str = "http://localhost:3000"
 
     @property
     def cors_origins_list(self) -> list[str]:

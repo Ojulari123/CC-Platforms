@@ -10,6 +10,7 @@ from app.models import (
     Approval, Comment, Commit, Issue, PullRequest, Report, Repository,
 )
 from app.schemas.reports import ReportCreate, ReportUpdate
+from app.services.email import notify_report_ready
 
 _ACTION_TO_STATUS = {
     ACTION_APPROVED: STATUS_APPROVED,
@@ -56,6 +57,11 @@ def _can_approve(user: TokenClaims, report: Report, repo: Repository | None) -> 
 def _require_author(user: TokenClaims, report: Report, verb: str) -> None:
     if report.author_user_id != user.user_id:
         raise HTTPException(status_code=403, detail=f"Only the author can {verb} this report")
+
+def _has_content(report: Report) -> bool:
+    """True if any of the three summaries has real (non-whitespace) text — an
+    all-empty draft has nothing to review and must not reach an approver."""
+    return any((s or "").strip() for s in (report.summary_manager, report.summary_exec, report.next_week_goals))
 
 def _has_activity(db: Session, user_id: int, repo_id: int) -> bool:
     """True if any commit, PR, or issue in the repo is attributed to this person —
@@ -188,10 +194,15 @@ def submit_report(db: Session, user: TokenClaims, report_id: int) -> Report:
     _require_author(user, report, "submit")
     if report.status not in _EDITABLE:
         raise HTTPException(status_code=409, detail=f"A {report.status} report can't be submitted")
+    if not _has_content(report):
+        raise HTTPException(status_code=422, detail="Cannot submit an empty report — generate or write summaries first.")
     report.status = STATUS_SUBMITTED
     db.add(Approval(report_id=report.id, actor_user_id=user.user_id, action=ACTION_SUBMITTED))
     db.commit()
     db.refresh(report)
+    # Best-effort: after the commit so a notification problem can never block or roll
+    # back the submission. notify_report_ready swallows its own errors.
+    notify_report_ready(db, report)
     return report
 
 def decide_report(db: Session, user: TokenClaims, report_id: int, action: str, note: str | None = None) -> Report:

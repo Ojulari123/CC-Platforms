@@ -8,6 +8,26 @@ something's still open. **Updated per session, not per commit.**
 
 ## Next up
 
+- ~~**Week 4 — AI generation, PDF, email trigger, usage ledger**~~ —
+  **DELIVERED (session 06).** `POST /reports/generate` drafts a report's three
+  summaries (`summary_manager`/`summary_exec`/`next_week_goals`) from the engineer's
+  real synced GitHub activity for the week, with typed failure modes (empty week →
+  422 and no LLM call; existing non-editable report → 409; LLM error after one retry
+  → 502). `GET /reports/{id}/pdf` exports via reportlab (same read permission as
+  viewing). Token usage rolls up into a new `llm_usage` ledger read by
+  `GET /admin/llm-usage` (platform admin only) — deliberately **not** per-report, so
+  viewers never see model/tokens. Migration `0004` (`reports.generated_at` +
+  `llm_usage` table). Email-on-submit fires but is **stubbed** (logs which approver
+  user_ids would be notified). Provider locked to **OpenAI** (`gpt-4o-mini` default).
+  Verified: real OpenAI smoke test (three distinct summaries, ~680 tokens); 143 pulse
+  tests green; migration round-trip + no drift on real Postgres.
+  - **Week 5 — real email send.** Resolve `user_id → email` via identity's API +
+    service-to-service auth, then enable the real send at the TODO marker in
+    `notify_report_ready` (`app/services/email.py`). The `send()` function is already
+    built full-fidelity (Brevo); only email resolution is missing.
+  - **Week 5 — frontend report link.** The notification's `{FRONTEND_URL}/reports/{id}`
+    link needs the Nuxt report page to land on (same known state as identity's invite
+    links).
 - **Repo-centric restructure (session 05) — reporting moves off teams onto
   repos. CONFIRMED, ready to build; do this before finishing slice 4.** A report
   is tied to the **repo** an engineer worked in, not their team; each repo has a
