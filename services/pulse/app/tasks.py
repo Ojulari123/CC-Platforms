@@ -1,9 +1,3 @@
-"""Background jobs (Celery tasks).
-
-Thin wrappers, on purpose: open a database session, hand off to the service
-layer, close the session. Same routes -> services split, one level down — so the
-real logic (app/services/sync.py) stays testable without a broker.
-"""
 import logging
 from app.celery_app import celery
 from app.db import SessionLocal

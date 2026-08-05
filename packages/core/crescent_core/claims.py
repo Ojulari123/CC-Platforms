@@ -10,20 +10,12 @@ class DeptMembership:
 
 @dataclass(frozen=True)
 class TokenClaims:
-    """What products get after verifying an access token. Everything they need to
-    make an authorization decision without touching identity's DB.
-
-    Memberships are a list because a person can belong to several departments
-    with a different role in each — ask `role_in(dept_id)`, never assume one."""
     user_id: int
     email: str
     memberships: tuple[DeptMembership, ...]
     is_platform_admin: bool
     token_version: int
     raw: dict[str, Any]
-    # Team ids this person is the named lead of (identity's Team.manager_user_id).
-    # Products use it to route things only a team's lead may do — approving a
-    # Pulse report, for instance — straight from the token.
     leads: tuple[int, ...] = ()
 
     def role_in(self, dept_id: int) -> str | None:

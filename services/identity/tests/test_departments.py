@@ -1,11 +1,4 @@
-"""Departments, their members, and the platform-admin layer above them.
-
-registered_user (alice) is the bootstrap user: platform admin AND admin of
-department 1 (Engineering). engineer_user is an ordinary engineer in the same
-department — that's the fixture that proves gating actually bites, since alice
-passes every check by virtue of being platform admin."""
 from tests.conftest import auth
-
 
 class TestListAndGet:
     def test_member_can_read_own_department(self, client, registered_user):
@@ -30,7 +23,6 @@ class TestListAndGet:
 
     def test_unknown_department_is_404_for_platform_admin(self, client, registered_user):
         assert client.get("/departments/9999", headers=auth(registered_user["tokens"])).status_code == 404
-
 
 class TestCreateAndDelete:
     def test_platform_admin_creates_department(self, client, registered_user):
@@ -58,7 +50,6 @@ class TestCreateAndDelete:
         assert r.status_code == 400
         assert "member" in r.json()["detail"]
 
-
 class TestRename:
     def test_dept_admin_renames_and_slug_follows(self, client, registered_user):
         r = client.patch(f"/departments/{registered_user['dept_id']}", json={"name": "Platform Engineering"}, headers=auth(registered_user["tokens"]))
@@ -81,7 +72,6 @@ class TestRename:
     def test_engineer_cannot_rename(self, client, registered_user, engineer_user):
         r = client.patch(f"/departments/{registered_user['dept_id']}", json={"name": "Hijacked"}, headers=auth(engineer_user))
         assert r.status_code == 403
-
 
 class TestMembers:
     def test_list_members_paginated_shape(self, client, registered_user):
@@ -133,7 +123,6 @@ class TestMembers:
         assert r.status_code == 400
         assert "does not belong" in r.json()["detail"]
 
-
 class TestRemoveMember:
     def test_admin_removes_member(self, client, registered_user, engineer_user):
         dept_id, tokens = registered_user["dept_id"], registered_user["tokens"]
@@ -170,7 +159,6 @@ class TestRemoveMember:
         r = client.delete(f"/departments/{registered_user['dept_id']}/members/{admin_id}", headers=auth(engineer_user))
         assert r.status_code == 403
 
-
 class TestCrossDepartmentRoles:
     """The bug this restructure exists to fix: one person, two departments,
     different role in each, neither leaking into the other."""
@@ -191,7 +179,6 @@ class TestCrossDepartmentRoles:
         assert client.patch(f"/departments/{second_dept}", json={"name": "Data Platform"}, headers=auth(bob)).status_code == 200
         # ...but not the one where he's an engineer.
         assert client.patch(f"/departments/{eng_dept}", json={"name": "Nope"}, headers=auth(bob)).status_code == 403
-
 
 class TestPlatformAdmins:
     def test_bootstrap_user_is_platform_admin(self, client, registered_user):
@@ -243,12 +230,7 @@ class TestPlatformAdmins:
         assert r.status_code == 200
         assert r.json()["is_platform_admin"] is False
 
-
 class TestDepartmentHead:
-    """Department.head_user_id — the one named person who runs a department,
-    as opposed to the SET of people holding role=admin, and distinct again from
-    platform admins who run the whole workspace."""
-
     def _admin_member(self, client, registered_user, invite_user, email="head@example.com"):
         dept = registered_user["dept_id"]
         u = invite_user(registered_user["tokens"], dept, email, "admin")
@@ -365,7 +347,6 @@ class TestRemovingSomeoneInCharge:
         dept, admin = registered_user["dept_id"], auth(registered_user["tokens"])
         eng_id = client.get("/me", headers=auth(engineer_user)).json()["id"]
         assert client.delete(f"/departments/{dept}/members/{eng_id}", headers=admin).status_code == 204
-
 
 class TestDemotionCannotStrandATitle:
     """A role is checked when a title is granted, never after. Without these

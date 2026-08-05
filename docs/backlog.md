@@ -8,6 +8,50 @@ something's still open. **Updated per session, not per commit.**
 
 ## Next up
 
+- **Repo-centric restructure (session 05) — reporting moves off teams onto
+  repos. CONFIRMED, ready to build; do this before finishing slice 4.** A report
+  is tied to the **repo** an engineer worked in, not their team; each repo has a
+  **lead + deputy** and **both** approve; one report per (engineer, repo, week);
+  membership derived from activity; repos belong to a department (dept admin sees
+  the dept's repos); dept-or-platform admin assigns lead/deputy; a repo with no
+  lead/deputy doesn't block reports. **Pulse owns** repo→lead/deputy/dept/members
+  (identity stays lean); identity's team model is left **parked, not deleted**
+  (a "how to delete teams" runbook is in the decision doc). Full detail:
+  `docs/decisions/2026-07-30-repo-centric-reporting.md`. Questions resolved:
+  `docs/questions.md`. Supersedes Decision 6.
+  - ~~**Schema work**~~ — **BUILT (session 05, migration `0003`).** Pulse
+    `repositories` += `dept_id`/`lead_user_id`/`deputy_user_id`; `reports` +=
+    `repo_id`, dropped `team_id`, uniqueness → `(author_user_id, repo_id,
+    week_start)`. Repo-admin endpoints (`/github/repositories/...` assign dept/
+    lead/deputy) + reworked report create/approve/read. 80 pulse tests green,
+    no drift.
+  - ~~**Slice 4 — GitHub activity pull**~~ — **BUILT (session 05).** A
+    `GitHubClient` (pagination + rate-limit wait/retry) and a rewritten
+    `run_full_sync` that, per allowlisted repo, upserts commits/PRs/reviews/issues
+    incrementally (since `last_synced_at`), attributes them to identity users by
+    matching GitHub login, and writes a `sync_runs` row each. `POST /github/sync`
+    triggers it on demand (admin-only); the daily beat still fires it. 85 pulse
+    tests green.
+  - ~~**Slice 5 — engineer activity view**~~ — **BUILT (session 05).**
+    `GET /activity/me` and `GET /activity/{user_id}` (own → always; others →
+    admins + repo leads/deputies), with `since` / `repo_id` filters: counts +
+    recent commits/PRs/reviews/issues. 95 pulse tests green.
+  - **Week 3 "done when" — MET.** Live GitHub data syncs (verified: 27 real
+    commits from `Ojulari123/CypherCrescent`), on a daily schedule (beat), and
+    surfaces per engineer via `/activity`.
+  - ~~**End-of-Week-3 review fixes**~~ — **done (session 05).** Stale comments +
+    Pulse README rewritten to the repo-centric model with all Week-3 endpoints;
+    secondary rate-limit handling + incremental PR sync + multi-account token
+    fallback in the sync engine; `create_report` now enforces membership-from-
+    activity; per-IP rate limiting on `/github/*` (slowapi); `POST /github/sync`
+    enqueues to Celery by default (`?wait=true` for inline); CI import-check now
+    boots the Celery side. 102 pulse tests green.
+  - **Still open (not blocking Week 4):** drop the unused `leads` token claim;
+    optional repo→dept auto-map on sync; GitHub webhooks (deferred).
+- ~~**`docs/erd.md` refresh**~~ — **done (session 05).** Now reflects identity
+  `0001`–`0007` (incl. `password_reset_tokens`) and Pulse `0001`–`0003`: both the
+  GitHub sync domain and the repo-centric reporting domain, with teams marked
+  parked.
 - ~~**Pulse service**~~ — **scaffolded (session 04).** `services/pulse/` with
   reports, approvals and comments, its own `pulse` database, its own Alembic
   (`0001`), its own CI jobs (tests + Postgres migration/drift check), and auth via
@@ -26,6 +70,12 @@ something's still open. **Updated per session, not per commit.**
   global email misconfig) + `POST /auth/reset-password` (single-use hashed
   token, `PASSWORD_RESET_EXPIRE_MINUTES` expiry, bumps `token_version` and
   revokes all refresh tokens). Table `password_reset_tokens` (migration 0007).
+- **GitHub webhooks — deferred (Week 3 decision).** Week 3 pulls GitHub activity
+  on a **scheduled daily sync** (Pulse asks GitHub on a timer). Webhooks — GitHub
+  *pushing* us push/PR events the instant they happen, for near-real-time data —
+  are deferred: they need a public dev URL (smee.io / ngrok) and the daily sync
+  already meets the "syncs on a schedule" bar. Add later if near-real-time
+  matters: a signature-verified `POST /github/webhook` receiver.
 
 ---
 

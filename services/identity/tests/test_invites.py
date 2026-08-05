@@ -1,10 +1,4 @@
-"""Invite lifecycle. Brevo is never hit — send_invite is monkeypatched by the
-`sent_emails` fixture and the raw token is captured from the call.
-
-Invites matter more than ever now: self-signup is closed after the bootstrap
-user, so this is the ONLY way anyone else gets an account."""
 from tests.conftest import auth
-
 
 def _invite(client, tokens, dept_id, email="dami@example.com", role="engineer", team_id=None):
     return client.post(
@@ -13,12 +7,10 @@ def _invite(client, tokens, dept_id, email="dami@example.com", role="engineer", 
         headers=auth(tokens),
     )
 
-
 def _accept(client, token, first="Dami", last="Ebire", password="Test123!password"):
     return client.post("/invites/accept", json={
         "token": token, "first_name": first, "last_name": last, "password": password,
     })
-
 
 class TestCreateInvite:
     def test_admin_can_invite(self, client, registered_user, sent_emails):
@@ -72,7 +64,6 @@ class TestCreateInvite:
         old, new = sent_emails[0]["raw_token"], sent_emails[1]["raw_token"]
         assert _accept(client, old).status_code == 400
         assert _accept(client, new).status_code == 200
-
 
 class TestAcceptInvite:
     def test_new_user_joins_inviting_department(self, client, registered_user, sent_emails):
@@ -135,7 +126,6 @@ class TestAcceptInvite:
         assert me["memberships"][0]["team_id"] == team_id
         assert me["memberships"][0]["team_name"] == "Platform"
 
-
 class TestListRevokeInvites:
     def test_admin_lists_pending_invites(self, client, registered_user, sent_emails):
         tokens, dept_id = registered_user["tokens"], registered_user["dept_id"]
@@ -168,7 +158,6 @@ class TestListRevokeInvites:
         r = client.delete(f"/departments/{second_dept}/invites/{invite_id}", headers=auth(tokens))
         assert r.status_code == 404
 
-
 class TestInvitePreview:
     def test_preview_shows_department_and_role(self, client, registered_user, sent_emails):
         _invite(client, registered_user["tokens"], registered_user["dept_id"], role="manager")
@@ -188,7 +177,6 @@ class TestInvitePreview:
 
     def test_preview_rejects_bogus_token(self, client):
         assert client.get("/invites/preview?token=nonsense").status_code == 400
-
 
 class TestInviteStraightOntoATeam:
     """You can hire someone into a team, not just a department — the invite

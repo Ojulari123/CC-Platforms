@@ -24,8 +24,6 @@ def test_access_token_verifies_against_jwks_public_key(client, registered_user):
     assert payload["email"] == registered_user["email"]
     assert payload["token_type"] == "access"
     assert payload["is_platform_admin"] is True
-    # Memberships travel as a list so a multi-department user isn't flattened
-    # down to one arbitrary department.
     assert len(payload["memberships"]) == 1
     assert payload["memberships"][0]["role"] == "admin"
     assert payload["memberships"][0]["dept_id"] is not None

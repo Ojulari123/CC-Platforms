@@ -8,7 +8,7 @@ from crescent_core.verify import InvalidToken, verify_access_token
 _bearer = HTTPBearer(auto_error=False)
 
 def current_user_dep(jwks_client: JWKSClient, issuer: str) -> Callable[..., TokenClaims]:
-    """Factory: returns a FastAPI dependency that verifies the Authorization: Bearer
+    """Returns a FastAPI dependency that verifies the Authorization: Bearer
     token and yields TokenClaims. Products call this once at startup and reuse
     the returned dep everywhere."""
 
@@ -31,22 +31,13 @@ def current_user_dep(jwks_client: JWKSClient, issuer: str) -> Callable[..., Toke
     return _current_user
 
 def require_dept_role(current_user: Callable[..., TokenClaims], *allowed_roles: str) -> Callable[..., TokenClaims]:
-    """Factory: gate an endpoint on the caller's role IN THE DEPARTMENT NAMED IN
+    """Gate an endpoint on the caller's role IN THE DEPARTMENT NAMED IN
     THE URL. `dept_id` is read from the path, so the check is always against the
-    department actually being acted on — someone who is a manager in Engineering
-    doesn't get manager rights in Data.
+    department actually being acted on.
+    
+    E.g. someone who is a manager in Engineering doesn't get manager rights in Data.
 
     Platform admins pass every check. Pass no roles to require membership only.
-
-    Example (in Pulse or Forge, after wiring up current_user at startup):
-
-        jwks = JWKSClient("http://identity:8000/.well-known/jwks.json")
-        current_user = current_user_dep(jwks, issuer="cyphercrescent-identity")
-        manager_only = require_dept_role(current_user, "manager", "admin")
-
-        @app.post("/departments/{dept_id}/reports/{id}/approve")
-        def approve(dept_id: int, user: TokenClaims = Depends(manager_only)):
-            ...
     """
 
     def _check(dept_id: int, user: TokenClaims = Depends(current_user)) -> TokenClaims:

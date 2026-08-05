@@ -2,36 +2,25 @@ from sqlalchemy import BigInteger, Boolean, Column, Date, ForeignKey, Integer, S
 from sqlalchemy.orm import relationship
 from app.db import Base
 
-# Report lifecycle. draft → submitted → (approved | rejected | changes_requested).
-# changes_requested goes back to the author, who edits and re-submits.
 STATUS_DRAFT = "draft"
 STATUS_SUBMITTED = "submitted"
 STATUS_APPROVED = "approved"
 STATUS_REJECTED = "rejected"
 STATUS_CHANGES_REQUESTED = "changes_requested"
-
-# An approval-history entry records the action that produced a status. The
-# author "submitted"; the team lead "approved" / "rejected" / "changes_requested".
 ACTION_SUBMITTED = "submitted"
 ACTION_APPROVED = "approved"
 ACTION_REJECTED = "rejected"
 ACTION_CHANGES_REQUESTED = "changes_requested"
 
 class Report(Base):
-    """One engineer's weekly report. People and teams are referenced by id only
-    (author_user_id, dept_id, team_id) — Pulse never stores names/emails, and
-    never reads identity's database (CLAUDE.md rule 3). The AI-drafted summary
-    fields are plain editable text for now; the generation step is Week 4."""
+    """One engineer's weekly report, about a repo. Pulse never stores names/emails, and never reads identity's
+    database. The AI-drafted summary fields are plain editable text for now; the generation step is Week 4"""
     __tablename__ = "reports"
 
     id = Column(Integer, primary_key=True)
     author_user_id = Column(Integer, nullable=False, index=True)
-    # The repo the report is about — the unit of reporting (session 05). dept_id is
-    # denormalised from the repo's department for department-admin visibility; it's
-    # nullable because a freshly-synced repo may not be assigned to a dept yet.
     repo_id = Column(Integer, ForeignKey("repositories.id", ondelete="CASCADE"), nullable=False, index=True)
     dept_id = Column(Integer, nullable=True, index=True)
-    # The Monday of the report week. One report per author, per repo, per week.
     week_start = Column(Date, nullable=False)
     status = Column(String(30), nullable=False, server_default=STATUS_DRAFT, default=STATUS_DRAFT)
     summary_manager = Column(Text, nullable=True)
@@ -47,9 +36,10 @@ class Report(Base):
     __table_args__ = (UniqueConstraint("author_user_id", "repo_id", "week_start", name="uq_report_author_repo_week"),)
 
 class Approval(Base):
-    """Append-only history of what happened to a report — who did what, when, and
-    why. Rows are never updated or deleted; Report.status is the denormalised
-    'current state' derived from the latest entry, kept for fast listing."""
+    """Append-only history of what happened to a report. Who did what, when, and why. 
+    
+    Rows are never updated or deleted; Report.status is the denormalised
+    'current state' derived from the latest entry, kept for fast listing"""
     __tablename__ = "approvals"
 
     id = Column(Integer, primary_key=True)
@@ -62,8 +52,7 @@ class Approval(Base):
     report = relationship("Report", back_populates="approvals")
 
 class Comment(Base):
-    """A flat comment on a report — no threading (a deliberate v1 simplification;
-    see docs/erd.md). Authored by a user referenced by id."""
+    """A flat comment on a report. Authored by a user referenced by id"""
     __tablename__ = "comments"
 
     id = Column(Integer, primary_key=True)
@@ -74,13 +63,6 @@ class Comment(Base):
     edited_at = Column(TIMESTAMP(timezone=True), nullable=True)
 
     report = relationship("Report", back_populates="comments")
-
-# ── GitHub integration (Week 3) ────────────────────────────────────────────────
-# Everything below mirrors data pulled from GitHub on a scheduled sync. People are
-# still referenced by identity's user id where we can resolve them (author_user_id
-# etc., nullable until a GitHub login is linked to an account); GitHub's own ids
-# and logins are kept so a re-sync updates rather than duplicates. Still no cross-
-# database foreign keys into identity (CLAUDE.md rule 3).
 
 class GitHubAccount(Base):
     """Links an identity user to their GitHub identity, and stores the OAuth access
@@ -98,7 +80,7 @@ class GitHubAccount(Base):
     updated_at = Column(TIMESTAMP(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
 
 class Repository(Base):
-    """A GitHub repo we track. The Week-3 sync scope is an org/allowlist, so repos
+    """A GitHub repo we track. We make use of an org/allowlist, so repos
     are seeded from config, not per-user. is_tracked toggles a repo off without
     losing its history; last_synced_at is the cursor for incremental pulls."""
     __tablename__ = "repositories"
@@ -112,10 +94,6 @@ class Repository(Base):
     is_tracked = Column(Boolean, nullable=False, server_default="true", default=True)
     default_branch = Column(String(255), nullable=True)
     last_synced_at = Column(TIMESTAMP(timezone=True), nullable=True)
-    # Repo-centric reporting (session 05): a repo belongs to a department and has a
-    # named lead + deputy who BOTH approve its reports. All reference identity by
-    # id; nullable until an admin assigns them. See
-    # docs/decisions/2026-07-30-repo-centric-reporting.md.
     dept_id = Column(Integer, index=True, nullable=True)
     lead_user_id = Column(Integer, index=True, nullable=True)
     deputy_user_id = Column(Integer, index=True, nullable=True)
@@ -172,7 +150,7 @@ class PullRequest(Base):
     __table_args__ = (UniqueConstraint("repo_id", "number", name="uq_pr_repo_number"),)
 
 class Review(Base):
-    """A review left on a pull request — approved / changes requested / commented."""
+    """A review left on a pull request (approved / changes requested / commented)"""
     __tablename__ = "reviews"
 
     id = Column(Integer, primary_key=True)
@@ -208,7 +186,8 @@ class Issue(Base):
     __table_args__ = (UniqueConstraint("repo_id", "number", name="uq_issue_repo_number"),)
 
 class SyncRun(Base):
-    """Audit log of sync jobs — when we pulled, for which repo, and how it went.
+    """Audit log of sync jobs. When we pulled, for which repo, and how it went.
+    
     Makes 'why is the data stale?' answerable and gives the scheduled job a trail."""
     __tablename__ = "sync_runs"
 

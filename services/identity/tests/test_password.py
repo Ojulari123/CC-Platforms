@@ -20,7 +20,6 @@ def test_validate_rejects_weak_passwords(password):
 def test_validate_accepts_strong_password():
     assert validate_password("Strong1!password") == "Strong1!password"
 
-
 class TestBcryptLengthLimit:
     """bcrypt reads only the first 72 bytes and ignores the rest, silently.
     Before the cap, a 103-character password could be logged into with just its

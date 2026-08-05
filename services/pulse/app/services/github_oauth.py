@@ -6,8 +6,9 @@ callback → verify state, swap the `code` for a GitHub access token, look up th
            GitHub user, and upsert a GitHubAccount with the token stored ENCRYPTED.
 
 The two outbound HTTP calls (token exchange, user lookup) are module-level
-functions so tests monkeypatch them — the suite never touches real GitHub.
+functions so tests monkeypatch them (the suite never touches real GitHub).
 """
+
 import secrets
 from urllib.parse import urlencode
 import httpx

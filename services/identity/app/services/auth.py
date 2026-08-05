@@ -9,6 +9,9 @@ from app.schemas.auth import RegisterRequest, TokenPair, UserResponse
 from app.security import create_access_token, hash_password, validate_password, verify_password
 from app.services import email as email_service
 
+# dummy verify so unknown emails aren't faster — no enumeration
+_DUMMY_PASSWORD_HASH = hash_password(secrets.token_urlsafe(16))
+
 def _hash_refresh(token: str) -> str:
     return hashlib.sha256(token.encode()).hexdigest()
 
@@ -159,7 +162,10 @@ def reset_password(db: Session, raw_token: str, new_password: str) -> None:
 
 def login_user(db: Session, email: str, password: str) -> TokenPair:
     user = db.scalar(select(User).where(User.email == email.lower()))
-    if not user or not verify_password(password, user.password_hash):
+    if not user:
+        verify_password(password, _DUMMY_PASSWORD_HASH)  # burn the same time as a wrong-password check
+        raise HTTPException(status_code=401, detail="Invalid email or password")
+    if not verify_password(password, user.password_hash):
         raise HTTPException(status_code=401, detail="Invalid email or password")
     if not user.is_active:
         raise HTTPException(status_code=403, detail="Account is deactivated")

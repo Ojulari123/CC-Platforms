@@ -57,6 +57,16 @@ services:
              uvicorn app.main:app --host 0.0.0.0 --port 8000
              --reload --reload-dir app"
 
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
   pulse:
     # Build context is the repo ROOT (not services/pulse) so the image can pull
     # in the shared packages/core. See services/pulse/Dockerfile.
@@ -71,6 +81,7 @@ services:
     environment:
       DATABASE_URL: postgresql+psycopg://${CC_POSTGRES_USER:-crescent}:${CC_POSTGRES_PASSWORD:-crescent}@postgres:5432/pulse
       IDENTITY_JWKS_URL: http://identity:8000/.well-known/jwks.json
+      REDIS_URL: redis://redis:6379/0
     ports:
       - "8002:8000"
     depends_on:
@@ -78,6 +89,8 @@ services:
         condition: service_healthy
       identity:
         condition: service_started
+      redis:
+        condition: service_healthy
     volumes:
       - ./services/pulse:/app
       - ./packages/core:/packages/core
@@ -85,6 +98,46 @@ services:
       sh -c "alembic upgrade head &&
              uvicorn app.main:app --host 0.0.0.0 --port 8000
              --reload --reload-dir app"
+
+  pulse-worker:
+    # Runs the Celery jobs (the GitHub sync). Same image/env as pulse, different
+    # command. Migrations are applied by the `pulse` service, not here.
+    build:
+      context: .
+      dockerfile: services/pulse/Dockerfile
+    env_file:
+      - ./services/pulse/.env
+    environment:
+      DATABASE_URL: postgresql+psycopg://${CC_POSTGRES_USER:-crescent}:${CC_POSTGRES_PASSWORD:-crescent}@postgres:5432/pulse
+      IDENTITY_JWKS_URL: http://identity:8000/.well-known/jwks.json
+      REDIS_URL: redis://redis:6379/0
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    volumes:
+      - ./services/pulse:/app
+      - ./packages/core:/packages/core
+    command: celery -A app.celery_app.celery worker --loglevel=info
+
+  pulse-beat:
+    # The scheduler ("beat"): drops the daily sync task onto the queue on time.
+    build:
+      context: .
+      dockerfile: services/pulse/Dockerfile
+    env_file:
+      - ./services/pulse/.env
+    environment:
+      DATABASE_URL: postgresql+psycopg://${CC_POSTGRES_USER:-crescent}:${CC_POSTGRES_PASSWORD:-crescent}@postgres:5432/pulse
+      REDIS_URL: redis://redis:6379/0
+    depends_on:
+      redis:
+        condition: service_healthy
+    volumes:
+      - ./services/pulse:/app
+      - ./packages/core:/packages/core
+    command: celery -A app.celery_app.celery beat --loglevel=info
 
 volumes:
   postgres_data:

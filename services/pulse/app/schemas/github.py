@@ -2,8 +2,6 @@ from datetime import datetime
 from pydantic import BaseModel, ConfigDict
 
 class GitHubConnectResponse(BaseModel):
-    """Where to send the browser to authorize. The frontend performs the redirect
-    (for now, in dev, you open this URL yourself)."""
     authorize_url: str
 
 class GitHubAccountResponse(BaseModel):

@@ -1,8 +1,5 @@
-"""Forgot-password flow. Brevo is never hit — send_password_reset is
-monkeypatched and the raw token captured, exactly like the invite tests.
-
-The two behaviours that matter most here are security ones: the response must
-not reveal whether an address has an account, and completing a reset must kill
+"""
+The response must not reveal whether an address has an account, and completing a reset must kill
 every existing session."""
 import pytest
 
@@ -12,8 +9,7 @@ from tests.conftest import auth
 @pytest.fixture
 def sent_resets(monkeypatch):
     """Capture reset emails and pretend email is configured (test env has blank
-    Brevo creds). Each entry carries the raw token — its only home outside the
-    email."""
+    Brevo creds). Each entry carries the raw token"""
     from app.services import email as email_service
 
     captured = []
@@ -24,14 +20,11 @@ def sent_resets(monkeypatch):
     )
     return captured
 
-
 def _forgot(client, email):
     return client.post("/auth/forgot-password", json={"email": email})
 
-
 def _reset(client, token, new_password="NewPass123!"):
     return client.post("/auth/reset-password", json={"token": token, "new_password": new_password})
-
 
 class TestForgotPassword:
     def test_known_user_gets_a_link(self, client, registered_user, sent_resets):
@@ -47,7 +40,7 @@ class TestForgotPassword:
         assert sent_resets == []
 
     def test_503_only_when_email_is_misconfigured(self, client, registered_user):
-        # No sent_resets fixture: is_configured() reads the blank test creds.
+        # is_configured() reads the blank test creds.
         # The 503 is about the server, not the address — it can't be used to probe.
         assert _forgot(client, registered_user["email"]).status_code == 503
         assert _forgot(client, "nobody@example.com").status_code == 503
@@ -60,7 +53,6 @@ class TestForgotPassword:
         assert first != second
         assert _reset(client, first).status_code == 400  # superseded
         assert _reset(client, second).status_code == 204
-
 
 class TestResetPassword:
     def test_reset_sets_the_new_password(self, client, registered_user, sent_resets):

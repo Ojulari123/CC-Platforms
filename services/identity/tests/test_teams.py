@@ -1,25 +1,16 @@
-"""Teams, and putting people on them.
-
-A person's team lives on their department membership, so every team operation
-is also a check that department scoping holds."""
 import pytest
-
 from tests.conftest import auth
-
 
 @pytest.fixture
 def dept(registered_user):
     return registered_user["dept_id"]
 
-
 @pytest.fixture
 def admin(registered_user):
     return auth(registered_user["tokens"])
 
-
 def _team(client, dept, admin, name="Platform"):
     return client.post(f"/departments/{dept}/teams", json={"name": name}, headers=admin).json()["id"]
-
 
 class TestTeamCrud:
     def test_admin_creates_team(self, client, dept, admin):
@@ -75,7 +66,6 @@ class TestTeamCrud:
 
     def test_non_member_cannot_list_teams(self, client, second_dept, engineer_user):
         assert client.get(f"/departments/{second_dept}/teams", headers=auth(engineer_user)).status_code == 403
-
 
 class TestTeamMembers:
     def test_add_and_list_team_members(self, client, dept, admin, engineer_user):
@@ -160,10 +150,9 @@ class TestTeamMembers:
         assert membership["team_id"] == team_id
         assert membership["team_name"] == "Platform"
 
-
 class TestTeamLeadRoster:
-    """The named lead owns who's on THEIR team — they approve its reports in
-    Pulse — but nothing beyond it."""
+    """The named lead owns who's on THEIR team; they approve its reports in
+    Puls, but nothing beyond it."""
 
     def _lead_of(self, client, dept, admin, team_id, registered_user, invite_user, email="mgr@example.com"):
         """Invite a manager and appoint them the team's lead."""
@@ -228,7 +217,6 @@ class TestTeamLeadRoster:
         eng_id = client.get("/me", headers=auth(engineer_user)).json()["id"]
         assert client.put(f"/departments/{dept}/teams/{team_id}/members/{eng_id}", headers=auth(engineer_user)).status_code == 403
 
-
 class TestFlatTeamList:
     """GET /teams — look at teams without knowing a department id first."""
 
@@ -260,7 +248,6 @@ class TestFlatTeamList:
 
     def test_requires_auth(self, client):
         assert client.get("/teams").status_code == 401
-
 
 class TestTeamLead:
     """Team.manager_user_id — the single named answer to 'who runs this team',
@@ -366,10 +353,9 @@ class TestTeamLead:
         r = client.put(f"/departments/{dept}/teams/{team_id}/manager/{mgr_id}", headers=auth(engineer_user))
         assert r.status_code == 403
 
-
 class TestOneLeadManyTeams:
     """Leading is decoupled from membership, so the schema already supports one
-    person leading several teams — the contingency if that's ever wanted."""
+    person leading several teams. Which is the contingency if that's ever wanted."""
 
     def _manager(self, client, dept, registered_user, invite_user, email="mgr@example.com"):
         mgr = invite_user(registered_user["tokens"], dept, email, "manager")

@@ -15,9 +15,6 @@ class User(Base):
     avatar_url = Column(String(500), nullable=True)
     is_active = Column(Boolean, nullable=False, server_default="true", default=True)
     email_verified = Column(Boolean, nullable=False, server_default="false", default=False)
-    # Platform admin = runs CypherCrescent's whole workspace: creates departments
-    # and can administer any of them. Distinct from the per-department "admin"
-    # role on Membership, which only covers that one department.
     is_platform_admin = Column(Boolean, nullable=False, server_default="false", default=False)
     token_version = Column(Integer, nullable=False, server_default="0", default=0)
     created_at = Column(TIMESTAMP(timezone=True), server_default=func.now(), nullable=False)
@@ -32,9 +29,6 @@ class Department(Base):
     id = Column(Integer, primary_key=True)
     name = Column(String(200), nullable=False)
     slug = Column(String(100), unique=True, index=True, nullable=False)
-    # The one named person who runs this department, as opposed to the SET of
-    # people holding role="admin". Same reason Team has a named lead: "who is
-    # in charge here" needs one answer, not a list.
     head_user_id = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
     created_at = Column(TIMESTAMP(timezone=True), server_default=func.now(), nullable=False)
     updated_at = Column(TIMESTAMP(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
@@ -49,10 +43,6 @@ class Team(Base):
     dept_id = Column(Integer, ForeignKey("departments.id", ondelete="CASCADE"), nullable=False)
     name = Column(String(200), nullable=False)
     slug = Column(String(100), nullable=False)
-    # The team's lead — one named person, so "who approves this engineer's
-    # weekly report?" has exactly one answer in Pulse. Nullable: a team can sit
-    # without a lead between appointments. SET NULL rather than CASCADE, because
-    # deleting a user must never delete the team.
     manager_user_id = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
     created_at = Column(TIMESTAMP(timezone=True), server_default=func.now(), nullable=False)
     updated_at = Column(TIMESTAMP(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
@@ -85,9 +75,9 @@ class Membership(Base):
 
 class RefreshToken(Base):
     """Opaque refresh token stored as SHA-256 hash — never the raw value.
-    family_id groups every token descended from the same login; reusing a
-    revoked token nukes the whole family (stolen-token detection).
-    Ported from FindYourCribb/Backend/Utils/security.py."""
+    family_id groups every token descended from the same login.
+    
+    Reusing a revoked token nukes the whole family (stolen-token detection)."""
     __tablename__ = "refresh_tokens"
 
     id = Column(Integer, primary_key=True)
@@ -102,9 +92,6 @@ class RefreshToken(Base):
     user = relationship("User", back_populates="refresh_tokens")
 
 class Invite(Base):
-    """One-time invitation into an existing department. Token stored as SHA-256 hash
-    (same pattern as RefreshToken); the raw value only ever lives in the email.
-    Accepting creates the user (if new) + a membership with the invited role."""
     __tablename__ = "invites"
 
     id = Column(Integer, primary_key=True)
@@ -122,7 +109,7 @@ class Invite(Base):
 
 class PasswordResetToken(Base):
     """One-time forgot-password token. Same hashing pattern as RefreshToken and
-    Invite — only the SHA-256 hash is stored; the raw value lives solely in the
+    Invite (only the SHA-256 hash is stored); the raw value lives solely in the
     emailed link. Short-lived and single-use; requesting a new one invalidates
     any earlier unused token for the same user."""
     __tablename__ = "password_reset_tokens"

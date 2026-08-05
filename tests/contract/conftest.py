@@ -1,9 +1,7 @@
 """Cross-service contract tests.
 
 These live at the repo root, outside both packages, because they need to import
-identity AND crescent_core at once — and the dependency rule says core must
-never import from services/*. A test that depends on both breaks no rule; a
-package that does would.
+identity AND crescent_core at once 
 
 Everything here is in-memory: an ephemeral RSA keypair and SQLite, no network,
 no database server.
@@ -12,10 +10,15 @@ import os
 import sys
 import tempfile
 from pathlib import Path
-
 import pytest
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import rsa
+
+os.environ["DATABASE_URL"] = "sqlite:///:memory:"
+os.environ["JWT_PRIVATE_KEY_PATH"] = _priv
+os.environ["JWT_PUBLIC_KEY_PATH"] = _pub
+os.environ["BREVO_API_KEY"] = ""
+os.environ["EMAIL_FROM"] = ""
 
 _ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(_ROOT / "services" / "identity"))
@@ -35,25 +38,16 @@ Path(_pub).write_bytes(_key.public_key().public_bytes(
     format=serialization.PublicFormat.SubjectPublicKeyInfo,
 ))
 
-os.environ["DATABASE_URL"] = "sqlite:///:memory:"
-os.environ["JWT_PRIVATE_KEY_PATH"] = _priv
-os.environ["JWT_PUBLIC_KEY_PATH"] = _pub
-os.environ["BREVO_API_KEY"] = ""
-os.environ["EMAIL_FROM"] = ""
-
-
 @pytest.fixture(scope="session")
 def issuer():
     from app.config import settings
     return settings.JWT_ISSUER
-
 
 @pytest.fixture(scope="session")
 def mint():
     """Mint a token exactly the way identity mints one in production."""
     from app.security import create_access_token
     return create_access_token
-
 
 @pytest.fixture(scope="session")
 def jwks_client():

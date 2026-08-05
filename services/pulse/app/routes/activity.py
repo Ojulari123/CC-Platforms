@@ -1,8 +1,3 @@
-"""The engineer activity view — the loop-closer on the synced GitHub data.
-
-`/activity/me` for yourself; `/activity/{user_id}` for someone else (admins and
-repo leads/deputies). Optional `since` and `repo_id` narrow the window.
-"""
 from datetime import date
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.orm import Session
@@ -14,11 +9,9 @@ from app.services import activity as activity_service
 
 router = APIRouter(prefix="/activity", tags=["activity"])
 
-
 @router.get("/me", response_model=ActivityResponse)
 def my_activity(since: date | None = Query(default=None), repo_id: int | None = Query(default=None), user: TokenClaims = Depends(current_user), db: Session = Depends(get_db)) -> ActivityResponse:
     return activity_service.get_activity_response(db, user.user_id, since=since, repo_id=repo_id)
-
 
 @router.get("/{user_id}", response_model=ActivityResponse)
 def user_activity(user_id: int, since: date | None = Query(default=None), repo_id: int | None = Query(default=None), user: TokenClaims = Depends(current_user), db: Session = Depends(get_db)) -> ActivityResponse:

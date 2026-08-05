@@ -1,21 +1,19 @@
-"""Slice 4: the GitHub activity sync. The engine is driven by a fake GitHub
+"""The GitHub activity sync. The engine is driven by a fake GitHub
 client (no network); a separate test exercises the real client's pagination +
 rate-limit handling via httpx.MockTransport."""
-import time
 
+import time
 import httpx
 from sqlalchemy import func, select
-
 from app import crypto
 from app.celery_app import celery
 from app.config import settings
 from app.models import Commit, GitHubAccount, Issue, PullRequest, Repository, Review, SyncRun
 from app.services import sync as sync_service
 from app.services.github_client import GitHubClient
-import app.tasks  # noqa: F401 — registers the task on the celery app
+import app.tasks 
 
 REPO = {"id": 555, "name": "alpha", "full_name": "org/alpha", "private": False, "default_branch": "main", "owner": {"login": "org"}}
-
 
 class FakeGitHub:
     """Duck-typed stand-in for GitHubClient. Records the `since` it was asked for."""
@@ -27,6 +25,7 @@ class FakeGitHub:
         self._reviews = reviews or {}
         self._issues = list(issues)
         self.commit_since = []
+        self.pr_since = []
 
     def get_repo(self, full_name):
         return self._repo
@@ -35,7 +34,8 @@ class FakeGitHub:
         self.commit_since.append(since)
         return self._commits
 
-    def list_pull_requests(self, full_name):
+    def list_pull_requests(self, full_name, since=None):
+        self.pr_since.append(since)
         return self._prs
 
     def list_reviews(self, full_name, number):
@@ -47,12 +47,10 @@ class FakeGitHub:
     def close(self):
         pass
 
-
 def _connect_account(db, login="ada", user_id=10):
     db.add(GitHubAccount(user_id=user_id, github_user_id=99, github_login=login,
                          access_token_encrypted=crypto.encrypt("gho_token")))
     db.commit()
-
 
 def _rich_fake():
     return FakeGitHub(
@@ -70,7 +68,6 @@ def _rich_fake():
              "state": "open", "user": {"login": "ada"}},  # must be skipped
         ],
     )
-
 
 def test_sync_pulls_and_attributes_activity(db, monkeypatch):
     monkeypatch.setattr(settings, "GITHUB_REPOS", "org/alpha")
@@ -96,7 +93,6 @@ def test_sync_pulls_and_attributes_activity(db, monkeypatch):
     issues = db.scalars(select(Issue)).all()
     assert len(issues) == 1 and issues[0].number == 3  # the PR-as-issue was skipped
 
-
 def test_resync_is_idempotent(db, monkeypatch):
     monkeypatch.setattr(settings, "GITHUB_REPOS", "org/alpha")
     _connect_account(db)
@@ -106,17 +102,18 @@ def test_resync_is_idempotent(db, monkeypatch):
     assert db.scalar(select(func.count()).select_from(PullRequest)) == 1
     assert db.scalar(select(func.count()).select_from(Review)) == 1
 
-
 def test_second_run_is_incremental(db, monkeypatch):
     monkeypatch.setattr(settings, "GITHUB_REPOS", "org/alpha")
     _connect_account(db)
     fake = _rich_fake()
     sync_service.run_full_sync(db, make_client=lambda t: fake)
     sync_service.run_full_sync(db, make_client=lambda t: fake)
-    # First pull has no cursor; the second asks GitHub only for changes "since".
+    # First pull has no cursor; the second asks GitHub only for changes "since" —
+    # for both commits and pull requests.
     assert fake.commit_since[0] is None
     assert fake.commit_since[1] is not None
-
+    assert fake.pr_since[0] is None
+    assert fake.pr_since[1] is not None
 
 def test_no_repos_configured_records_a_no_op(db, monkeypatch):
     monkeypatch.setattr(settings, "GITHUB_REPOS", "")
@@ -124,12 +121,10 @@ def test_no_repos_configured_records_a_no_op(db, monkeypatch):
     assert len(runs) == 1 and runs[0].status == "success"
     assert "no repos" in runs[0].detail
 
-
 def test_no_connected_account_is_an_error(db, monkeypatch):
     monkeypatch.setattr(settings, "GITHUB_REPOS", "org/alpha")
     runs = sync_service.run_full_sync(db, make_client=lambda t: FakeGitHub())
     assert runs[0].status == "error" and "no connected" in runs[0].detail
-
 
 def test_client_waits_out_a_rate_limit_then_succeeds():
     calls = {"n": 0}
@@ -148,7 +143,6 @@ def test_client_waits_out_a_rate_limit_then_succeeds():
     assert calls["n"] == 2       # it retried after the rate-limit response
     assert len(slept) == 1       # and waited exactly once
 
-
 def test_client_follows_pagination():
     def handler(request: httpx.Request) -> httpx.Response:
         if request.url.params.get("page") == "2":
@@ -159,6 +153,74 @@ def test_client_follows_pagination():
     client = GitHubClient("tok", base_url="https://api.github.test", transport=httpx.MockTransport(handler))
     assert client.list_commits("org/alpha") == [{"sha": "a"}, {"sha": "b"}]
 
+def test_client_handles_a_secondary_rate_limit():
+    # Secondary limits return 403 with a Retry-After but remaining > 0.
+    calls = {"n": 0}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls["n"] += 1
+        if calls["n"] == 1:
+            return httpx.Response(403, headers={"Retry-After": "0", "X-RateLimit-Remaining": "42"}, json=[])
+        return httpx.Response(200, json=[{"sha": "x"}])
+
+    slept: list = []
+    client = GitHubClient("tok", base_url="https://api.github.test", sleep=slept.append, transport=httpx.MockTransport(handler))
+    assert client.list_commits("org/alpha") == [{"sha": "x"}]
+    assert calls["n"] == 2 and len(slept) == 1
+
+def test_client_pull_requests_stop_at_since():
+    from datetime import datetime, timezone
+    pages = [
+        [{"number": 3, "updated_at": "2026-07-20T10:00:00Z"}, {"number": 2, "updated_at": "2026-07-01T10:00:00Z"}],
+    ]
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json=pages[0])
+
+    client = GitHubClient("tok", base_url="https://api.github.test", transport=httpx.MockTransport(handler))
+    out = client.list_pull_requests("org/alpha", since=datetime(2026, 7, 10, tzinfo=timezone.utc))
+    assert [p["number"] for p in out] == [3]  # #2 predates `since`, so it stops
+
+def test_sync_falls_back_to_a_second_account(db, monkeypatch):
+    monkeypatch.setattr(settings, "GITHUB_REPOS", "org/alpha")
+    db.add(GitHubAccount(user_id=10, github_user_id=1, github_login="ada", access_token_encrypted=crypto.encrypt("tok-A")))
+    db.add(GitHubAccount(user_id=11, github_user_id=2, github_login="bob", access_token_encrypted=crypto.encrypt("tok-B")))
+    db.commit()
+
+    class NoAccess:
+        def get_repo(self, full_name):
+            req = httpx.Request("GET", "https://api.github.test")
+            raise httpx.HTTPStatusError("forbidden", request=req, response=httpx.Response(403, request=req))
+
+        def close(self):
+            pass
+
+    good = _rich_fake()
+    runs = sync_service.run_full_sync(db, make_client=lambda token: good if token == "tok-B" else NoAccess())
+    assert runs[0].status == "success", runs[0].detail
+    assert db.scalar(select(Commit)) is not None  # synced via the second account
+
+def test_sync_trigger_requires_admin(client, act_as, monkeypatch):
+    monkeypatch.setattr(settings, "GITHUB_REPOS", "")
+    act_as(user_id=10, memberships=[{"dept_id": 1, "team_id": None, "role": "engineer"}])
+    assert client.post("/github/sync?wait=true").status_code == 403
+
+def test_sync_trigger_inline_returns_results(client, act_as, monkeypatch):
+    monkeypatch.setattr(settings, "GITHUB_REPOS", "")
+    act_as(user_id=99, memberships=[], is_platform_admin=True)
+    r = client.post("/github/sync?wait=true")
+    assert r.status_code == 200 and r.json()["mode"] == "inline"
+
+def test_sync_trigger_enqueues_by_default(client, act_as, monkeypatch):
+    import app.routes.github as gh
+
+    class FakeTask:
+        id = "task-123"
+
+    monkeypatch.setattr(gh.sync_all_repos, "delay", lambda: FakeTask())
+    act_as(user_id=99, memberships=[], is_platform_admin=True)
+    r = client.post("/github/sync")
+    assert r.status_code == 200 and r.json() == {"mode": "queued", "task_id": "task-123"}
 
 def test_daily_sync_is_registered_on_the_celery_app():
     assert "app.tasks.sync_all_repos" in celery.tasks

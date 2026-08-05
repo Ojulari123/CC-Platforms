@@ -10,7 +10,7 @@ def _register(client, email="bob@example.com", password="Test123!password", depa
 class TestRegister:
     """Registration is BOOTSTRAP ONLY — the first call sets up the platform
     admin and the first department, then the door closes and everyone else
-    arrives by invite. See docs/decisions/2026-07-23-identity-structure.md."""
+    arrives by invite."""
 
     def test_creates_user_and_returns_token_pair(self, client):
         r = _register(client)
@@ -82,6 +82,21 @@ class TestLogin:
     def test_unknown_email_401(self, client):
         r = client.post("/auth/login", json={"email": "ghost@example.com", "password": "Test123!password"})
         assert r.status_code == 401
+
+    def test_unknown_email_still_runs_verify_and_same_message(self, client, registered_user, monkeypatch):
+        # Unknown email must burn a password verify (no timing enumeration) and
+        # return the exact same 401 message as a wrong password.
+        import app.services.auth as auth
+        calls = []
+        real_verify = auth.verify_password
+        monkeypatch.setattr(auth, "verify_password", lambda p, h: calls.append(h) or real_verify(p, h))
+
+        unknown = client.post("/auth/login", json={"email": "ghost@example.com", "password": "Test123!password"})
+        assert unknown.status_code == 401
+        assert calls == [auth._DUMMY_PASSWORD_HASH]
+
+        wrong = client.post("/auth/login", json={"email": registered_user["email"], "password": "WrongPass1!"})
+        assert unknown.json()["detail"] == wrong.json()["detail"]
 
     def test_email_case_insensitive(self, client, registered_user):
         r = client.post("/auth/login", json={"email": registered_user["email"].upper(), "password": registered_user["password"]})

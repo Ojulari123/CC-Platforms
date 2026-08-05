@@ -1,7 +1,4 @@
-"""The engineer activity view (slice 5): counts + recent items, filters, and who
-may see whose activity."""
 from datetime import datetime, timezone
-
 from app.models import Commit, Issue, PullRequest, Repository, Review
 
 ENGINEER = dict(user_id=10, memberships=[{"dept_id": 1, "team_id": None, "role": "engineer"}])
@@ -10,10 +7,8 @@ DEPT_ADMIN = dict(user_id=30, memberships=[{"dept_id": 1, "team_id": None, "role
 LEAD = dict(user_id=20, memberships=[{"dept_id": 1, "team_id": None, "role": "manager"}])
 PLATFORM = dict(user_id=99, memberships=[], is_platform_admin=True)
 
-
 def _dt(y, m, d):
     return datetime(y, m, d, 12, 0, tzinfo=timezone.utc)
-
 
 def _seed_repo(db, gh_id=1, name="alpha", lead=None):
     repo = Repository(github_repo_id=gh_id, full_name=f"org/{name}", owner="org", name=name, lead_user_id=lead)
@@ -21,7 +16,6 @@ def _seed_repo(db, gh_id=1, name="alpha", lead=None):
     db.commit()
     db.refresh(repo)
     return repo
-
 
 def _seed_activity(db, user_id=10):
     """For user 10 in repo alpha: 2 commits (7-20, 7-10), 1 PR, 1 review, 1 issue."""
@@ -37,7 +31,6 @@ def _seed_activity(db, user_id=10):
     db.add(Issue(repo_id=repo.id, github_issue_id=1, number=3, title="iss", state="open", author_user_id=user_id, gh_created_at=_dt(2026, 7, 18)))
     db.commit()
     return repo.id
-
 
 class TestOwnActivity:
     def test_counts_and_recent(self, client, act_as, db):
@@ -69,7 +62,6 @@ class TestOwnActivity:
 
     def test_requires_a_token(self, client):
         assert client.get("/activity/me").status_code == 401
-
 
 class TestViewingOthers:
     def test_other_engineer_forbidden(self, client, act_as, db):

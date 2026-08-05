@@ -36,11 +36,6 @@ def delete_department(dept_id: int, _: User = Depends(require_platform_admin), d
 
 @router.put("/{dept_id}/head/{head_user_id}", response_model=DepartmentResponse)
 def set_department_head(dept_id: int, head_user_id: int, _: User = Depends(require_platform_admin), db: Session = Depends(get_db)) -> DepartmentResponse:
-    """Name the head of the department. Platform-admin only: who runs a
-    department is a decision from above it, not one its own admins make.
-
-    They must already hold the admin role here — see set_head for why we don't
-    grant it silently. This is a title, not a team assignment, so nobody moves."""
     return dept_service.set_head(db, dept_id, head_user_id)
 
 @router.delete("/{dept_id}/head", response_model=DepartmentResponse)
@@ -62,15 +57,8 @@ def list_members(
     return dept_service.list_members(db, dept_id, limit=limit, offset=offset, role=role, team_id=team_id, q=q)
 
 @router.patch("/{dept_id}/members/{member_user_id}", response_model=MemberResponse)
-def update_member(
-    dept_id: int,
-    member_user_id: int,
-    payload: MemberUpdate,
-    replacement_user_id: int | None = Query(default=None, description="Hand any team(s)/headship the demotion costs them to this person"),
-    allow_unled: bool = Query(default=False, description="Demote anyway, leaving those without anyone in charge"),
-    _: User = Depends(dept_admin),
-    db: Session = Depends(get_db),
-) -> MemberResponse:
+def update_member(dept_id: int, member_user_id: int, payload: MemberUpdate, replacement_user_id: int | None = Query(default=None, description="Hand any team(s)/headship the demotion costs them to this person"), 
+                  allow_unled: bool = Query(default=False, description="Demote anyway, leaving those without anyone in charge"), _: User = Depends(dept_admin), db: Session = Depends(get_db)) -> MemberResponse:
     """Demoting someone out of the role a title requires is refused with a 409
     naming what they'd stop being able to run — same handover choice as removal.
     Otherwise a demoted engineer would keep leading a team and keep managing its

@@ -1,27 +1,28 @@
 # Entity-Relationship Diagram
 
-**Scope:** the Week 2 "reviewed database design" deliverable.
+**Scope:** the platform's database design, kept current with the code.
 
-This covers two databases, because of the platform's core rule *"products own
-their own data and reference identity by id"* (see `CLAUDE.md`):
+Two databases, because of the core rule *"products own their own data and
+reference identity by id"* (see `CLAUDE.md`):
 
-1. **Identity DB** — `services/identity`. **Built and migrated** (`0001`–`0006`).
-   Source of truth for people, departments, teams, memberships, sessions, invites.
-2. **Pulse DB** — `services/pulse`. **Built and migrated** (`0001`). Reports,
-   approvals, comments. Follows the design agreed in
-   `docs/decisions/2026-07-23-identity-structure.md` and `docs/backlog.md`:
-   weekly report per engineer · approvals as an append-only history · flat
-   comments.
+1. **Identity DB** — `services/identity`. **Built & migrated `0001`–`0007`.**
+   People, departments, teams, memberships, sessions, invites, password resets.
+2. **Pulse DB** — `services/pulse`. **Built & migrated `0001`–`0003`.** Two
+   domains: the **reporting** domain (reports, approvals, comments) and the
+   **GitHub sync** domain (connected accounts, repos, commits, PRs, reviews,
+   issues, sync runs). Reporting is **repo-centric** (session 05): a report is
+   about a repo, and each repo has a department, a lead, and a deputy.
 
 > **Cross-service references are by id, not foreign keys.** Pulse stores
-> `author_user_id`, `team_id`, `dept_id` as plain integers pointing at rows in
-> the identity DB. No database-level FK crosses the service boundary (the two
-> services have separate databases and deploy independently). Those logical
-> links are drawn as dashed lines; real, enforced FKs are solid.
+> `author_user_id`, `dept_id`, `lead_user_id`, etc. as plain integers pointing at
+> rows in the identity DB. **No database-level FK crosses the service boundary** —
+> the two services have separate databases and deploy independently. Below, real
+> (enforced) FKs are drawn as relationships; cross-service links are only noted in
+> the column comments as "→ identity.X (by id)".
 
 ---
 
-## Identity database — BUILT
+## Identity database
 
 ```mermaid
 erDiagram
@@ -30,6 +31,7 @@ erDiagram
     teams ||--o{ memberships : "rosters (nullable)"
     departments ||--o{ teams : "contains"
     users ||--o{ refresh_tokens : "issues"
+    users ||--o{ password_reset_tokens : "requests"
     departments ||--o{ invites : "into"
     teams ||--o{ invites : "optionally onto"
     users ||--o{ invites : "sent by"
@@ -38,7 +40,7 @@ erDiagram
 
     users {
         int id PK
-        string email UK "citext-lower, indexed"
+        string email UK "lowercased, indexed"
         string password_hash "bcrypt, <=72 bytes input"
         string first_name
         string last_name
@@ -50,7 +52,6 @@ erDiagram
         timestamptz created_at
         timestamptz updated_at
     }
-
     departments {
         int id PK
         string name
@@ -59,7 +60,6 @@ erDiagram
         timestamptz created_at
         timestamptz updated_at
     }
-
     teams {
         int id PK
         int dept_id FK "->departments, CASCADE"
@@ -69,7 +69,6 @@ erDiagram
         timestamptz created_at
         timestamptz updated_at
     }
-
     memberships {
         int id PK
         int user_id FK "->users, CASCADE"
@@ -80,7 +79,6 @@ erDiagram
         timestamptz created_at
         timestamptz updated_at
     }
-
     refresh_tokens {
         int id PK
         string token_hash UK "sha256, raw never stored"
@@ -91,7 +89,6 @@ erDiagram
         string replaced_by "next token hash, nullable"
         timestamptz created_at
     }
-
     invites {
         int id PK
         int dept_id FK "->departments, CASCADE"
@@ -104,33 +101,146 @@ erDiagram
         timestamptz accepted_at "nullable; set on accept"
         timestamptz created_at
     }
+    password_reset_tokens {
+        int id PK
+        int user_id FK "->users, CASCADE"
+        string token_hash UK "sha256, raw only in email"
+        timestamptz expires_at
+        timestamptz used_at "nullable; single-use"
+        timestamptz created_at
+    }
 ```
 
-**Constraints that matter (already enforced):**
-
-- `users.email` unique · `departments.slug` unique · `refresh_tokens.token_hash`
-  unique · `invites.token_hash` unique.
-- `memberships (user_id, dept_id)` unique — *one membership per person per
-  department* (Decision 3).
-- `teams (dept_id, slug)` unique — team slugs are unique within a department, not
-  globally.
-- `manager_user_id` / `head_user_id` have **no** uniqueness constraint on
-  purpose: one person can lead several teams (Decision 3, contingency).
+> **Teams are parked.** The boss's session-05 call is repos, not teams. The team
+> model above is still built and tested but no longer drives Pulse reporting; it's
+> retained, not deleted (see the "how to delete teams" runbook in
+> `docs/decisions/2026-07-30-repo-centric-reporting.md`).
 
 ---
 
-## Pulse database — BUILT (references identity by id, no cross-DB FKs)
+## Pulse database — GitHub sync domain
 
 ```mermaid
 erDiagram
+    repositories ||--o{ commits : "has"
+    repositories ||--o{ pull_requests : "has"
+    repositories ||--o{ issues : "has"
+    repositories ||--o{ sync_runs : "logged against"
+    pull_requests ||--o{ reviews : "reviewed by"
+
+    github_accounts {
+        int id PK
+        int user_id UK "-> identity.users (by id); one per person"
+        bigint github_user_id UK
+        string github_login
+        text access_token_encrypted "Fernet, never plaintext"
+        string scopes "nullable"
+        timestamptz connected_at
+        timestamptz created_at
+        timestamptz updated_at
+    }
+    repositories {
+        int id PK
+        bigint github_repo_id UK
+        string full_name "owner/name, indexed"
+        string owner
+        string name
+        bool private "default false"
+        bool is_tracked "default true"
+        string default_branch "nullable"
+        timestamptz last_synced_at "nullable; incremental cursor"
+        int dept_id "-> identity.departments (by id, nullable)"
+        int lead_user_id "-> identity.users (by id, nullable)"
+        int deputy_user_id "-> identity.users (by id, nullable)"
+        timestamptz created_at
+        timestamptz updated_at
+    }
+    commits {
+        int id PK
+        int repo_id FK "->repositories, CASCADE"
+        string sha "unique per (repo_id, sha)"
+        int author_user_id "-> identity.users (by id, nullable)"
+        string author_github_login "nullable"
+        text message "nullable"
+        int additions "nullable"
+        int deletions "nullable"
+        string url "nullable"
+        timestamptz committed_at
+        timestamptz created_at
+    }
+    pull_requests {
+        int id PK
+        int repo_id FK "->repositories, CASCADE"
+        bigint github_pr_id UK
+        int number "unique per (repo_id, number)"
+        text title "nullable"
+        string state "open | closed"
+        bool merged "default false"
+        int author_user_id "-> identity.users (by id, nullable)"
+        string author_github_login "nullable"
+        timestamptz gh_created_at "nullable"
+        timestamptz gh_updated_at "nullable"
+        timestamptz merged_at "nullable"
+        string url "nullable"
+        timestamptz created_at
+    }
+    reviews {
+        int id PK
+        int pull_request_id FK "->pull_requests, CASCADE"
+        bigint github_review_id UK
+        int reviewer_user_id "-> identity.users (by id, nullable)"
+        string reviewer_github_login "nullable"
+        string state "approved | changes_requested | commented | dismissed"
+        timestamptz submitted_at "nullable"
+        string url "nullable"
+        timestamptz created_at
+    }
+    issues {
+        int id PK
+        int repo_id FK "->repositories, CASCADE"
+        bigint github_issue_id UK
+        int number "unique per (repo_id, number)"
+        text title "nullable"
+        string state "open | closed"
+        int author_user_id "-> identity.users (by id, nullable)"
+        string author_github_login "nullable"
+        timestamptz gh_created_at "nullable"
+        timestamptz closed_at "nullable"
+        string url "nullable"
+        timestamptz created_at
+    }
+    sync_runs {
+        int id PK
+        int repo_id FK "->repositories, CASCADE, nullable"
+        string status "running | success | error"
+        text detail "nullable"
+        timestamptz started_at
+        timestamptz finished_at "nullable"
+    }
+```
+
+---
+
+## Pulse database — reporting domain
+
+```mermaid
+erDiagram
+    repositories ||--o{ reports : "reported on"
     reports ||--o{ approvals : "append-only history"
     reports ||--o{ comments : "flat, no threads"
 
+    repositories {
+        int id PK
+        string full_name
+        int dept_id "-> identity.departments (by id)"
+        int lead_user_id "-> identity.users (by id) — approver"
+        int deputy_user_id "-> identity.users (by id) — approver"
+    }
     reports {
         int id PK
-        int author_user_id "-> identity.users.id (by id)"
-        int dept_id "-> identity.departments.id (by id)"
-        int team_id "-> identity.teams.id (by id, nullable)"
+        int author_user_id "-> identity.users (by id)"
+        int repo_id FK "->repositories, CASCADE"
+        int dept_id "-> identity.departments (by id, nullable; from the repo)"
         date week_start "the Monday of the report week"
         string status "draft|submitted|changes_requested|approved|rejected"
         text summary_manager "AI-drafted, editable (Week 4)"
@@ -139,55 +249,61 @@ erDiagram
         timestamptz created_at
         timestamptz updated_at
     }
-
     approvals {
         int id PK
         int report_id FK "->reports, CASCADE"
-        int actor_user_id "-> identity.users.id (by id)"
+        int actor_user_id "-> identity.users (by id)"
         string action "submitted|approved|rejected|changes_requested"
         text note "nullable"
         timestamptz created_at "append-only; rows never updated"
     }
-
     comments {
         int id PK
         int report_id FK "->reports, CASCADE"
-        int author_user_id "-> identity.users.id (by id)"
+        int author_user_id "-> identity.users (by id)"
         text body
         timestamptz created_at
         timestamptz edited_at "nullable"
     }
 ```
 
-**Design intent (for review):**
+**How reporting works (session-05 decisions):**
 
-- **One report per engineer per week** → a unique constraint on
-  `reports (author_user_id, week_start)`.
-- **Who approves** is the engineer's team lead — `identity.teams.manager_user_id`
-  for `reports.team_id`. Identity already guarantees exactly one such person
-  (Decision 3), so there is no tie to break.
-- **`approvals` is append-only**: submit / approve / reject / request-changes are
-  each a new row, so the full history survives. `reports.status` is the
-  denormalised "current state" for fast listing.
-- **`comments` are flat** (no `parent_id`) — a deliberate v1 simplification.
-- **No cross-DB FK** from `author_user_id` / `team_id` / `dept_id` into identity:
-  Pulse trusts the ids carried in the verified access token and reads names from
-  identity's API when it needs to display them.
+- A report is about a **repo**: **one report per (author, repo, week)** — the
+  unique key `(author_user_id, repo_id, week_start)`. Working in two repos in a
+  week means two reports.
+- A repo belongs to a **department** and has a **lead + deputy**, both referenced
+  by identity user id. **Both approve** its reports (co-approvers); a department
+  admin or platform admin may also approve (override).
+- **Read:** author → own · lead/deputy → their repo · department admin → the
+  department · platform admin → all.
+- Assigning a repo's dept/lead/deputy is done by a department admin (of that dept)
+  or a platform admin; **lead ≠ deputy**. A repo with no lead/deputy yet still
+  accepts reports (they wait in `submitted`).
 
 ---
 
-## Design questions this ERD depended on — now settled (session 04)
+## Constraints that matter (enforced)
 
-See `docs/decisions/2026-07-23-identity-structure.md`, Decision 6.
+**Identity:** `users.email` · `departments.slug` · `refresh_tokens.token_hash` ·
+`invites.token_hash` · `password_reset_tokens.token_hash` all unique.
+`memberships (user_id, dept_id)` unique. `teams (dept_id, slug)` unique.
+`manager_user_id` / `head_user_id` have no uniqueness (one person may lead many).
 
-1. **One team per person** — ✅ **confirmed true** at CypherCrescent, so
-   `memberships.team_id` stays a single column and every report has exactly one
-   team and one approving lead.
-2. **Who reads / who approves** — ✅ **decided.** Approval is the report's **team
-   lead only** (`identity.teams.manager_user_id`). Read access widens by role:
-   engineer → own; team lead → their team; department `manager` role → all
-   reports in the department (read-only); admin/head → all; platform admin →
-   everything. Enforced in Pulse from the token claims.
-3. **Deputies / leave cover** — ✅ **deferred with a fallback.** No deputy field
-   for now; when a lead is away a **department admin** approves. Revisit before
-   the Week 4 approval flow only if cover turns out to be routine.
+**Pulse:** `repositories.github_repo_id`, `pull_requests.github_pr_id`,
+`reviews.github_review_id`, `issues.github_issue_id`,
+`github_accounts.user_id`, `github_accounts.github_user_id` all unique.
+`commits (repo_id, sha)`, `pull_requests (repo_id, number)`,
+`issues (repo_id, number)`, and `reports (author_user_id, repo_id, week_start)`
+unique. `lead_user_id` / `deputy_user_id` have no uniqueness (one person may
+lead/deputise many repos).
+
+---
+
+## Design decisions behind this schema
+
+- Identity structure (departments, teams, roles, platform admins, one-team-per-
+  person): `docs/decisions/2026-07-23-identity-structure.md`.
+- Repo-centric reporting (repos replace teams; lead + deputy both approve):
+  `docs/decisions/2026-07-30-repo-centric-reporting.md` — **supersedes** the
+  team-based approval flow.

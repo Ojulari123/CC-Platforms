@@ -12,8 +12,6 @@ class RepositoryResponse(BaseModel):
     private: bool
     is_tracked: bool
     default_branch: str | None
-    # Repo-centric reporting: the department the repo belongs to, and its named
-    # lead + deputy (both approve its reports). References identity users by id.
     dept_id: int | None
     lead_user_id: int | None
     deputy_user_id: int | None

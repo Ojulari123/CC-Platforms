@@ -1,15 +1,7 @@
-"""Offboarding — the only way to end someone's access to the platform itself.
-
-Removing someone from a department ends their access to that department.
-Before deactivation existed, a leaver removed from every department could still
-log in indefinitely and hold valid tokens; User.is_active was checked in two
-places but nothing ever wrote it."""
 from tests.conftest import auth
-
 
 def _deactivate(client, tokens, user_id):
     return client.post(f"/platform/users/{user_id}/deactivate", headers=auth(tokens))
-
 
 class TestDeactivate:
     def test_deactivated_user_cannot_log_in(self, client, registered_user, engineer_user):

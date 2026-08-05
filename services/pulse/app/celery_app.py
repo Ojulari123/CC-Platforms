@@ -1,13 +1,3 @@
-"""Celery wiring for Pulse's background jobs.
-
-Celery = the thing that runs work outside the web request. Redis is both the
-"broker" (the queue of jobs waiting to run) and the result backend. A "beat"
-schedule fires the daily GitHub sync so data refreshes without anyone clicking
-refresh — that's the Week-3 "done when".
-
-Only the worker and beat processes import this (see docker-compose). The web app
-(app.main) stays lean and doesn't depend on Celery. Tasks live in app.tasks.
-"""
 from celery import Celery
 from celery.schedules import crontab
 from app.config import settings

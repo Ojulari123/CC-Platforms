@@ -2,7 +2,6 @@
 reviews, issues) for one person and rolls it up into counts + recent items.
 
 All from Pulse's own tables, attributed by `author_user_id` / `reviewer_user_id`
-(set during sync when a GitHub login matched a connected account).
 """
 from datetime import date, datetime, time, timezone
 from sqlalchemy import func, or_, select
@@ -14,7 +13,6 @@ from app.schemas.activity import (
 )
 
 _RECENT = 10  # how many of each kind to include as "recent"
-
 
 def can_view(db: Session, user: TokenClaims, target_user_id: int) -> bool:
     """You can always see your own activity. Others' activity is visible to a
@@ -33,10 +31,8 @@ def can_view(db: Session, user: TokenClaims, target_user_id: int) -> bool:
     )
     return bool(leads)
 
-
 def _since_dt(since: date | None) -> datetime | None:
     return datetime.combine(since, time.min, tzinfo=timezone.utc) if since else None
-
 
 def get_activity_response(db: Session, user_id: int, since: date | None = None, repo_id: int | None = None) -> ActivityResponse:
     s = _since_dt(since)

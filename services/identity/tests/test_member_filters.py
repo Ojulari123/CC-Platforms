@@ -1,18 +1,12 @@
-"""Filtering + pagination on the department roster — the /departments/{id}/members
-list. `total` must reflect the active filters, since the same shape backs the
-Pulse reports list where filtered paging actually matters."""
 from tests.conftest import auth
-
 
 def _create_team(client, tokens, dept_id, name="Platform"):
     r = client.post(f"/departments/{dept_id}/teams", json={"name": name}, headers=auth(tokens))
     assert r.status_code == 201, r.text
     return r.json()["id"]
 
-
 def _members(client, tokens, dept_id, **params):
     return client.get(f"/departments/{dept_id}/members", params=params, headers=auth(tokens))
-
 
 class TestMemberFilters:
     def test_filter_by_role(self, client, registered_user, invite_user):

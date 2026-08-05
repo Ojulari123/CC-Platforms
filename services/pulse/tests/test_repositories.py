@@ -1,6 +1,7 @@
-"""Repo administration: filing a repo under a department and naming its lead +
+"""filing a repo under a department and naming its lead +
 deputy. Assignment is done by a department admin (of the repo's dept) or a
 platform admin; a repo's lead and deputy must differ."""
+
 from app.models import Repository
 
 DEPT = 1
@@ -8,6 +9,10 @@ PLATFORM = dict(user_id=99, memberships=[], is_platform_admin=True)
 DEPT_ADMIN = dict(user_id=30, memberships=[{"dept_id": DEPT, "team_id": None, "role": "admin"}])
 ENGINEER = dict(user_id=10, memberships=[{"dept_id": DEPT, "team_id": None, "role": "engineer"}])
 OTHER_ADMIN = dict(user_id=31, memberships=[{"dept_id": 2, "team_id": None, "role": "admin"}])
+MULTI_ADMIN = dict(user_id=32, memberships=[
+    {"dept_id": DEPT, "team_id": None, "role": "admin"},
+    {"dept_id": 2, "team_id": None, "role": "admin"},
+])
 
 
 def _seed_repo(db, dept_id=None, lead=None, deputy=None, gh_id=1, name="alpha"):
@@ -48,7 +53,19 @@ class TestAssignDepartment:
         r = client.put(f"/github/repositories/{rid}/department/{DEPT}")
         assert r.status_code == 200 and r.json()["dept_id"] == DEPT
 
-    def test_admin_can_pull_repo_into_their_department(self, client, act_as, db):
+    def test_admin_can_move_repo_between_departments_they_both_admin(self, client, act_as, db):
+        rid = _seed_repo(db, dept_id=DEPT)
+        act_as(**MULTI_ADMIN)
+        assert client.put(f"/github/repositories/{rid}/department/2").status_code == 200
+
+    def test_admin_cannot_capture_repo_from_a_department_they_dont_admin(self, client, act_as, db):
+        # Admin of the target dept (1) but not the repo's current dept (2): rejected.
+        rid = _seed_repo(db, dept_id=2)
+        act_as(**DEPT_ADMIN)
+        assert client.put(f"/github/repositories/{rid}/department/{DEPT}").status_code == 403
+
+    def test_dept_admin_can_file_an_unfiled_repo(self, client, act_as, db):
+        # No current owner to take it from, so an admin of the target dept may file it.
         rid = _seed_repo(db, dept_id=None)
         act_as(**DEPT_ADMIN)
         assert client.put(f"/github/repositories/{rid}/department/{DEPT}").status_code == 200

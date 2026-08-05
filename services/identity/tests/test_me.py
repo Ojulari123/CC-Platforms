@@ -33,7 +33,6 @@ def test_refresh_token_rejected_on_me(client, registered_user):
 def _auth(tokens: dict) -> dict:
     return {"Authorization": f"Bearer {tokens['access_token']}"}
 
-
 class TestUpdateProfile:
     def test_updates_own_name(self, client, registered_user):
         r = client.patch("/me", json={"first_name": "Alicia"}, headers=_auth(registered_user["tokens"]))

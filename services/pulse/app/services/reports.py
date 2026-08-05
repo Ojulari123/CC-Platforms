@@ -1,27 +1,13 @@
-"""Report domain: the draft → submit → approve flow, the append-only approval
-history, and flat comments.
-
-Every authorization decision is made from the caller's token claims (`TokenClaims`)
-plus the repo's own row (its lead/deputy/dept) — Pulse never reads identity's
-database. Rules per docs/decisions/2026-07-30-repo-centric-reporting.md:
-
-- A report is about a **repo**; one per (author, repo, week).
-- **Read**: the author; the repo's lead or deputy; an admin of the repo's
-  department; a platform admin.
-- **Approve / reject / request changes**: the repo's lead OR deputy (co-approvers),
-  a department admin (override), or a platform admin.
-- **Create / edit / submit / delete**: the author, and only their own report.
-"""
 from datetime import date, datetime, timedelta, timezone
 from fastapi import HTTPException
-from sqlalchemy import func, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 from crescent_core import TokenClaims
 from app.models import (
     ACTION_APPROVED, ACTION_CHANGES_REQUESTED, ACTION_REJECTED, ACTION_SUBMITTED,
     STATUS_APPROVED, STATUS_CHANGES_REQUESTED, STATUS_DRAFT, STATUS_REJECTED, STATUS_SUBMITTED,
-    Approval, Comment, Report, Repository,
+    Approval, Comment, Commit, Issue, PullRequest, Report, Repository,
 )
 from app.schemas.reports import ReportCreate, ReportUpdate
 
@@ -32,12 +18,10 @@ _ACTION_TO_STATUS = {
 }
 _EDITABLE = (STATUS_DRAFT, STATUS_CHANGES_REQUESTED)
 
-
 def _monday(d: date) -> date:
     """The Monday of d's week, so 'one report per week' has a single canonical key
     no matter which day the report was opened on."""
     return d - timedelta(days=d.weekday())
-
 
 def _get_report(db: Session, report_id: int) -> Report:
     report = db.get(Report, report_id)
@@ -45,10 +29,8 @@ def _get_report(db: Session, report_id: int) -> Report:
         raise HTTPException(status_code=404, detail="Report not found")
     return report
 
-
 def _repo_of(db: Session, report: Report) -> Repository | None:
     return db.get(Repository, report.repo_id)
-
 
 # ── permission checks (token + the repo's own row) ─────────────────────────────
 def _can_read(user: TokenClaims, report: Report, repo: Repository | None) -> bool:
@@ -75,16 +57,40 @@ def _require_author(user: TokenClaims, report: Report, verb: str) -> None:
     if report.author_user_id != user.user_id:
         raise HTTPException(status_code=403, detail=f"Only the author can {verb} this report")
 
+def _has_activity(db: Session, user_id: int, repo_id: int) -> bool:
+    """True if any commit, PR, or issue in the repo is attributed to this person —
+    i.e. GitHub sync linked their login to a connected account."""
+    for model in (Commit, PullRequest, Issue):
+        if db.scalar(select(model.id).where(model.repo_id == repo_id, model.author_user_id == user_id).limit(1)):
+            return True
+    return False
+
+def _may_report_on(db: Session, user: TokenClaims, repo: Repository) -> bool:
+    """Reports are for repos you've worked in (Decision 7 — membership derived
+    from activity). A repo's own lead/deputy and admins may act without personally
+    committing; everyone else needs synced activity in the repo."""
+    if user.is_platform_admin:
+        return True
+    if user.user_id in (repo.lead_user_id, repo.deputy_user_id):
+        return True
+    if repo.dept_id is not None and user.role_in(repo.dept_id) == "admin":
+        return True
+    return _has_activity(db, user.user_id, repo.id)
 
 # ── operations ────────────────────────────────────────────────────────────────
 def create_report(db: Session, user: TokenClaims, payload: ReportCreate) -> Report:
     repo = db.get(Repository, payload.repo_id)
     if not repo:
         raise HTTPException(status_code=404, detail="Repository not found")
-    # If the repo is filed under a department, you must be in it (or a platform
-    # admin) to report on it. A repo not yet assigned to a department is open.
-    if repo.dept_id is not None and not user.is_platform_admin and not user.is_member_of(repo.dept_id):
-        raise HTTPException(status_code=403, detail="Not a member of this repository's department")
+    if not _may_report_on(db, user, repo):
+        raise HTTPException(
+            status_code=403,
+            detail=(
+                "You have no synced activity in this repo — reports are for repos "
+                "you've worked in. If your GitHub isn't connected or synced yet, "
+                "do that first."
+            ),
+        )
     week = _monday(payload.week_start or date.today())
     report = Report(
         author_user_id=user.user_id,
@@ -138,6 +144,29 @@ def list_reports(db: Session, user: TokenClaims, limit: int, offset: int, repo_i
     rows = db.scalars(base.order_by(Report.week_start.desc(), Report.id.desc()).limit(limit).offset(offset))
     return list(rows), total
 
+def review_queue(db: Session, user: TokenClaims, limit: int, offset: int, status: str | None = STATUS_SUBMITTED) -> tuple[list[Report], int]:
+    """The approver's inbox: reports the caller can decide on, across EVERY repo
+    they approve for — not just one. `list_reports` only widens to a repo when you
+    name its repo_id, so a lead of several repos had no single 'what's waiting on
+    me' call; this is that call.
+
+    Scope mirrors _can_approve"""
+    filters = [Report.status == status] if status else []
+    if not user.is_platform_admin:
+        approver_repo_ids = select(Repository.id).where(
+            or_(Repository.lead_user_id == user.user_id, Repository.deputy_user_id == user.user_id)
+        )
+        scope = [Report.repo_id.in_(approver_repo_ids)]
+        admin_dept_ids = [m.dept_id for m in user.memberships if m.role == "admin"]
+        if admin_dept_ids:
+            scope.append(Report.dept_id.in_(admin_dept_ids))
+        filters.append(or_(*scope))
+
+    base = select(Report).where(*filters)
+    total = db.scalar(select(func.count()).select_from(base.subquery())) or 0
+    rows = db.scalars(base.order_by(Report.week_start.desc(), Report.id.desc()).limit(limit).offset(offset))
+    return list(rows), total
+
 def get_report(db: Session, user: TokenClaims, report_id: int) -> Report:
     report = _get_report(db, report_id)
     _require_can_read(user, report, _repo_of(db, report))
@@ -180,9 +209,8 @@ def decide_report(db: Session, user: TokenClaims, report_id: int, action: str, n
     return report
 
 def delete_report(db: Session, user: TokenClaims, report_id: int) -> None:
-    """Delete a report and, by cascade, its comments. Only a **draft** can be
-    deleted, and only by its author — their own unsent work. Once submitted a
-    report is part of the permanent record and can never be deleted, by anyone."""
+    """Delete a report and, cascade its comments. Only a draft can be
+    deleted, and only by its author. Once submitted a report is part of the permanent record and can never be deleted, by anyone."""
     report = _get_report(db, report_id)
     if report.status != STATUS_DRAFT:
         raise HTTPException(status_code=409, detail="A submitted report is part of the record and can't be deleted")

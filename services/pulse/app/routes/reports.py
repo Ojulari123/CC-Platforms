@@ -1,5 +1,3 @@
-"""Reporting API. Thin routes: verify who's calling, hand off to the service
-layer, shape the response. All rules and DB access live in app/services."""
 from fastapi import APIRouter, Depends, Query, status
 from sqlalchemy.orm import Session
 from crescent_core import TokenClaims, Page, PageParams, page_params
@@ -14,13 +12,10 @@ from app.services import reports as reports_service
 
 router = APIRouter(prefix="/reports", tags=["reports"])
 
-
 @router.post("", response_model=ReportResponse, status_code=status.HTTP_201_CREATED)
 def create_report(payload: ReportCreate, user: TokenClaims = Depends(current_user), db: Session = Depends(get_db)) -> ReportResponse:
     return reports_service.create_report(db, user, payload)
 
-# Reports, filtered. A repo's lead/deputy (or the dept's admin) sees that repo/
-# department; everyone else sees only their own. Give repo_id or dept_id to scope.
 @router.get("", response_model=Page[ReportResponse])
 def list_reports(repo_id: int | None = Query(default=None), dept_id: int | None = Query(default=None), author_user_id: int | None = Query(default=None), status: ReportStatus | None = Query(default=None, description="Filter by state; an unknown value is rejected with a 422"),
     page: PageParams = Depends(page_params), user: TokenClaims = Depends(current_user), db: Session = Depends(get_db)) -> Page[ReportResponse]:
@@ -28,6 +23,12 @@ def list_reports(repo_id: int | None = Query(default=None), dept_id: int | None 
         db, user, limit=page.limit, offset=page.offset,
         repo_id=repo_id, dept_id=dept_id, author_user_id=author_user_id, status=status,
     )
+    return Page.of([ReportResponse.model_validate(r) for r in items], total=total, params=page)
+
+@router.get("/review-queue", response_model=Page[ReportResponse])
+def review_queue(status: ReportStatus | None = Query(default="submitted", description="Which state to show; defaults to those awaiting a decision"),
+    page: PageParams = Depends(page_params), user: TokenClaims = Depends(current_user), db: Session = Depends(get_db)) -> Page[ReportResponse]:
+    items, total = reports_service.review_queue(db, user, limit=page.limit, offset=page.offset, status=status)
     return Page.of([ReportResponse.model_validate(r) for r in items], total=total, params=page)
 
 @router.get("/{report_id}", response_model=ReportResponse)
@@ -38,12 +39,10 @@ def get_report(report_id: int, user: TokenClaims = Depends(current_user), db: Se
 def update_report(report_id: int, payload: ReportUpdate, user: TokenClaims = Depends(current_user), db: Session = Depends(get_db)) -> ReportResponse:
     return reports_service.update_report(db, user, report_id, payload)
 
-# Delete a report (and its approvals + comments). Author while it's a draft; admins any.
 @router.delete("/{report_id}", status_code=status.HTTP_204_NO_CONTENT)
 def delete_report(report_id: int, user: TokenClaims = Depends(current_user), db: Session = Depends(get_db)) -> None:
     reports_service.delete_report(db, user, report_id)
 
-# Author sends the report to their team lead for review.
 @router.post("/{report_id}/submit", response_model=ReportResponse)
 def submit_report(report_id: int, user: TokenClaims = Depends(current_user), db: Session = Depends(get_db)) -> ReportResponse:
     return reports_service.submit_report(db, user, report_id)

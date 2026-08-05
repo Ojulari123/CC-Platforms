@@ -1,7 +1,10 @@
-"""Slice 3: connect a GitHub account (OAuth). GitHub itself is monkeypatched —
-the token exchange and user lookup are replaced, so no real network is touched.
-What's exercised: the authorize URL, the callback upsert, token encryption at
-rest, the signed-state guard, and connect/view/disconnect auth."""
+"""Slice 3: connect a GitHub account (OAuth). It tests:
+  - the authorize URL
+  - the callback upsert
+  - token encryption at rest
+  - the signed-state guard
+  - and connect/view/disconnect auth."""
+
 import pytest
 from app import crypto
 from app.models import GitHubAccount
@@ -9,7 +12,6 @@ from app.services import github_oauth
 
 ADA = dict(user_id=42, memberships=[{"dept_id": 1, "team_id": 5, "role": "engineer"}])
 BEN = dict(user_id=99, memberships=[{"dept_id": 1, "team_id": 5, "role": "engineer"}])
-
 
 @pytest.fixture
 def fake_github(monkeypatch):
@@ -24,11 +26,9 @@ def fake_github(monkeypatch):
     monkeypatch.setattr(github_oauth, "fetch_github_user", lambda token: {"login": state["login"], "id": state["id"]})
     return set_user
 
-
 def _callback(client, uid, code="abc"):
     state = crypto.sign_state({"uid": uid, "nonce": "n"})
     return client.get(f"/github/oauth/callback?code={code}&state={state}")
-
 
 class TestConnect:
     def test_connect_returns_a_github_authorize_url(self, client, act_as):
@@ -42,7 +42,6 @@ class TestConnect:
 
     def test_connect_requires_a_login(self, client):
         assert client.get("/github/connect").status_code == 401
-
 
 class TestCallback:
     def test_callback_links_the_account_and_encrypts_the_token(self, client, act_as, db, fake_github):
@@ -70,7 +69,6 @@ class TestCallback:
         fake_github("shared-gh", 555)
         assert _callback(client, uid=42).status_code == 200
         assert _callback(client, uid=99).status_code == 409  # same github id, different user
-
 
 class TestViewAndDisconnect:
     def test_account_404_when_not_connected(self, client, act_as):

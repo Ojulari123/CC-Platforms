@@ -40,14 +40,10 @@ def _me_response(db: Session, user: User) -> UserMeResponse:
 
 @router.get("/me", response_model=UserMeResponse)
 def me(user: User = Depends(get_current_user), db: Session = Depends(get_db)) -> UserMeResponse:
-    """The caller's identity plus every department they belong to.
-    All from identity's own DB — no cross-service reads."""
     return _me_response(db, user)
 
 @router.patch("/me", response_model=UserMeResponse)
 def update_me(payload: ProfileUpdate, user: User = Depends(get_current_user), db: Session = Depends(get_db)) -> UserMeResponse:
-    """Update your own profile. Role and department aren't here on purpose —
-    those are an admin's call, via /departments/{id}/members/{id}."""
     for field, value in payload.model_dump(exclude_unset=True).items():
         setattr(user, field, value)
     db.commit()
