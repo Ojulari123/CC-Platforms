@@ -69,6 +69,16 @@ def client() -> TestClient:
     return TestClient(app)
 
 @pytest.fixture
+def db_session():
+    """Direct session on the same in-memory engine the app uses — for tests that
+    need to seed rows the API can't create (e.g. service clients)."""
+    db = _TestSession()
+    try:
+        yield db
+    finally:
+        db.close()
+
+@pytest.fixture
 def sent_emails(monkeypatch):
     """Capture outgoing invites instead of calling Brevo. Each entry carries the
     raw token, which is the only place it ever exists outside the email."""

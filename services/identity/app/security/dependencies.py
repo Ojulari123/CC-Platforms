@@ -4,7 +4,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 from app.db import get_db
 from app.models import Membership, Team, User
-from app.security.jwt import decode_access_token
+from app.security.jwt import decode_access_token, decode_service_token
 
 _bearer = HTTPBearer(auto_error=False)
 
@@ -27,6 +27,28 @@ def get_current_user(creds: HTTPAuthorizationCredentials | None = Depends(_beare
     if payload.token_version != user.token_version:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Session revoked. Please log in again.", headers={"WWW-Authenticate": "Bearer"})
     return user
+
+def require_service_scope(scope: str):
+    """Guard an internal, service-to-service endpoint. Requires a SERVICE token
+    (a user access token is rejected by decode_service_token's token_type check)
+    that carries `scope` in its space-delimited scope claim. Returns the decoded
+    payload so the handler can see which client called.
+
+        emails_reader = require_service_scope("users:read:email")
+
+        @router.post("/internal/users/emails")
+        def lookup(_=Depends(emails_reader)): ..."""
+
+    def _check(creds: HTTPAuthorizationCredentials | None = Depends(_bearer)) -> dict:
+        if not creds or not creds.credentials:
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Not authenticated", headers={"WWW-Authenticate": "Bearer"})
+        payload = decode_service_token(creds.credentials)
+        granted = payload.get("scope", "").split()
+        if scope not in granted:
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=f"Requires scope: {scope}")
+        return payload
+
+    return _check
 
 def require_platform_admin(user: User = Depends(get_current_user)) -> User:
     """Runs the whole CypherCrescent workspace — creates departments, can

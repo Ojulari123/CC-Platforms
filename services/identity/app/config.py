@@ -9,6 +9,7 @@ class Settings(BaseSettings):
     JWT_ALGORITHM: str = "RS256"
     JWT_ISSUER: str = "cyphercrescent-identity"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 15
+    SERVICE_TOKEN_EXPIRE_MINUTES: int = 10
     REFRESH_TOKEN_EXPIRE_DAYS: int = 7
     CORS_ORIGINS: str = "http://localhost:3000"
     RATE_LIMIT_ENABLED: bool = True
@@ -17,6 +18,9 @@ class Settings(BaseSettings):
     FRONTEND_URL: str = "http://localhost:3000"
     INVITE_EXPIRE_DAYS: int = 7
     PASSWORD_RESET_EXPIRE_MINUTES: int = 30
+    # Seed for the Pulse service client. Empty secret = don't seed (safe import/boot).
+    PULSE_CLIENT_ID: str = "pulse"
+    PULSE_CLIENT_SECRET: str = ""
 
     @property
     def cors_origins_list(self) -> list[str]:

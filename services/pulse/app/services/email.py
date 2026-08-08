@@ -1,6 +1,7 @@
 import logging
 import httpx
 from app.config import settings
+from app.services.identity_client import IdentityResolutionError, resolve_emails
 
 logger = logging.getLogger(__name__)
 
@@ -53,21 +54,29 @@ def notify_report_ready(db, report) -> None:
     """Best-effort notification that a report is now awaiting review. Called AFTER the
     submit commit so a notification problem can never roll back or block the submission.
 
-    Wrapped so it can NEVER raise: any failure is logged and swallowed.
-
-    Week-4 STUB: Pulse can't resolve approver user_ids to email addresses yet, so we log
-    the intent instead of sending. The real send goes in at the TODO marker in Week 5.
+    Resolves the repo's approvers (lead/deputy) to email addresses via identity, then
+    emails each one a link to the report. The WHOLE thing is wrapped so it can NEVER
+    raise: identity down, resolution failing, email misconfigured, or Brevo erroring are
+    all logged and swallowed. A submit must never fail because a notification did.
     """
     try:
         repo = report.repository
         approver_ids = [uid for uid in (repo.lead_user_id, repo.deputy_user_id) if uid is not None]
-        logger.info(
-            "report %s ready for review — would notify approvers %s (email resolution pending, Week 5)",
-            report.id, approver_ids,
-        )
-        # TODO(week5): resolve user_id -> email via identity API, then for each approver:
-        #   review_url = f"{settings.FRONTEND_URL}/reports/{report.id}"
-        #   send(to=email, subject="A report is ready for your review",
-        #        html=build_report_ready_html(report, review_url))
+        if not approver_ids:
+            logger.info("report %s ready for review — no approvers to notify", report.id)
+            return
+
+        emails = resolve_emails(approver_ids)
+        if not emails:
+            logger.warning("report %s ready for review — no approver emails resolved for %s", report.id, approver_ids)
+            return
+
+        review_url = f"{settings.FRONTEND_URL}/reports/{report.id}"
+        html = build_report_ready_html(report, review_url)
+        for email in emails.values():
+            send(to=email, subject="A report is ready for your review", html=html)
+    except (IdentityResolutionError, EmailNotConfigured, EmailSendError) as e:
+        # Expected failure modes (identity/config/provider) — warn, don't alarm.
+        logger.warning("notify_report_ready skipped for report %s: %s", getattr(report, "id", "?"), e)
     except Exception as e:
         logger.error("notify_report_ready failed for report %s: %s", getattr(report, "id", "?"), e)

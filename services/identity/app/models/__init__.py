@@ -107,6 +107,22 @@ class Invite(Base):
 
     department = relationship("Department")
 
+class ServiceClient(Base):
+    """A non-human caller (another service, e.g. Pulse) that authenticates as
+    itself via OAuth2 client-credentials. The secret is stored bcrypt-hashed —
+    same treatment as a user password — so a DB leak doesn't hand out the secret.
+    is_active makes a client revocable without deleting its row. scopes is a
+    space-delimited list (e.g. "users:read:email") a minted service token carries."""
+    __tablename__ = "service_clients"
+
+    id = Column(Integer, primary_key=True)
+    client_id = Column(String(100), unique=True, index=True, nullable=False)
+    client_secret_hash = Column(String(255), nullable=False)
+    scopes = Column(String(500), nullable=False, server_default="", default="")
+    is_active = Column(Boolean, nullable=False, server_default="true", default=True)
+    created_at = Column(TIMESTAMP(timezone=True), server_default=func.now(), nullable=False)
+    updated_at = Column(TIMESTAMP(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
+
 class PasswordResetToken(Base):
     """One-time forgot-password token. Same hashing pattern as RefreshToken and
     Invite (only the SHA-256 hash is stored); the raw value lives solely in the

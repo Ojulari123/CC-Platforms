@@ -7,6 +7,14 @@ class Settings(BaseSettings):
     DATABASE_URL: str
     IDENTITY_JWKS_URL: str = "http://identity:8000/.well-known/jwks.json"
 
+    # Service-to-service auth against identity. IDENTITY_API_URL is identity's internal
+    # base (mirrors the host in IDENTITY_JWKS_URL). The client secret is blank by default
+    # so imports/CI never need it; when it's blank the identity client refuses to call and
+    # callers log-and-skip. A real deploy sets the secret issued to the "pulse" client.
+    IDENTITY_API_URL: str = "http://identity:8000"
+    PULSE_SERVICE_CLIENT_ID: str = "pulse"
+    PULSE_SERVICE_CLIENT_SECRET: str = ""
+
     JWT_ISSUER: str = "cyphercrescent-identity"
     JWKS_TTL_SECONDS: int = 3600
     CORS_ORIGINS: str = "http://localhost:3000"

@@ -2,10 +2,11 @@
 
 Covers the whole notify path WITHOUT touching the network: the submit trigger fires,
 a broken notifier can never break submit (log-and-continue), send() enforces config and
-speaks the Brevo contract, and the approver-gathering picks the repo's lead/deputy.
+speaks the Brevo contract, and the real notify path resolves the repo's lead/deputy to
+emails and actually attempts a send per approver.
 
-Email address resolution (user_id -> address) is Week 5, so notify_report_ready only
-LOGS today — these tests pin that behaviour so Week 5 can swap in a real send() safely.
+Email resolution goes through identity; here it's mocked (resolve_emails) so no network
+is touched. These tests pin the real-send-attempt behaviour, not the old log-only stub.
 """
 import logging
 from datetime import datetime, timezone
@@ -20,6 +21,7 @@ from app.services.email import (
     notify_report_ready,
     send,
 )
+from app.services.identity_client import IdentityResolutionError
 
 DEPT = 1
 LEAD_ID = 20
@@ -61,14 +63,15 @@ class TestSubmitTrigger:
         assert len(calls) == 1
 
     def test_a_broken_notifier_never_breaks_submit(self, client, act_as, db, monkeypatch):
-        # Make the REAL notifier blow up internally (its INFO log raises). The try/except
-        # inside notify_report_ready must swallow it and the submit must still succeed.
+        # Make the REAL notifier blow up in an UNEXPECTED way (resolve_emails raises a bare
+        # RuntimeError, not a typed error). The catch-all inside notify_report_ready must
+        # swallow it and the submit must still succeed.
         repo_id = _seed_repo(db)
 
         def _boom(*a, **k):
             raise RuntimeError("notifier exploded")
 
-        monkeypatch.setattr(email_mod.logger, "info", _boom)
+        monkeypatch.setattr(email_mod, "resolve_emails", _boom)
         r = _open_submitted(client, act_as, repo_id)
         assert r.status_code == 200, r.text
         assert r.json()["status"] == "submitted"
@@ -108,24 +111,92 @@ class TestSend:
             send("dest@x.com", "s", "<p>h</p>")
 
 
-class TestApproverGathering:
-    """notify_report_ready logs which approvers WOULD be notified. Pin that the list is
-    the repo's lead + deputy with Nones dropped."""
+def _report(lead=LEAD_ID, deputy=DEPUTY_ID, rid=7):
+    return SimpleNamespace(
+        id=rid,
+        repository=SimpleNamespace(lead_user_id=lead, deputy_user_id=deputy),
+    )
 
-    def _notify_and_capture(self, caplog, *, lead, deputy):
-        report = SimpleNamespace(
-            id=7,
-            repository=SimpleNamespace(lead_user_id=lead, deputy_user_id=deputy),
-        )
+
+class TestNotifyRealSend:
+    """notify_report_ready now resolves approver ids to emails and actually attempts a
+    send per approver — best-effort, never raising."""
+
+    def test_two_approvers_each_get_a_send(self, monkeypatch):
+        sends = []
+        monkeypatch.setattr(email_mod, "resolve_emails",
+                            lambda ids: {20: "lead@x.com", 25: "deputy@x.com"})
+        monkeypatch.setattr(email_mod, "send",
+                            lambda *, to, subject, html: sends.append((to, subject, html)))
+        monkeypatch.setattr(settings, "FRONTEND_URL", "http://front")
+
+        notify_report_ready(None, _report())
+
+        assert {s[0] for s in sends} == {"lead@x.com", "deputy@x.com"}
+        assert len(sends) == 2
+        # subject + link are what the approver actually sees.
+        assert all(s[1] == "A report is ready for your review" for s in sends)
+        assert all("http://front/reports/7" in s[2] for s in sends)
+
+    def test_only_resolved_ids_are_emailed(self, monkeypatch):
+        # deputy id resolves to nothing (unknown id omitted by identity) → one send only.
+        sends = []
+        monkeypatch.setattr(email_mod, "resolve_emails", lambda ids: {20: "lead@x.com"})
+        monkeypatch.setattr(email_mod, "send",
+                            lambda *, to, subject, html: sends.append(to))
+        notify_report_ready(None, _report())
+        assert sends == ["lead@x.com"]
+
+    def test_identity_failure_is_swallowed_no_send(self, monkeypatch, caplog):
+        sends = []
+
+        def _fail(ids):
+            raise IdentityResolutionError("identity down")
+
+        monkeypatch.setattr(email_mod, "resolve_emails", _fail)
+        monkeypatch.setattr(email_mod, "send",
+                            lambda *, to, subject, html: sends.append(to))
+        with caplog.at_level(logging.WARNING, logger="app.services.email"):
+            notify_report_ready(None, _report())  # must NOT raise
+        assert sends == []
+        assert "skipped" in caplog.text
+
+    def test_brevo_send_error_is_swallowed(self, monkeypatch):
+        def _boom(*, to, subject, html):
+            raise EmailSendError("provider rejected")
+
+        monkeypatch.setattr(email_mod, "resolve_emails", lambda ids: {20: "lead@x.com"})
+        monkeypatch.setattr(email_mod, "send", _boom)
+        notify_report_ready(None, _report())  # swallowed, no raise
+
+    def test_unconfigured_secret_skips_cleanly(self, monkeypatch, caplog):
+        # Real resolve_emails with no client secret raises immediately → log-and-skip.
+        sends = []
+        monkeypatch.setattr(settings, "PULSE_SERVICE_CLIENT_SECRET", "")
+        monkeypatch.setattr(email_mod, "send",
+                            lambda *, to, subject, html: sends.append(to))
+        with caplog.at_level(logging.WARNING, logger="app.services.email"):
+            notify_report_ready(None, _report())
+        assert sends == []
+        assert "skipped" in caplog.text
+
+    def test_approvers_but_none_resolve_logs_and_returns(self, monkeypatch, caplog):
+        # Identity succeeds but knows none of the ids (all unknown/omitted) → empty dict,
+        # so there's nothing to send.
+        sends = []
+        monkeypatch.setattr(email_mod, "resolve_emails", lambda ids: {})
+        monkeypatch.setattr(email_mod, "send",
+                            lambda *, to, subject, html: sends.append(to))
+        with caplog.at_level(logging.WARNING, logger="app.services.email"):
+            notify_report_ready(None, _report())
+        assert sends == []
+        assert "no approver emails resolved" in caplog.text
+
+    def test_no_approvers_logs_and_returns(self, monkeypatch, caplog):
+        sends = []
+        monkeypatch.setattr(email_mod, "send",
+                            lambda *, to, subject, html: sends.append(to))
         with caplog.at_level(logging.INFO, logger="app.services.email"):
-            notify_report_ready(None, report)
-        return caplog.text
-
-    def test_lead_and_deputy(self, caplog):
-        assert "[20, 25]" in self._notify_and_capture(caplog, lead=20, deputy=25)
-
-    def test_lead_only(self, caplog):
-        assert "[20]" in self._notify_and_capture(caplog, lead=20, deputy=None)
-
-    def test_neither(self, caplog):
-        assert "[]" in self._notify_and_capture(caplog, lead=None, deputy=None)
+            notify_report_ready(None, _report(lead=None, deputy=None))
+        assert sends == []
+        assert "no approvers" in caplog.text

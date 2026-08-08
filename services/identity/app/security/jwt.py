@@ -62,6 +62,39 @@ def create_access_token(*, user_id: int, email: str, memberships: list[dict], is
     headers = {"kid": get_key_id()}
     return jwt.encode(payload, get_private_key_pem(), algorithm=settings.JWT_ALGORITHM, headers=headers)
 
+def create_service_token(*, client_id: str, scopes: str) -> str:
+    """Mint a token for a service authenticating as ITSELF (not a user).
+    Deliberately kept separate from create_access_token: `sub` is `svc:<client>`
+    not a user id, `token_type` is "service" (so it can never pass a user-token
+    check), and it carries a `scope` string instead of memberships/roles. Short
+    life (SERVICE_TOKEN_EXPIRE_MINUTES) because it's cheap to re-mint."""
+    now = datetime.now(timezone.utc)
+    payload = {
+        "sub": f"svc:{client_id}",
+        "token_type": "service",
+        "scope": scopes,
+        "iss": settings.JWT_ISSUER,
+        "iat": int(now.timestamp()),
+        "exp": int((now + timedelta(minutes=settings.SERVICE_TOKEN_EXPIRE_MINUTES)).timestamp()),
+        "jti": str(uuid.uuid4()),
+    }
+    headers = {"kid": get_key_id()}
+    return jwt.encode(payload, get_private_key_pem(), algorithm=settings.JWT_ALGORITHM, headers=headers)
+
+def decode_service_token(token: str) -> dict:
+    """Verify a service token with the LOCAL public key. Mirrors decode_access_token's
+    checks (signature, expiry, issuer) but REQUIRES token_type "service" — a user
+    access token presented here is rejected. Does NOT int-cast `sub` (it's svc:<id>)."""
+    try:
+        payload = jwt.decode(token, get_public_key_pem(), algorithms=[settings.JWT_ALGORITHM], issuer=settings.JWT_ISSUER)
+    except ExpiredSignatureError:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Token has expired", headers={"WWW-Authenticate": "Bearer"})
+    except JWTError:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token", headers={"WWW-Authenticate": "Bearer"})
+    if payload.get("token_type") != "service":
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Wrong token type")
+    return payload
+
 def decode_access_token(token: str) -> TokenPayload:
     try:
         payload = jwt.decode(token, get_public_key_pem(), algorithms=[settings.JWT_ALGORITHM], issuer=settings.JWT_ISSUER)

@@ -4,12 +4,32 @@ admins). Distinct from the per-department "admin" role, which is scoped to one
 department."""
 from fastapi import HTTPException
 from app.schemas.departments import UserAccountResponse
-from sqlalchemy import func, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
 from app.models import Department, Team, User
 
 def list_platform_admins(db: Session) -> list[User]:
     return list(db.scalars(select(User).where(User.is_platform_admin.is_(True)).order_by(User.first_name, User.last_name)))
+
+def list_users(db: Session, q: str | None, is_active: bool | None, limit: int, offset: int) -> tuple[list[User], int]:
+    """Every account in the workspace, no department/team scoping — the platform
+    admin's flat directory. Mirrors the department roster's pagination + name/email
+    search so the two lists behave the same. `total` reflects the filters so the
+    client can page within a filtered result set."""
+    base = select(User)
+    if q:
+        like = f"%{q.lower()}%"
+        base = base.where(or_(
+            func.lower(User.first_name).like(like),
+            func.lower(User.last_name).like(like),
+            func.lower(User.email).like(like),
+        ))
+    if is_active is not None:
+        base = base.where(User.is_active.is_(is_active))
+
+    total = db.scalar(select(func.count()).select_from(base.subquery()))
+    users = list(db.scalars(base.order_by(User.first_name, User.last_name).limit(limit).offset(offset)))
+    return users, total or 0
 
 def _get_user(db: Session, user_id: int) -> User:
     user = db.get(User, user_id)

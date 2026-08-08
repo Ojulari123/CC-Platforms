@@ -118,3 +118,24 @@ class PlatformAdminResponse(BaseModel):
     first_name: str
     last_name: str
     is_platform_admin: bool
+
+class PlatformUserResponse(BaseModel):
+    """One row of the workspace-wide user list. Deliberately no department/team
+    context — this is the platform admin's flat view of every account, not a
+    department roster (that's MemberResponse)."""
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    email: EmailStr
+    first_name: str
+    last_name: str
+    is_active: bool
+    is_platform_admin: bool
+    email_verified: bool
+    created_at: datetime
+
+class PlatformUserListResponse(BaseModel):
+    items: list[PlatformUserResponse]
+    total: int
+    limit: int
+    offset: int
