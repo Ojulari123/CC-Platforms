@@ -1,7 +1,8 @@
-"""Departments and their member roster. Teams live in services/teams.py."""
 import re
+from datetime import datetime, timezone
 from fastapi import HTTPException
 from sqlalchemy import func, or_, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 from app.models import Department, Membership, Team, User
 from app.schemas.departments import DepartmentCreate, DepartmentResponse, DepartmentUpdate, MemberListResponse, MemberResponse, MemberUpdate
@@ -39,20 +40,14 @@ def list_departments(db: Session) -> list[DepartmentResponse]:
     return [_to_dept_response(db, d) for d in db.scalars(select(Department).order_by(Department.name))]
 
 def set_head(db: Session, dept_id: int, head_user_id: int | None) -> DepartmentResponse:
-    """Name (or clear) the head of the department — the person who runs it, as
-    opposed to everyone who happens to hold the admin role.
-
-    They must be a member with role=admin: the head needs to be able to do
-    everything in the department, and silently granting that here would hide a
-    privilege change inside what looks like a title change. Promote them first
-    if needed. Like a team lead, this is a title, not a team assignment."""
+    """Name (or clear) the head. They must already be an admin here — granting that
+    silently would hide a privilege change inside a title change. Promote first."""
     department = get_department(db, dept_id)
 
     if head_user_id is not None:
         membership = db.scalar(select(Membership).where(
             Membership.user_id == head_user_id,
             Membership.dept_id == dept_id,
-            Membership.is_active.is_(True),
         ))
         if not membership:
             raise HTTPException(status_code=400, detail="The head must be a member of this department")
@@ -72,8 +67,6 @@ def create_department(db: Session, payload: DepartmentCreate) -> DepartmentRespo
     return _to_dept_response(db, department)
 
 def update_department(db: Session, dept_id: int, payload: DepartmentUpdate) -> DepartmentResponse:
-    """Rename the department. The slug follows the name — same rule as creation,
-    so a renamed department doesn't keep a slug that contradicts it."""
     department = get_department(db, dept_id)
     department.name = payload.name
     department.slug = _unique_dept_slug(db, _slugify(payload.name), exclude_id=dept_id)
@@ -91,19 +84,13 @@ def delete_department(db: Session, dept_id: int) -> None:
     db.delete(department)
     db.commit()
 
-def list_members(
-    db: Session,
-    dept_id: int,
-    limit: int,
-    offset: int,
-    role: str | None = None,
-    team_id: int | None = None,
-    q: str | None = None,
-) -> MemberListResponse:
-    """Paginated roster, with optional filters — by role, by team, or a name/email
-    search. `total` reflects the filters, so the client can page within a
-    filtered result set. This is the same shape the Pulse reports list will use
-    (crescent_core.pagination.Page)."""
+def list_members(db: Session, dept_id: int, limit: int, offset: int, role: str | None = None, team_id: int | None = None, q: str | None = None) -> MemberListResponse:
+    # Without this an unknown department answers 200 with an empty page, which
+    # reads as "nobody works here" rather than "no such department" — and
+    # GET /departments/{dept_id} already 404s.
+    if not db.get(Department, dept_id):
+        raise HTTPException(status_code=404, detail="Department not found")
+
     base = (
         select(Membership, User)
         .join(User, User.id == Membership.user_id)
@@ -128,11 +115,37 @@ def list_members(
     items = [
         MemberResponse(
             user_id=u.id, email=u.email, first_name=u.first_name, last_name=u.last_name,
-            role=m.role, team_id=m.team_id, is_active=m.is_active,
+            role=m.role, team_id=m.team_id, is_active=u.is_active,
         )
         for m, u in rows
     ]
     return MemberListResponse(items=items, total=total or 0, limit=limit, offset=offset)
+
+def add_member(db: Session, dept_id: int, user_id: int, role: str, team_id: int | None = None) -> MemberResponse:
+    if not db.get(Department, dept_id):
+        raise HTTPException(status_code=404, detail="Department not found")
+    user = db.get(User, user_id)
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    if db.scalar(select(Membership).where(Membership.user_id == user_id, Membership.dept_id == dept_id)):
+        raise HTTPException(status_code=409, detail="That person is already a member of this department")
+
+    if team_id is not None:
+        if not db.scalar(select(Team).where(Team.id == team_id, Team.dept_id == dept_id)):
+            raise HTTPException(status_code=400, detail="Team does not belong to this department")
+
+    membership = Membership(user_id=user_id, dept_id=dept_id, team_id=team_id, role=role)
+    db.add(membership)
+    if user.onboarded_at is None:
+        user.onboarded_at = datetime.now(timezone.utc)
+    try:
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(status_code=409, detail="That person is already a member of this department")
+    db.refresh(membership)
+    return _to_member_response(db, membership)
 
 def _get_membership(db: Session, dept_id: int, member_user_id: int) -> Membership:
     membership = db.scalar(select(Membership).where(Membership.user_id == member_user_id, Membership.dept_id == dept_id))
@@ -144,7 +157,7 @@ def _assert_not_last_admin(db: Session, dept_id: int, member_user_id: int, actio
     other_admins = db.scalar(
         select(func.count()).select_from(Membership).where(
             Membership.dept_id == dept_id, Membership.role == "admin",
-            Membership.is_active.is_(True), Membership.user_id != member_user_id,
+            Membership.user_id != member_user_id,
         )
     )
     if not other_admins:
@@ -154,25 +167,10 @@ def _to_member_response(db: Session, membership: Membership) -> MemberResponse:
     user = db.get(User, membership.user_id)
     return MemberResponse(
         user_id=user.id, email=user.email, first_name=user.first_name, last_name=user.last_name,
-        role=membership.role, team_id=membership.team_id, is_active=membership.is_active,
+        role=membership.role, team_id=membership.team_id, is_active=user.is_active,
     )
 
-def update_member(
-    db: Session,
-    dept_id: int,
-    member_user_id: int,
-    payload: MemberUpdate,
-    replacement_user_id: int | None = None,
-    allow_unled: bool = False,
-) -> MemberResponse:
-    """Change someone's role or team.
-
-    A role is only validated when a title is *granted* — so without the handover
-    check below, demoting a team lead to engineer left them still leading the
-    team AND still able to manage its roster, because permission is read from
-    Team.manager_user_id and never re-checks the role. Demotion is exactly when
-    access is expected to stop, so a role change now has to resolve any title it
-    invalidates."""
+def update_member(db: Session, dept_id: int, member_user_id: int, payload: MemberUpdate, replacement_user_id: int | None = None, allow_unled: bool = False) -> MemberResponse:
     membership = _get_membership(db, dept_id, member_user_id)
 
     changes = payload.model_dump(exclude_unset=True)
@@ -198,28 +196,9 @@ def update_member(
     db.refresh(membership)
     return _to_member_response(db, membership)
 
-def _handover(
-    db: Session,
-    dept_id: int,
-    user_id: int,
-    replacement_user_id: int | None,
-    allow_unled: bool,
-    *,
-    losing_team_leadership: bool = True,
-    losing_headship: bool = True,
-    action: str = "Removing them",
-) -> None:
+def _handover(db: Session, dept_id: int, user_id: int, replacement_user_id: int | None, allow_unled: bool, *, losing_team_leadership: bool = True, losing_headship: bool = True, action: str = "Removing them") -> None:
     """Deal with whatever this person is in charge of before they stop being able
-    to do it — whether that's because they're leaving the department, or because
-    they've been demoted out of the role the title requires.
-
-    Refuses rather than silently creating a gap: a team with no lead has nobody
-    to approve its weekly reports, and that's the kind of thing you only notice
-    weeks later. The caller either names a successor or says they accept it.
-
-    The two `losing_*` flags exist because a demotion doesn't always invalidate
-    both titles — manager→admin keeps you eligible to lead teams, while
-    admin→manager still costs you the headship."""
+    to do it"""
     department = get_department(db, dept_id)
     led_teams = (
         list(db.scalars(select(Team).where(Team.dept_id == dept_id, Team.manager_user_id == user_id)))
@@ -235,7 +214,6 @@ def _handover(
         replacement = db.scalar(select(Membership).where(
             Membership.user_id == replacement_user_id,
             Membership.dept_id == dept_id,
-            Membership.is_active.is_(True),
         ))
         if not replacement:
             raise HTTPException(status_code=400, detail="The replacement must be a member of this department")
@@ -268,10 +246,8 @@ def _handover(
     )
 
 def remove_member(db: Session, dept_id: int, member_user_id: int, replacement_user_id: int | None = None, allow_unled: bool = False) -> None:
-    """Remove someone from the department. Deletes the membership only — the
-    user account survives, so they keep any other department they're in and can
-    be re-invited. Their sessions are revoked so the removal takes effect
-    immediately rather than at token expiry."""
+    """Deletes the membership only — the account survives, keeping any other
+    department. Sessions are revoked so it takes effect now, not at token expiry."""
     membership = _get_membership(db, dept_id, member_user_id)
     if membership.role == "admin":
         _assert_not_last_admin(db, dept_id, member_user_id, "remove")

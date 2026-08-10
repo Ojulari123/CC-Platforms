@@ -3,7 +3,7 @@ from datetime import datetime, timedelta, timezone
 from fastapi import HTTPException, status
 from jose import ExpiredSignatureError, JWTError, jwt
 from app.config import settings
-from app.security.keys import get_key_id, get_private_key_pem, get_public_key_pem
+from app.security.keys import get_key_id, get_private_key_pem, get_verification_key_pem
 
 class TokenPayload(dict):
     """Thin dict wrapper so callers can do payload.user_id etc."""
@@ -21,7 +21,6 @@ class TokenPayload(dict):
         return bool(self.get("is_platform_admin", False))
 
     def role_in(self, dept_id: int) -> str | None:
-        """The caller's role in one department, or None if they're not in it."""
         for m in self.memberships:
             if m.get("dept_id") == dept_id:
                 return m.get("role")
@@ -36,15 +35,9 @@ class TokenPayload(dict):
         return self.get("leads", [])
 
 def create_access_token(*, user_id: int, email: str, memberships: list[dict], is_platform_admin: bool, token_version: int, leads: list[int] | None = None) -> str:
-    """Carries EVERY department membership, not one 'active' one. A person can be
-    an admin in Engineering and an engineer in Data at the same time; a single
-    dept_id claim would have to pick one arbitrarily and silently lock them out
-    of the other.
-
-    `leads` is the team ids this person is the named lead of (Team.manager_user_id).
-    Pulse needs it to route report approvals — "may this caller approve a report
-    for team 3?" — without calling identity's DB on every request. Approval is a
-    Pulse decision made purely from the token."""
+    """Carries EVERY membership, not one 'active' one — a single dept_id claim would
+    have to pick one and lock the person out of the other. `leads` is the teams they
+    lead, so Pulse can route approvals from the token without calling identity."""
     now = datetime.now(timezone.utc)
     payload = {
         "sub": str(user_id),
@@ -62,12 +55,20 @@ def create_access_token(*, user_id: int, email: str, memberships: list[dict], is
     headers = {"kid": get_key_id()}
     return jwt.encode(payload, get_private_key_pem(), algorithm=settings.JWT_ALGORITHM, headers=headers)
 
+def _verification_key_for(token: str) -> str:
+    """Reading the header before the signature is checked is safe here: the kid only
+    selects which published key to try, and a token naming a key it wasn't signed
+    with still fails verification."""
+    try:
+        kid = jwt.get_unverified_header(token).get("kid")
+    except JWTError:
+        kid = None
+    return get_verification_key_pem(kid)
+
 def create_service_token(*, client_id: str, scopes: str) -> str:
-    """Mint a token for a service authenticating as ITSELF (not a user).
-    Deliberately kept separate from create_access_token: `sub` is `svc:<client>`
-    not a user id, `token_type` is "service" (so it can never pass a user-token
-    check), and it carries a `scope` string instead of memberships/roles. Short
-    life (SERVICE_TOKEN_EXPIRE_MINUTES) because it's cheap to re-mint."""
+    """A service authenticating as ITSELF. Kept separate from create_access_token so
+    it can never pass a user-token check: `sub` is svc:<client>, token_type is
+    "service", and it carries a scope string instead of memberships."""
     now = datetime.now(timezone.utc)
     payload = {
         "sub": f"svc:{client_id}",
@@ -86,7 +87,7 @@ def decode_service_token(token: str) -> dict:
     checks (signature, expiry, issuer) but REQUIRES token_type "service" — a user
     access token presented here is rejected. Does NOT int-cast `sub` (it's svc:<id>)."""
     try:
-        payload = jwt.decode(token, get_public_key_pem(), algorithms=[settings.JWT_ALGORITHM], issuer=settings.JWT_ISSUER)
+        payload = jwt.decode(token, _verification_key_for(token), algorithms=[settings.JWT_ALGORITHM], issuer=settings.JWT_ISSUER)
     except ExpiredSignatureError:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Token has expired", headers={"WWW-Authenticate": "Bearer"})
     except JWTError:
@@ -97,7 +98,7 @@ def decode_service_token(token: str) -> dict:
 
 def decode_access_token(token: str) -> TokenPayload:
     try:
-        payload = jwt.decode(token, get_public_key_pem(), algorithms=[settings.JWT_ALGORITHM], issuer=settings.JWT_ISSUER)
+        payload = jwt.decode(token, _verification_key_for(token), algorithms=[settings.JWT_ALGORITHM], issuer=settings.JWT_ISSUER)
     except ExpiredSignatureError:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Token has expired", headers={"WWW-Authenticate": "Bearer"})
     except JWTError:

@@ -1,10 +1,6 @@
-"""Invite flow — how anyone after the founder joins a department.
-
-create: admin sends an invite → email with one-time link (raw token never stored).
-accept: recipient proves control of the email by presenting the token. New
-users set a password and get an account (email_verified=True — they clicked a
-link sent to that address); existing users just gain a membership. Both get a
-fresh token pair scoped to the inviting department."""
+"""Invite flow — how anyone after the founder joins a department. Only the hash of
+the emailed token is stored; presenting it proves control of the address, which is
+why accepting sets email_verified."""
 import hashlib, secrets
 from datetime import datetime, timedelta, timezone
 from fastapi import HTTPException
@@ -23,7 +19,12 @@ def _hash_token(token: str) -> str:
     return hashlib.sha256(token.encode()).hexdigest()
 
 def create_invite(db: Session, dept_id: int, inviter: User, payload: InviteCreate) -> Invite:
+    # A platform admin passes the dept_id guard without a membership lookup, so
+    # nothing upstream has proved the department exists.
     department = db.get(Department, dept_id)
+    if not department:
+        raise HTTPException(status_code=404, detail="Department not found")
+
     invited_email = payload.email.lower()
 
     existing_user = db.scalar(select(User).where(User.email == invited_email))
@@ -135,13 +136,9 @@ def accept_invite(db: Session, payload: InviteAccept) -> TokenPair:
     if not user.is_active:
         raise HTTPException(status_code=403, detail="Account is deactivated")
 
-    # Guard the (user_id, dept_id) uniqueness explicitly. create_invite already
-    # refuses inviting someone who's already a member, but a stale invite or a
-    # double-submit of the same token can still reach here. Without this the
-    # second insert trips uq_membership_user_dept and surfaces as a raw 500
-    # instead of a clear 409. The try/except covers the concurrent-accept race
-    # the pre-check can't (two requests both passing the SELECT before either
-    # commits).
+    # A stale invite or a double-submit still reaches here; without this the insert
+    # trips uq_membership_user_dept and surfaces as a 500 instead of a 409. The
+    # try/except below covers the concurrent race the pre-check can't.
     already_member = db.scalar(select(Membership).where(
         Membership.user_id == user.id, Membership.dept_id == invite.dept_id
     ))
@@ -149,6 +146,8 @@ def accept_invite(db: Session, payload: InviteAccept) -> TokenPair:
         raise HTTPException(status_code=409, detail="You're already a member of this department.")
 
     db.add(Membership(user_id=user.id, dept_id=invite.dept_id, team_id=invite.team_id, role=invite.role))
+    if user.onboarded_at is None:
+        user.onboarded_at = datetime.now(timezone.utc)
     invite.accepted_at = datetime.now(timezone.utc)
     try:
         db.flush()

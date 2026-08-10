@@ -10,6 +10,7 @@ env/
 .ruff_cache/
 .coverage
 htmlcov/
+celerybeat-schedule*
 node_modules/
 .nuxt/
 .output/
@@ -23,6 +24,14 @@ dist/
 *.key
 !scripts/*.example
 .DS_Store
+# iCloud copies files it thinks are conflicted as "<name> 2", which no rule above matches
+* [0-9]
+* [0-9][0-9]
+# With an extension the number goes before the dot ("index 2.vue"), which the two rules
+# above miss. iCloud numbers from 2, so " 1.<ext>" names ("figure 1.png") stay committable;
+# a genuine "report 2.md" would need `git add -f`. No tracked file has a space in its name.
+* [2-9].*
+* [0-9][0-9].*
 .idea/
 .vscode/
 *.swp

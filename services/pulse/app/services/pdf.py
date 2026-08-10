@@ -1,5 +1,6 @@
 from datetime import timedelta
 from io import BytesIO
+from xml.sax.saxutils import escape
 from reportlab.lib import colors
 from reportlab.lib.enums import TA_LEFT
 from reportlab.lib.pagesizes import letter
@@ -9,8 +10,8 @@ from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer, Table, Tabl
 from sqlalchemy.orm import Session
 from app.models import (STATUS_APPROVED, STATUS_CHANGES_REQUESTED, STATUS_DRAFT, STATUS_REJECTED, STATUS_SUBMITTED, Report)
 from app.services.generation import _collect_week_activity
+from app.services.identity_client import resolve_profiles_safe
 
-# Status → badge colour, so the current state reads at a glance.
 _STATUS_COLORS = {
     STATUS_DRAFT: colors.HexColor("#6b7280"),             # grey
     STATUS_SUBMITTED: colors.HexColor("#2563eb"),         # blue
@@ -47,7 +48,8 @@ def _section(heading: str, text: str | None, styles: list, s: dict) -> None:
     styles.append(Paragraph(heading, s["heading"]))
     body = (text or "").strip() or _EMPTY
     # reportlab treats newlines as spaces; turn them into <br/> so goals lists survive.
-    styles.append(Paragraph(body.replace("\n", "<br/>"), s["body"]))
+    # Escape first: the <br/> is the template's markup, everything else is data.
+    styles.append(Paragraph(escape(body).replace("\n", "<br/>"), s["body"]))
 
 def _activity_table(counts: dict, s: dict) -> Table:
     rows = [
@@ -66,6 +68,17 @@ def _activity_table(counts: dict, s: dict) -> Table:
     ]))
     return tbl
 
+def _author_label(report: Report) -> str:
+    """Name plus id, the id kept because an export gets forwarded to people who can't
+    tell two Ada Lovelaces apart. Falls back to the id-only line the PDF printed before
+    names existed — resolve_profiles_safe swallows, so a lookup failure costs
+    readability, never the export."""
+    profile = resolve_profiles_safe([report.author_user_id]).get(report.author_user_id)
+    if profile is None:
+        return f"Engineer #{report.author_user_id}"
+    # The name is identity's data, not ours; escape it before it becomes reportlab markup.
+    return escape(f"{profile['first_name']} {profile['last_name']}") + f" (#{report.author_user_id})"
+
 def render_report_pdf(db: Session, report: Report) -> bytes:
     """Render one report to PDF bytes. Read-only: the caller gates access first."""
     s = _styles()
@@ -75,9 +88,9 @@ def render_report_pdf(db: Session, report: Report) -> bytes:
     week_end = week_start + timedelta(days=6)
 
     flow: list = []
-    flow.append(Paragraph(f"Weekly Report — {repo_name}", s["title"]))
+    flow.append(Paragraph(f"Weekly Report — {escape(repo_name)}", s["title"]))
     flow.append(Paragraph(
-        f"Engineer #{report.author_user_id} &nbsp;·&nbsp; "
+        f"{_author_label(report)} &nbsp;·&nbsp; "
         f"Week of {week_start.isoformat()} ({week_start.isoformat()} → {week_end.isoformat()})",
         s["meta"],
     ))

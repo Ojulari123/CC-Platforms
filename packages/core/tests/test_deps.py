@@ -1,6 +1,6 @@
 from fastapi import Depends, FastAPI
 from fastapi.testclient import TestClient
-from crescent_core import current_user_dep, require_dept_role
+from crescent_core import Verdict, current_user_dep, require_dept_role
 from crescent_core.claims import TokenClaims
 from tests.conftest import ISSUER
 
@@ -86,3 +86,57 @@ def test_role_gate_requires_auth(jwks_client):
     client = TestClient(_app(jwks_client))
     r = client.get("/departments/1/manager-area")
     assert r.status_code == 401
+
+class _StubChecker:
+    def __init__(self, verdict):
+        self.verdict = verdict
+        self.seen: list[tuple[int, int]] = []
+
+    def check(self, user_id, token_version):
+        self.seen.append((user_id, token_version))
+        return self.verdict
+
+def _revocation_app(jwks_client, checker):
+    app = FastAPI()
+    current_user = current_user_dep(jwks_client=jwks_client, issuer=ISSUER, revocation_checker=checker)
+    gated = require_dept_role(current_user)
+
+    @app.get("/me")
+    def me(user: TokenClaims = Depends(current_user)):
+        return {"user_id": user.user_id}
+
+    @app.get("/departments/{dept_id}/any-member")
+    def member_area(dept_id: int, user: TokenClaims = Depends(gated)):
+        return {"ok": True}
+
+    return app
+
+def test_revocation_checker_gets_the_users_id_and_token_version(jwks_client, sign_token):
+    checker = _StubChecker(Verdict.CURRENT)
+    client = TestClient(_revocation_app(jwks_client, checker))
+    assert client.get("/me", headers=_bearer(sign_token(tv=4))).status_code == 200
+    assert checker.seen == [(42, 4)]
+
+def test_stale_token_version_is_rejected(jwks_client, sign_token):
+    client = TestClient(_revocation_app(jwks_client, _StubChecker(Verdict.STALE)))
+    r = client.get("/me", headers=_bearer(sign_token()))
+    assert r.status_code == 401
+    assert r.json()["detail"] == "Session is no longer valid"
+
+def test_deleted_user_is_rejected(jwks_client, sign_token):
+    r = TestClient(_revocation_app(jwks_client, _StubChecker(Verdict.UNKNOWN))).get("/me", headers=_bearer(sign_token()))
+    assert r.status_code == 401
+
+def test_identity_outage_does_not_reject(jwks_client, sign_token):
+    """Fail-open on purpose: an identity blip must not take every product down."""
+    r = TestClient(_revocation_app(jwks_client, _StubChecker(Verdict.UNAVAILABLE))).get("/me", headers=_bearer(sign_token()))
+    assert r.status_code == 200
+
+def test_revocation_applies_to_role_gated_routes_too(jwks_client, sign_token):
+    client = TestClient(_revocation_app(jwks_client, _StubChecker(Verdict.STALE)))
+    assert client.get("/departments/1/any-member", headers=_bearer(sign_token())).status_code == 401
+
+def test_no_checker_keeps_the_previous_behaviour(jwks_client, sign_token):
+    """Pulse builds the dep without a checker today; that path must stay untouched."""
+    client = TestClient(_app(jwks_client))
+    assert client.get("/me", headers=_bearer(sign_token(tv=99))).status_code == 200

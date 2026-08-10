@@ -8,6 +8,102 @@ something's still open. **Updated per session, not per commit.**
 
 ## Next up
 
+- **Forge — Week 6: visual ML workflows.** Build on the Week-5 dataset backend
+  + frontend foundation. No-code workflow builder (pick a dataset → configure a
+  classification/regression/time-series/LLM step → run). Not started.
+- **Pre-deploy hardening.** Before Forge/Pulse go anywhere real:
+  - lock `SIGNUP_ALLOWED_DOMAINS` to the org (it's empty = allow-all today);
+  - add **email verification** for self-signed-up users (signup sets
+    `email_verified=False` and nothing lifts it yet — only invited users get
+    verified free);
+  - set up a real **GitHub OAuth App** so Pulse's live sync works outside the dev
+    allowlist;
+  - move tokens out of `localStorage` into **httpOnly cookies** — a **blocker,
+    not a nice-to-have**. Both frontends (Pulse and Forge) keep the access
+    + refresh pair in `localStorage`, where any injected script on the page can
+    read it. All token handling already lives in one shared module
+    (`packages/ui/composables/useTokenStorage.ts`, which both frontends
+    `extends`), so the swap is a one-file change. Deliberately deferred because the correct cookie config depends on
+    deployment topology: same-origin behind one domain → `SameSite=Lax` and it
+    just works; a separate hostname per service → `SameSite=None; Secure`, HTTPS
+    everywhere, CORS with credentials, and some corporate browser configs block
+    it. Topology undecided as of 2026-08-08.
+- ~~**Identity publishes a single signing key with no overlap window — pre-deploy.**~~
+  — **RESOLVED.** Rotation is now phased, not a cutover. `keys.py` publishes the active
+  key plus every `.pem` in `JWT_RETIRED_PUBLIC_KEYS_DIR` at `/.well-known/jwks.json`
+  (`get_public_jwks`), so tokens signed by either key verify during the overlap; retired
+  keys verify but never sign. `get_verification_key_pem(kid)` lets identity accept its own
+  pre-rotation tokens. `validate_retired_public_keys()` runs at startup (`app/main.py:20`)
+  and **refuses the boot** on an unusable retired `.pem` rather than 500ing JWKS later.
+  Runbook: `docs/runbook-identity-key-rotation.md`; helper `scripts/rotate-identity-keys.sh`.
+- **Live Forge browser walkthrough.** Boot identity + forge + the Nuxt frontend
+  and drive login → dataset upload → preview → delete end to end in a browser (the
+  backend + UI are built; a full click-through hasn't been recorded).
+- **Repo visibility should follow current GitHub access, not commit history.**
+  Pulse lets you see a repo if your commits/PRs/issues/reviews appear in it
+  (`repo_ids_worked_in_q`). That activity is historical and never expires, so
+  someone who moves to another department keeps seeing their old team's repo rows
+  (name, owner, private flag, lead/deputy ids) permanently. The correct rule is
+  *current* GitHub access — GitHub can report who currently has access to a repo,
+  but sync only pulls commits, PRs, reviews and issues, never the collaborator
+  list. Needs a collaborator sync step plus somewhere to store it. Exposure today
+  is mild: someone who leaves the company is deactivated in identity and can't log
+  in at all, so the realistic case is an internal department move.
+  - **`GITHUB_OAUTH_SCOPES` defaults to `read:user`**, which grants no repository
+    content access — private-repo sync can't work as configured and would return
+    empty results rather than an error (public repos work today, which is why this
+    hasn't surfaced). ~~`services/pulse/.env.example` doesn't mention needing `repo`.~~
+    — the example file now documents adding `repo`; the default is still `read:user`.
+    Ships with the collaborator sync above; both need the wider scope.
+
+- **Sync only follows a repo's default branch.** `GitHubClient.list_commits`
+  (`services/pulse/app/services/github_client.py:116`) passes no `sha`, and GitHub's
+  `/repos/{repo}/commits` defaults to the default branch. Work that lives on a feature
+  branch and is squash-merged appears; work on a long-lived branch that never merges
+  never shows up in anyone's activity or report.
+- **The sync cursor filters by commit date, not push date.** `_sync_repo` passes
+  `repo.last_synced_at` as GitHub's `since` (`services/pulse/app/services/sync.py:142`),
+  which filters on the commit's own timestamp. A commit authored *before* the cursor but
+  pushed after it — a rebase, a merge of an old branch, a force-push — is skipped and
+  never picked up again. Needs a cursor that tolerates lateness (overlap window) or a
+  push-event source.
+- **A repo with no department and no lead/deputy has no approver.** Sync creates
+  repositories with `dept_id`/`lead_user_id`/`deputy_user_id` left null
+  (`sync.py:_upsert_repository`), and `_can_approve` (`app/services/reports.py:49`)
+  only admits the lead, the deputy, a dept admin of the repo's department, or a platform
+  admin — so until an admin files the repo, only a platform admin can approve. The author
+  now gets a "no approver" email on submit (`app/services/email.py:_notify_no_approver`),
+  but filing the repo is still a manual step nothing schedules or chases.
+- ~~**Week 5 — real approver email (service-to-service auth)**~~ —
+  **DELIVERED.** Route B is real, not stubbed: on submit, Pulse resolves the repo's
+  approvers (lead + deputy) `user_id → email` by authenticating as the **`pulse`
+  service** via OAuth2 client-credentials against identity's `POST /oauth/token`
+  (short-lived scoped service token, cached in-process, re-minted on a 401), then
+  hitting `POST /internal/users/emails` and sending via Brevo. Best-effort and fired
+  after the submit commit — a notification failure can never block/roll back a
+  submission. Identity side: `service_clients` table (migration `0008`), the `pulse`
+  client seeded on startup from `PULSE_CLIENT_SECRET` with scope `users:read:email`,
+  and scope-gated `/internal/users/emails`. Shared secret must match on both sides
+  (`PULSE_CLIENT_SECRET` in identity == `PULSE_SERVICE_CLIENT_SECRET` in Pulse).
+- ~~**Self-signup + admin placement**~~ — **DELIVERED.** `POST /auth/signup` opens
+  an open, domain-gated (`SIGNUP_ALLOWED_DOMAINS`, empty=allow-all) door that creates
+  an **unplaced non-admin** account; `POST /auth/register` stays bootstrap-only and now
+  closes once a platform admin exists. `POST /departments/{dept_id}/members` lets a
+  dept/platform admin place an existing user (e.g. a fresh signup) into a department.
+- ~~**App-wide user directory**~~ — **DELIVERED.** `GET /platform/users`
+  (platform admin only; filters `q`, `is_active`, pagination) — every account across
+  every department, distinct from a department-scoped roster.
+- ~~**Forge — Week 5: skeleton → dataset backend + frontend foundation**~~ —
+  **DELIVERED.** Forge boots on port **8003**, owns its own `forge` DB, verifies
+  identity JWTs locally via JWKS. Datasets API: `POST /datasets` (multipart CSV
+  upload, capped at `MAX_UPLOAD_MB`, streamed so an oversized body never fully
+  buffers), `GET /datasets` (own + shared samples, paginated), `GET /datasets/{id}`,
+  `GET /datasets/{id}/preview`, `DELETE /datasets/{id}` (owner-only; samples
+  un-deletable). CSV content stored in the DB; 2 sample datasets seed idempotently on
+  startup (partial unique index `uq_sample_name`). Migrations `0001`–`0002`. Nuxt 3 +
+  TS + Tailwind + TanStack Query frontend foundation: login, token handling, route
+  guard, protected datasets page.
+
 - ~~**Week 4 — AI generation, PDF, email trigger, usage ledger**~~ —
   **DELIVERED (session 06).** `POST /reports/generate` drafts a report's three
   summaries (`summary_manager`/`summary_exec`/`next_week_goals`) from the engineer's
@@ -21,13 +117,13 @@ something's still open. **Updated per session, not per commit.**
   user_ids would be notified). Provider locked to **OpenAI** (`gpt-4o-mini` default).
   Verified: real OpenAI smoke test (three distinct summaries, ~680 tokens); 143 pulse
   tests green; migration round-trip + no drift on real Postgres.
-  - **Week 5 — real email send.** Resolve `user_id → email` via identity's API +
-    service-to-service auth, then enable the real send at the TODO marker in
-    `notify_report_ready` (`app/services/email.py`). The `send()` function is already
-    built full-fidelity (Brevo); only email resolution is missing.
-  - **Week 5 — frontend report link.** The notification's `{FRONTEND_URL}/reports/{id}`
-    link needs the Nuxt report page to land on (same known state as identity's invite
-    links).
+  - ~~**Week 5 — real email send.**~~ **DELIVERED** (see the Week-5 approver-email
+    entry above) — `notify_report_ready` now resolves emails via identity's
+    service-to-service auth and sends through Brevo.
+  - ~~**Week 5 — frontend report link.**~~ **DELIVERED.** The notification's
+    `{FRONTEND_URL}/reports/{id}` link (`services/pulse/app/services/email.py`) now
+    lands on `services/pulse/frontend/pages/reports/[id].vue`. Identity's invite link
+    is still the one with nowhere to go (see the email-flows section below).
 - **Repo-centric restructure (session 05) — reporting moves off teams onto
   repos. CONFIRMED, ready to build; do this before finishing slice 4.** A report
   is tied to the **repo** an engineer worked in, not their team; each repo has a
@@ -79,8 +175,10 @@ something's still open. **Updated per session, not per commit.**
   request-changes flow, append-only approval history, flat comments, and the
   Decision-6 permission model (team lead approves; `manager` role reads
   department-wide; admin covers an absent lead). ERD: [docs/erd.md](erd.md).
-  **Still to come on Pulse:** GitHub sync (Week 3), AI summaries + PDF + email
-  (Week 4), name-resolution via identity's API (Week 5).
+  ~~**Still to come on Pulse:** GitHub sync (Week 3), AI summaries + PDF + email
+  (Week 4), name-resolution via identity's API (Week 5).~~ — all three **DELIVERED**;
+  name resolution is `app/services/people.py` (`attach_names`, one batched
+  `/internal/users/profiles` call per response) plus `app/services/pdf.py`.
 - **Token now carries `leads`** — identity adds the team ids a user is the named
   lead of (`Team.manager_user_id`) to the access token, and `crescent_core`
   parses it (`claims.leads`, `claims.leads_team(id)`). This is what lets Pulse
@@ -109,14 +207,29 @@ is confirmed sending for real.
   + `POST /invites/accept`, `invites` table (migration 0002), 5/min rate limit
   on accept, public `GET /invites/preview`.
 - **Email verification for self-registered users** — invited users get
-  `email_verified=True` free (they opened a link sent to that address). Only the
-  single bootstrap user is unverified, so this is now nearly moot.
-- **The invite link has nowhere to land.** The email points at
-  `{FRONTEND_URL}/invites/accept?token=…` = `localhost:3000`, and the Nuxt
-  frontend is Week 5. The link is correct; its destination doesn't exist yet.
-  Until then, accept by posting the token to the API directly. Optionally: a
-  ~40-line throwaway HTML page served by identity so the loop is demoable at a
-  Friday demo — **not built, say the word.**
+  `email_verified=True` free (they opened a link sent to that address). ~~Only the
+  single bootstrap user is unverified, so this is now nearly moot.~~ — no longer true
+  now that `POST /auth/signup` exists: it sets `email_verified=False`
+  (`app/services/auth.py:125`) and nothing lifts it. Also load-bearing elsewhere —
+  `platform_service.delete_user` refuses a hard delete once a user is verified or has
+  an `onboarded_at`, so "never onboarded" is partly defined by this flag. Listed under
+  pre-deploy hardening above.
+- ~~**The invite link has nowhere to land.**~~ — **RESOLVED.** Both destinations now
+  exist as shared pages in `packages/ui/pages`: `invites/accept.vue`,
+  `forgot-password.vue` and `reset-password.vue`. Pulse's and Forge's Nuxt configs both
+  `extends: ["../../../packages/ui"]`, so each frontend serves them.
+- **Identity has exactly one `FRONTEND_URL`.** `services/identity/app/config.py:25`
+  feeds both the invite link and the reset link (`app/services/email.py:51,72`), so every
+  emailed link points at whichever product that variable names — an invitee meant for
+  Pulse lands in Forge, or vice versa. Gets worse with a third product. Wants a per-invite
+  target product, or a small identity-hosted landing page that routes onward.
+- **Test accounts on `@cyphercrescent.com` hard-bounce and get blocklisted at Brevo.**
+  The real domain is `.org`. Brevo returns success for a send to a blocklisted address,
+  so later mail to that address is silently suppressed with no error anywhere in our logs
+  — a debugging trap. The repo's own examples still say `.com`
+  (`services/identity/.env.example:65`, `services/identity/README.md:19`,
+  `app/main.py:33`). Use real `.org` addresses when testing, and clear the Brevo
+  blocklist if a test address stops receiving.
 
 ---
 
@@ -132,8 +245,17 @@ is confirmed sending for real.
   No dedicated deputy for now. When a team lead is away, a **department admin**
   is the approval fallback. Revisit real deputies only if leads turn out to be
   away often (before the Week 4 approval flow if so).
-- **`tv` (token_version) invalidation for downstream products** —
-  **decision point when building Pulse/Forge, not a bug to fix now.**
+- ~~**`tv` (token_version) invalidation for downstream products**~~ —
+  **RESOLVED — option (a), softened.** `crescent_core.RevocationChecker`
+  (`packages/core/crescent_core/revocation.py`) asks identity's
+  `POST /internal/users/token-versions` and caches the answer per user for
+  `TOKEN_VERSION_TTL_SECONDS` (default 60), so it is not a call per request. Both
+  products wire it into the single `current_user` dependency every authenticated route
+  uses (`services/pulse/app/auth.py`, `services/forge/app/auth.py`), so it can't be
+  opted out of. A `STALE` or `UNKNOWN` verdict → 401; `UNAVAILABLE` is **accepted on
+  purpose** (`crescent_core/deps.py:31-40`) with rate-limited warning logs, so an
+  identity blip is not a platform-wide outage. Window drops from ~15 min to ~1 min.
+  The original analysis, kept because it explains the trade-off:
 
   Identity checks `tv` in its own `get_current_user`, so `/me`,
   `/auth/change-password` etc. see an immediate kill on logout-everywhere or
@@ -159,9 +281,63 @@ is confirmed sending for real.
 
 ## Smaller, not urgent
 
-- **Rate-limit storage is per-process.** `slowapi` keeps counters in memory, so
-  limits reset on restart and wouldn't hold across replicas. Move to Redis
-  storage when Redis arrives for Celery (Week 3).
+- **Rate limiting — per-process storage** (the keying half is done). *Storage:*
+  `slowapi` keeps counters in memory, so limits reset on restart and wouldn't hold
+  across replicas — Forge now uses Redis storage with an in-memory fallback
+  (`services/forge/app/rate_limit.py`); **identity and Pulse still don't** — both
+  build `Limiter(...)` with no `storage_uri`, so this half stays open for them.
+  *Key:* ~~all three limiters use `get_remote_address`~~ — **DELIVERED.** Each
+  service's `rate_limit.py` now has `user_or_address_key`, which reads the
+  `Authorization` header, **verifies the access token in full** (not just decodes it,
+  or anyone could forge a key) and counts per `user:<id>`; anything absent, expired
+  or unverifiable falls back to the address, never a shared key. Every authenticated
+  limited route uses it: identity's `/auth/change-password`, Pulse's
+  `/github/connect` · `/github/sync` · `POST /reports` · `POST /reports/generate`,
+  and all of Forge's (its limiter's default `key_func`). Still address-keyed on
+  purpose — routes with no caller to attribute a request to: identity's
+  register/signup/login/refresh/forgot-password/reset-password, invite preview +
+  accept and `/oauth/token`, and Pulse's GitHub OAuth callback (a browser redirect
+  carrying no token). Forwarded-for headers are **not** trusted by default in any of the
+  three (`TRUST_PROXY_HEADERS: bool = False` in each `config.py`), so a client can't spoof
+  its way into someone else's bucket; turn it on only behind a proxy you control.
+- ~~**`GITHUB_ORG` is declared in Pulse's config and referenced nowhere.**~~ —
+  **RESOLVED.** The declaration is gone from `services/pulse/app/config.py`; the
+  only mentions left in the repo are this line and the session-05 log. Repo
+  discovery is still the `GITHUB_REPOS` allowlist only — org-wide discovery doesn't
+  exist, and nothing claims it does.
+- ~~**Pulse's test suite reads the real `GITHUB_REPOS` from `.env`.**~~ —
+  **RESOLVED.** `services/pulse/tests/conftest.py` now pins **every** setting
+  `app/config.py` declares (assigned, not `setdefault`), `GITHUB_REPOS=""` included, and
+  additionally blocks outbound HTTP by replacing `httpx.HTTPTransport.handle_request` /
+  `AsyncHTTPTransport.handle_async_request`, recording attempts in `BLOCKED_REQUESTS` so
+  the error-swallowing notify path can still be asserted on.
+- **New Pulse visibility queries are unverified against Postgres.** The
+  repo-visibility filter is an `IN (SELECT … UNION …)`; every test runs on SQLite
+  in-memory, and CI's `pulse-migrations` job touches Postgres but never exercises
+  these queries.
+- **`services/pulse/celerybeat-schedule`, `-shm` and `-wal` are tracked binary
+  runtime files.** They produce binary noise in every diff. ~~Gitignore them~~ —
+  `.gitignore:13` now has `celerybeat-schedule*`, but ignoring does nothing to a file
+  already tracked: `git ls-files services/pulse` still lists all three. Still needs
+  `git rm --cached services/pulse/celerybeat-schedule*` in a commit of its own.
+- **Pulse duplicates the shared service-token client — deliberate deferral.**
+  `services/pulse/app/services/identity_client.py` carries its own
+  client-credentials/cache/retry machinery (`_fetch_service_token`, `_get_service_token`,
+  `_post`) alongside `crescent_core.ServiceTokenClient`, which `app/auth.py` already
+  instantiates for the revocation check — so a Pulse process mints and holds **two**
+  service tokens. Not consolidated because the module's profile/leaver behaviour
+  (`ProfileAnswer`, chunk-tolerant lookups, `resolve_profiles_safe`) is covered by ~37
+  tests that would all need rewriting. Worth doing when that path is next touched.
+- **`.dockerignore` is ineffective for Pulse and Forge.** Both build with
+  `context: .` (repo root), where no `/.dockerignore` exists, so every build ships
+  the full ~537MB context. Identity builds from its own directory and is fine.
+- **No application service has a Docker healthcheck.** Only `postgres` and `redis`
+  have one, so `depends_on: service_started` means "the process launched", not
+  "it's ready to serve".
+- **No Python linter, formatter or typechecker anywhere in CI.** No ruff / flake8 /
+  mypy / eslint / prettier config exists in the repo. ~~Nothing at all~~ — the one
+  exception is CI's `forge-frontend` job, which runs `vue-tsc` in strict mode
+  (`npm run typecheck`); the Python services have no equivalent.
 - **Local Postgres reuses the Neon password.** `CC_POSTGRES_PASSWORD` in the
   root `.env` is the same string as the Neon connection password. Nothing leaks
   today (both are git-ignored) but they should be different secrets.

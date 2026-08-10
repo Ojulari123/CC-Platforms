@@ -15,6 +15,7 @@ from sqlalchemy.orm import Session
 from crescent_core import TokenClaims
 from app.models import STATUS_DRAFT, Commit, Issue, LlmUsage, PullRequest, Report, Repository, Review
 from app.services import llm
+from app.services.prompts import PROMPT_VERSION
 from app.services.reports import _EDITABLE, _may_report_on, _monday
 
 logger = logging.getLogger(__name__)
@@ -162,6 +163,7 @@ def generate_report(db: Session, user: TokenClaims, repo_id: int, week_start: da
         existing.summary_exec = result.summary_exec
         existing.next_week_goals = result.next_week_goals
         existing.generated_at = now
+        existing.prompt_version = PROMPT_VERSION
         report = existing
     else:
         report = Report(
@@ -174,13 +176,17 @@ def generate_report(db: Session, user: TokenClaims, repo_id: int, week_start: da
             summary_exec=result.summary_exec,
             next_week_goals=result.next_week_goals,
             generated_at=now,
+            prompt_version=PROMPT_VERSION,
         )
         db.add(report)
 
-    db.commit()
-    db.refresh(report)
-
     # Token usage rolls up to the platform admin's consumption view, not onto the report.
+    # It goes in the SAME transaction as the report: a second commit meant a failed
+    # ledger write returned a 500 for a report that was already saved (so the caller
+    # retried and paid for another generation), and it could also lose usage rows the
+    # cost view relies on. One commit = report and its cost are always in step.
+    db.flush()  # assigns report.id for the usage row
     db.add(LlmUsage(report_id=report.id, user_id=user.user_id, tokens=result.token_count or 0))
     db.commit()
+    db.refresh(report)
     return report

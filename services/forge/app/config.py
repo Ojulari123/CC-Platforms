@@ -1,0 +1,56 @@
+from pydantic import field_validator
+from pydantic_settings import BaseSettings, SettingsConfigDict
+
+# Counts hops from the RIGHT of X-Forwarded-For, so anything below 1 reads a
+# caller-supplied entry — the exact thing the setting exists to avoid.
+MIN_TRUSTED_PROXY_COUNT = 1
+
+class Settings(BaseSettings):
+    # validate_assignment so the guards below can't be undone by writing to settings later.
+    model_config = SettingsConfigDict(env_file=".env", extra="ignore", validate_assignment=True)
+
+    DATABASE_URL: str
+    IDENTITY_JWKS_URL: str = "http://identity:8000/.well-known/jwks.json"
+
+    # Service-to-service auth against identity. IDENTITY_API_URL is identity's internal
+    # base (mirrors the host in IDENTITY_JWKS_URL). The client secret is blank by default
+    # so imports/CI never need it; blank means Forge cannot authenticate to identity at all.
+    IDENTITY_API_URL: str = "http://identity:8000"
+    FORGE_SERVICE_CLIENT_ID: str = "forge"
+    FORGE_SERVICE_CLIENT_SECRET: str = ""
+
+    # How long a user's token_version is trusted before Forge re-asks identity. This is
+    # the worst-case survival time of a revoked session; 60s is the agreed trade.
+    TOKEN_VERSION_TTL_SECONDS: int = 60
+
+    JWT_ISSUER: str = "cyphercrescent-identity"
+    JWKS_TTL_SECONDS: int = 3600
+    CORS_ORIGINS: str = "http://localhost:3000"
+
+    RATE_LIMIT_ENABLED: bool = True
+    REDIS_URL: str = "redis://redis:6379/0"
+    # Only turn on when Forge really is behind proxies we control — see .env.example.
+    TRUST_PROXY_HEADERS: bool = False
+    TRUSTED_PROXY_COUNT: int = 1
+
+    DATASET_PREVIEW_ROWS: int = 10
+    MAX_UPLOAD_MB: int = 5
+
+    @field_validator("TRUSTED_PROXY_COUNT")
+    @classmethod
+    def _reject_untrustworthy_proxy_count(cls, value: int) -> int:
+        if value < MIN_TRUSTED_PROXY_COUNT:
+            raise ValueError(
+                f"TRUSTED_PROXY_COUNT must be {MIN_TRUSTED_PROXY_COUNT} or more, got {value}. "
+                "It counts hops from the RIGHT of X-Forwarded-For; 0 or negative picks an entry "
+                "the caller supplied, so anyone could invent an address and get a fresh "
+                "rate-limit bucket. Forge will not run with it. Set it to the number of proxies you "
+                "run in front of Forge, e.g. TRUSTED_PROXY_COUNT=1 for a single load balancer."
+            )
+        return value
+
+    @property
+    def cors_origins_list(self) -> list[str]:
+        return [o.strip() for o in self.CORS_ORIGINS.split(",") if o.strip()]
+
+settings = Settings()

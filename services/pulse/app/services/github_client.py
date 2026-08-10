@@ -6,12 +6,15 @@ Handles pagination and rate limits
 it with `httpx.MockTransport` — no real network and no real waits.
 """
 
+import logging
 import re
 import time
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from typing import Callable
 import httpx
 from app.config import settings
+
+logger = logging.getLogger(__name__)
 
 _NEXT_RE = re.compile(r'<([^>]+)>;\s*rel="next"')
 
@@ -22,7 +25,25 @@ def _next_link(link_header: str) -> str | None:
 def _parse_dt(value: str | None) -> datetime | None:
     return datetime.fromisoformat(value.replace("Z", "+00:00")) if value else None
 
+class GitHubRateLimited(Exception):
+    """GitHub is rate limiting us and waiting it out here isn't sensible — either the
+    reset is further away than `max_wait_seconds` (the primary quota resets on the hour,
+    so that can be ~an hour) or short waits ran out of retries.
+
+    Carries how long is left and the wall-clock time the sync can resume, so the caller
+    can record something more useful than "error"."""
+
+    def __init__(self, wait_seconds: float, url: str):
+        self.wait_seconds = max(0.0, wait_seconds)
+        self.resume_at = datetime.now(timezone.utc) + timedelta(seconds=self.wait_seconds)
+        super().__init__(
+            f"GitHub rate limit hit on {url}; retry in ~{round(self.wait_seconds / 60)} min "
+            f"(resets at {self.resume_at.isoformat(timespec='seconds')})"
+        )
+
 class GitHubClient:
+    _MAX_RETRIES = 3  # first try + 3 short-wait retries
+
     def __init__(self, token: str, base_url: str | None = None, sleep: Callable[[float], None] = time.sleep, max_wait_seconds: int = 60, transport: httpx.BaseTransport | None = None):
         self._base = (base_url or settings.GITHUB_API_URL).rstrip("/")
         self._sleep = sleep
@@ -49,23 +70,30 @@ class GitHubClient:
         return False
 
     def _wait_for(self, resp: httpx.Response) -> float:
+        """How long GitHub says to wait, UNCAPPED — the raw number is what tells a
+        few-second secondary-limit pause apart from an hour-long primary exhaustion."""
         if "Retry-After" in resp.headers:
-            return min(self._max_wait, int(resp.headers["Retry-After"]))
+            return max(0, int(resp.headers["Retry-After"]))
         reset = int(resp.headers.get("X-RateLimit-Reset", "0"))
-        return max(0, min(self._max_wait, reset - int(time.time())))
+        return max(0, reset - int(time.time()))
 
     def _request(self, url: str, params: dict | None = None) -> httpx.Response:
-        # At most one wait-and-retry: enough to ride out one rate-limit window
-        # without looping forever if something is genuinely wrong.
-        for _ in range(2):
+        # Short waits (<= max_wait_seconds) are slept through and retried, backing off
+        # 1s, 2s, 4s so we don't hammer the API. Anything longer means the primary quota
+        # is gone until GitHub's hourly reset: sleeping through that would pin a worker
+        # for the best part of an hour, so we stop and raise GitHubRateLimited with when
+        # it can resume. Persistent short waits also give up after _MAX_RETRIES rather
+        # than looping forever.
+        for attempt in range(self._MAX_RETRIES + 1):
             resp = self._http.get(url, params=params)
-            if self._is_rate_limited(resp):
-                self._sleep(self._wait_for(resp))
-                continue
-            resp.raise_for_status()
-            return resp
-        resp.raise_for_status()
-        return resp
+            if not self._is_rate_limited(resp):
+                resp.raise_for_status()
+                return resp
+            wait = self._wait_for(resp)
+            if wait > self._max_wait or attempt == self._MAX_RETRIES:
+                logger.warning("GitHub rate limit on %s: %ss to reset, giving up after %s attempt(s)", url, round(wait), attempt + 1)
+                raise GitHubRateLimited(wait, url)
+            self._sleep(min(self._max_wait, max(wait, 2 ** attempt)))
 
     def _paginate(self, path: str, params: dict | None = None, stop: Callable[[dict], bool] | None = None) -> list[dict]:
         params = {**(params or {})}
@@ -82,7 +110,6 @@ class GitHubClient:
             url = _next_link(resp.headers.get("Link", ""))
         return rows
 
-    # ── the calls the sync engine needs ────────────────────────────────────────
     def get_repo(self, full_name: str) -> dict:
         return self._request(f"{self._base}/repos/{full_name}").json()
 

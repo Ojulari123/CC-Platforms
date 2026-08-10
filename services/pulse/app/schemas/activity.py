@@ -1,5 +1,6 @@
 from datetime import date, datetime
 from pydantic import BaseModel, ConfigDict
+from app.schemas.users import UserRef
 
 class ActivityCounts(BaseModel):
     commits: int
@@ -43,8 +44,9 @@ class IssueItem(BaseModel):
 
 class ActivityResponse(BaseModel):
     """One engineer's synced GitHub activity: totals plus the most recent items of
-    each kind. This is what a dashboard renders and what Week 4's AI summaries read."""
+    each kind. This is what the dashboard renders and what the AI summaries read."""
     user_id: int
+    user: UserRef | None = None  # filled from identity; null if it can't be resolved
     since: date | None
     counts: ActivityCounts
     recent_commits: list[CommitItem]

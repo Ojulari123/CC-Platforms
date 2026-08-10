@@ -1,7 +1,3 @@
-"""Platform-admin view of token usage. 
-
-It shows when the token usage rolls up so the admin can see total
-consumption and know when to top up the LLM account (no one else see this.)"""
 from datetime import date, datetime, time, timezone
 from fastapi import HTTPException
 from sqlalchemy import func, select

@@ -5,20 +5,18 @@ from app.config import settings
 from app.models import ServiceClient
 from app.security import create_service_token, hash_password, verify_password
 
-# Burned when the client_id is unknown so a bad id and a bad secret take the same
-# time — no way to probe which client_ids exist by timing.
+# Burned on an unknown client_id so a bad id and a bad secret take the same time.
 _DUMMY_SECRET_HASH = hash_password("service-client-does-not-exist")
 
-# Scopes the Pulse client is allowed to request. Kept explicit so seeding can't
-# silently over-grant — a new capability is a deliberate edit here.
-PULSE_SCOPES = "users:read:email"
+# Explicit so seeding can't silently over-grant. Split by sensitivity: a service that
+# only draws names never gets the email one, and tokens:verify carries no PII at all.
+PULSE_SCOPES = "users:read:email users:read:profile tokens:verify"
+# Forge renders no names or addresses — it only needs to spot a killed session.
+FORGE_SCOPES = "tokens:verify"
 
 def seed_service_client(db: Session, *, client_id: str, secret: str, scopes: str) -> ServiceClient:
-    """Idempotent upsert of one service client. Safe to call on every boot: on an
-    existing row it rotates the stored (hashed) secret and scopes but NEVER touches
-    is_active — a client revoked via is_active=False stays revoked across restarts,
-    otherwise this seed would silently undo revocation. is_active is only set True
-    when the row is first CREATED. Only the bcrypt hash is stored, never the raw secret."""
+    """Idempotent upsert, safe on every boot. Rotates the hashed secret and scopes but
+    never touches is_active — otherwise a re-seed would undo a manual revocation."""
     client = db.scalar(select(ServiceClient).where(ServiceClient.client_id == client_id))
     if client is None:
         client = ServiceClient(client_id=client_id, is_active=True)
@@ -30,10 +28,8 @@ def seed_service_client(db: Session, *, client_id: str, secret: str, scopes: str
     return client
 
 def issue_client_credentials_token(db: Session, *, client_id: str, client_secret: str) -> tuple[str, int]:
-    """Verify a service client's credentials and mint a scoped service token.
-    Returns (token, expires_in_seconds). Raises 401 on any failure — unknown
-    client, wrong secret, or deactivated — with the SAME message, so a caller
-    can't tell which part failed."""
+    """Returns (token, expires_in_seconds). Every failure — unknown client, wrong
+    secret, deactivated — 401s with the same message, so none is distinguishable."""
     client = db.scalar(select(ServiceClient).where(ServiceClient.client_id == client_id))
     if client is None:
         verify_password(client_secret, _DUMMY_SECRET_HASH)  # burn equal time, no enumeration
@@ -46,14 +42,25 @@ def issue_client_credentials_token(db: Session, *, client_id: str, client_secret
     token = create_service_token(client_id=client.client_id, scopes=client.scopes)
     return token, settings.SERVICE_TOKEN_EXPIRE_MINUTES * 60
 
-def seed_pulse_client(db: Session) -> ServiceClient | None:
-    """Startup seed for Pulse. No-op unless PULSE_CLIENT_SECRET is configured, so
-    an unconfigured environment (import check, fresh boot) never crashes."""
-    if not settings.PULSE_CLIENT_SECRET:
+def _seed_if_configured(db: Session, *, client_id: str, secret: str, scopes: str) -> ServiceClient | None:
+    """Shared startup path for every product client. No-op unless a secret is
+    configured, so an unconfigured environment (import check, fresh boot) never crashes."""
+    if not secret:
         return None
-    return seed_service_client(
+    return seed_service_client(db, client_id=client_id, secret=secret, scopes=scopes)
+
+def seed_pulse_client(db: Session) -> ServiceClient | None:
+    return _seed_if_configured(
         db,
         client_id=settings.PULSE_CLIENT_ID,
         secret=settings.PULSE_CLIENT_SECRET,
         scopes=PULSE_SCOPES,
+    )
+
+def seed_forge_client(db: Session) -> ServiceClient | None:
+    return _seed_if_configured(
+        db,
+        client_id=settings.FORGE_CLIENT_ID,
+        secret=settings.FORGE_CLIENT_SECRET,
+        scopes=FORGE_SCOPES,
     )

@@ -286,6 +286,57 @@ class TestWorkflow:
         actions = [h["action"] for h in client.get(f"/reports/{rid}/approvals").json()["items"]]
         assert actions == ["submitted", "changes_requested", "submitted"]
 
+class TestNoSelfApproval:
+    """Nobody decides their own report, whatever role they hold — a review step an
+    author can complete alone isn't a review."""
+
+    def _submit_as(self, client, act_as, who, repo_id):
+        act_as(**who)
+        rid = _create(client, repo_id).json()["id"]
+        assert client.post(f"/reports/{rid}/submit").status_code == 200
+        return rid
+
+    def test_platform_admin_cannot_approve_their_own_report(self, client, act_as, db):
+        repo_id = _seed_repo(db, gh_id=3, name="own-pa", contributors=(PLATFORM["user_id"],))
+        rid = self._submit_as(client, act_as, PLATFORM, repo_id)
+        act_as(**PLATFORM)
+        r = client.post(f"/reports/{rid}/approve")
+        assert r.status_code == 403, r.text
+        assert "your own report" in r.json()["detail"]
+        assert client.get(f"/reports/{rid}").json()["status"] == "submitted"
+
+    def test_repo_lead_cannot_approve_their_own_report(self, client, act_as, db):
+        repo_id = _seed_repo(db, gh_id=4, name="own-lead", contributors=(LEAD_ID,))
+        rid = self._submit_as(client, act_as, LEAD, repo_id)
+        act_as(**LEAD)
+        assert client.post(f"/reports/{rid}/approve").status_code == 403
+
+    def test_department_admin_cannot_approve_their_own_report(self, client, act_as, db):
+        repo_id = _seed_repo(db, gh_id=5, name="own-da", contributors=(DEPT_ADMIN["user_id"],))
+        rid = self._submit_as(client, act_as, DEPT_ADMIN, repo_id)
+        act_as(**DEPT_ADMIN)
+        assert client.post(f"/reports/{rid}/approve").status_code == 403
+
+    def test_the_author_cannot_reject_or_request_changes_either(self, client, act_as, db):
+        repo_id = _seed_repo(db, gh_id=6, name="own-verbs", contributors=(PLATFORM["user_id"],))
+        rid = self._submit_as(client, act_as, PLATFORM, repo_id)
+        act_as(**PLATFORM)
+        assert client.post(f"/reports/{rid}/reject").status_code == 403
+        assert client.post(f"/reports/{rid}/request-changes").status_code == 403
+
+    def test_a_different_platform_admin_still_approves(self, client, act_as, db):
+        repo_id = _seed_repo(db, gh_id=7, name="other-pa", contributors=(PLATFORM["user_id"],))
+        rid = self._submit_as(client, act_as, PLATFORM, repo_id)
+        act_as(user_id=98, memberships=[], is_platform_admin=True)
+        r = client.post(f"/reports/{rid}/approve")
+        assert r.status_code == 200 and r.json()["status"] == "approved"
+
+    def test_your_own_report_never_sits_in_your_review_queue(self, client, act_as, db):
+        repo_id = _seed_repo(db, gh_id=8, name="queue-pa", contributors=(PLATFORM["user_id"],))
+        self._submit_as(client, act_as, PLATFORM, repo_id)
+        act_as(**PLATFORM)
+        assert client.get("/reports/review-queue").json()["total"] == 0
+
 
 class TestEdit:
     def test_author_edits_a_draft(self, client, act_as, repo):

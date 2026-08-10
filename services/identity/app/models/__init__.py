@@ -17,6 +17,10 @@ class User(Base):
     email_verified = Column(Boolean, nullable=False, server_default="false", default=False)
     is_platform_admin = Column(Boolean, nullable=False, server_default="false", default=False)
     token_version = Column(Integer, nullable=False, server_default="0", default=0)
+    # Set the first time the account is placed in a department, never cleared —
+    # the durable record that this person was really onboarded, which survives
+    # remove_member hard-deleting the membership row.
+    onboarded_at = Column(TIMESTAMP(timezone=True), nullable=True)
     created_at = Column(TIMESTAMP(timezone=True), server_default=func.now(), nullable=False)
     updated_at = Column(TIMESTAMP(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
 
@@ -63,7 +67,6 @@ class Membership(Base):
     dept_id = Column(Integer, ForeignKey("departments.id", ondelete="CASCADE"), nullable=False)
     team_id = Column(Integer, ForeignKey("teams.id", ondelete="SET NULL"), nullable=True)
     role = Column(String(50), nullable=False)
-    is_active = Column(Boolean, nullable=False, server_default="true", default=True)
     created_at = Column(TIMESTAMP(timezone=True), server_default=func.now(), nullable=False)
     updated_at = Column(TIMESTAMP(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
 
@@ -74,10 +77,8 @@ class Membership(Base):
     __table_args__ = (UniqueConstraint("user_id", "dept_id", name="uq_membership_user_dept"),)
 
 class RefreshToken(Base):
-    """Opaque refresh token stored as SHA-256 hash — never the raw value.
-    family_id groups every token descended from the same login.
-    
-    Reusing a revoked token nukes the whole family (stolen-token detection)."""
+    """Stored as a SHA-256 hash, never the raw value. family_id groups every token
+    descended from one login; reusing a revoked one nukes the whole family."""
     __tablename__ = "refresh_tokens"
 
     id = Column(Integer, primary_key=True)
@@ -108,11 +109,9 @@ class Invite(Base):
     department = relationship("Department")
 
 class ServiceClient(Base):
-    """A non-human caller (another service, e.g. Pulse) that authenticates as
-    itself via OAuth2 client-credentials. The secret is stored bcrypt-hashed —
-    same treatment as a user password — so a DB leak doesn't hand out the secret.
-    is_active makes a client revocable without deleting its row. scopes is a
-    space-delimited list (e.g. "users:read:email") a minted service token carries."""
+    """A non-human caller authenticating as itself via OAuth2 client-credentials.
+    Secret stored bcrypt-hashed, same as a user password; is_active makes a client
+    revocable without deleting the row."""
     __tablename__ = "service_clients"
 
     id = Column(Integer, primary_key=True)
@@ -124,10 +123,8 @@ class ServiceClient(Base):
     updated_at = Column(TIMESTAMP(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
 
 class PasswordResetToken(Base):
-    """One-time forgot-password token. Same hashing pattern as RefreshToken and
-    Invite (only the SHA-256 hash is stored); the raw value lives solely in the
-    emailed link. Short-lived and single-use; requesting a new one invalidates
-    any earlier unused token for the same user."""
+    """Hashed like RefreshToken and Invite; the raw value lives only in the emailed
+    link. Single-use, and requesting a new one invalidates any earlier unused one."""
     __tablename__ = "password_reset_tokens"
 
     id = Column(Integer, primary_key=True)

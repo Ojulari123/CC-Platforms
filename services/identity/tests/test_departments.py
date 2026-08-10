@@ -91,6 +91,13 @@ class TestMembers:
         r2 = client.get(f"/departments/{dept_id}/members?limit=1&offset=1", headers=auth(tokens))
         assert r2.json()["items"][0]["email"] != r.json()["items"][0]["email"]
 
+    def test_list_members_of_unknown_department_404(self, client, registered_user):
+        """Same answer as GET /departments/9999 — an empty roster would read as
+        'this department has nobody in it'."""
+        r = client.get("/departments/9999/members", headers=auth(registered_user["tokens"]))
+        assert r.status_code == 404
+        assert r.json()["detail"] == "Department not found"
+
     def test_admin_promotes_engineer_to_manager(self, client, registered_user, engineer_user):
         eng_id = client.get("/me", headers=auth(engineer_user)).json()["id"]
         r = client.patch(f"/departments/{registered_user['dept_id']}/members/{eng_id}", json={"role": "manager"}, headers=auth(registered_user["tokens"]))
@@ -349,10 +356,9 @@ class TestRemovingSomeoneInCharge:
         assert client.delete(f"/departments/{dept}/members/{eng_id}", headers=admin).status_code == 204
 
 class TestDemotionCannotStrandATitle:
-    """A role is checked when a title is granted, never after. Without these
-    guards, demoting a team lead to engineer left them still leading the team
-    AND still able to manage its roster — permission reads
-    Team.manager_user_id, which never re-checks the role."""
+    """A role is checked when a title is granted, never after. Without these guards a
+    demoted lead kept the team and its roster — permission reads Team.manager_user_id,
+    which never re-checks the role."""
 
     def _lead(self, client, registered_user, invite_user, email="mgr@example.com"):
         dept, admin = registered_user["dept_id"], auth(registered_user["tokens"])

@@ -37,6 +37,14 @@ os.environ["REFRESH_TOKEN_EXPIRE_DAYS"] = "7"
 os.environ["RATE_LIMIT_ENABLED"] = "false"
 os.environ["BREVO_API_KEY"] = ""
 os.environ["EMAIL_FROM"] = ""
+# The .env this service reads now locks signup to one domain. Tests set the allowlist
+# they need per case, so the starting state stays "empty = any domain".
+os.environ["SIGNUP_ALLOWED_DOMAINS"] = ""
+# Leave the startup seed a no-op. The lifespan seeds through app.db.SessionLocal,
+# which is NOT the overridden test engine, so a configured secret makes any test
+# that enters the lifespan hit an empty database. Seed tests set this themselves.
+os.environ["PULSE_CLIENT_SECRET"] = ""
+os.environ["FORGE_CLIENT_SECRET"] = ""
 
 from app.db import Base, get_db
 from app.main import app

@@ -1,21 +1,17 @@
-"""Platform administrators — the people who run CypherCrescent's workspace as a
-whole (create departments, administer any of them, appoint other platform
-admins). Distinct from the per-department "admin" role, which is scoped to one
-department."""
+"""Platform administrators — they run the whole workspace. Distinct from the
+per-department "admin" role, which stops at one department."""
 from fastapi import HTTPException
 from app.schemas.departments import UserAccountResponse
 from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
-from app.models import Department, Team, User
+from app.models import Department, Invite, Membership, PasswordResetToken, Team, User
 
 def list_platform_admins(db: Session) -> list[User]:
     return list(db.scalars(select(User).where(User.is_platform_admin.is_(True)).order_by(User.first_name, User.last_name)))
 
 def list_users(db: Session, q: str | None, is_active: bool | None, limit: int, offset: int) -> tuple[list[User], int]:
-    """Every account in the workspace, no department/team scoping — the platform
-    admin's flat directory. Mirrors the department roster's pagination + name/email
-    search so the two lists behave the same. `total` reflects the filters so the
-    client can page within a filtered result set."""
+    """The platform admin's flat directory — no department scoping. Mirrors the
+    department roster's paging and search; `total` reflects the filters."""
     base = select(User)
     if q:
         like = f"%{q.lower()}%"
@@ -38,20 +34,12 @@ def _get_user(db: Session, user_id: int) -> User:
     return user
 
 def deactivate_user(db: Session, user_id: int, acting_user: User) -> UserAccountResponse:
-    """Offboarding. The account survives (so reports, approvals and audit trails
-    keep pointing at a real person) but the person can no longer log in, and
-    every existing session dies immediately.
-
-    Titles are deliberately NOT vacated. Deactivation is reversible and often
-    temporary — long leave, a suspended account — and silently dismantling
-    someone's teams on the way out would be worse than leaving them in place.
-    The response lists what they still run so it's visible rather than silent;
-    to hand those over properly, remove them from the department instead."""
+    """Offboarding. The account survives so old work still names a real person; they
+    can't log in and every session dies now. Titles are deliberately NOT vacated —
+    this is reversible — but the response lists them so the gap isn't silent."""
     user = _get_user(db, user_id)
-    # This alone prevents locking the workspace out: deactivating requires being
-    # a platform admin, so the only person who could deactivate the last one is
-    # that person. (A separate "is this the last admin" count would be
-    # unreachable code — the self-check always fires first.)
+    # Also why the workspace can't be locked out: only a platform admin can
+    # deactivate, so the only account that could take out the last one is its own.
     if user.id == acting_user.id:
         raise HTTPException(status_code=400, detail="You cannot deactivate your own account")
 
@@ -70,6 +58,62 @@ def reactivate_user(db: Session, user_id: int) -> UserAccountResponse:
     db.commit()
     db.refresh(user)
     return _account_response(db, user)
+
+_DEACTIVATE_INSTEAD = "Deactivate it instead — that keeps their name on anything they've already done in other products."
+
+def _history_reason(db: Session, user: User) -> str | None:
+    """Durable evidence the account was really onboarded — remove_member deletes the
+    membership row, so a live count can't see an ex-member. The other two are kept as
+    backstops. README "Why users.onboarded_at exists" has the rest."""
+    if user.onboarded_at:
+        return "they have been part of a department"
+    if user.email_verified:
+        return "they joined a department by accepting an emailed invite"
+    if db.scalar(select(func.count()).select_from(Invite).where(Invite.email == user.email, Invite.accepted_at.is_not(None))):
+        return "they have accepted a department invite before"
+    return None
+
+def delete_user(db: Session, user_id: int, acting_user: User) -> None:
+    """Only for an account created by mistake and never used; deactivation is the path
+    for real leavers. Identity can't ask Pulse whether this person authored anything,
+    so every guard below errs towards refusing."""
+    user = _get_user(db, user_id)
+    if user.id == acting_user.id:
+        raise HTTPException(status_code=400, detail="You cannot delete your own account")
+    # Also covers "the last platform admin": demoting is always the first step, and
+    # revoke_platform_admin refuses to demote the only one.
+    if user.is_platform_admin:
+        raise HTTPException(status_code=400, detail="Cannot delete a platform administrator — revoke their platform admin role first")
+
+    memberships = db.scalar(select(func.count()).select_from(Membership).where(Membership.user_id == user_id))
+    if memberships:
+        raise HTTPException(
+            status_code=400,
+            detail=f"That account belongs to {memberships} department(s) — remove them from those first. {_DEACTIVATE_INSTEAD}",
+        )
+
+    # The FKs for these are ON DELETE SET NULL, so a delete would quietly vacate
+    # a team lead or a department head rather than being refused.
+    led = db.scalars(select(Team.name).where(Team.manager_user_id == user_id)).all()
+    headed = db.scalars(select(Department.name).where(Department.head_user_id == user_id)).all()
+    if led or headed:
+        runs = [f"leads {name}" for name in led] + [f"heads {name}" for name in headed]
+        raise HTTPException(
+            status_code=400,
+            detail=f"That account still {' and '.join(runs)} — hand that over first. {_DEACTIVATE_INSTEAD}",
+        )
+
+    reason = _history_reason(db, user)
+    if reason:
+        raise HTTPException(status_code=400, detail=f"That account cannot be deleted because {reason}. {_DEACTIVATE_INSTEAD}")
+
+    # Neither table has a relationship on User, so the ORM would leave them behind;
+    # done here because SQLite doesn't enforce FKs by default. The invite survives
+    # with no named inviter — someone else is waiting on that link.
+    db.query(PasswordResetToken).filter(PasswordResetToken.user_id == user_id).delete(synchronize_session=False)
+    db.query(Invite).filter(Invite.invited_by == user_id).update({"invited_by": None}, synchronize_session=False)
+    db.delete(user)
+    db.commit()
 
 def _account_response(db: Session, user: User) -> UserAccountResponse:
     """Surfaces anything the person still runs, so deactivating someone who

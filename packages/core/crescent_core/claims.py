@@ -3,7 +3,6 @@ from typing import Any
 
 @dataclass(frozen=True)
 class DeptMembership:
-    """One department the caller belongs to, and what they are in it."""
     dept_id: int
     team_id: int | None
     role: str
@@ -35,7 +34,6 @@ class TokenClaims:
         return None
 
     def leads_team(self, team_id: int) -> bool:
-        """Whether the caller is the named lead of this team."""
         return team_id in self.leads
 
     @property

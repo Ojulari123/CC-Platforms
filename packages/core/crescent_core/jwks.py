@@ -1,21 +1,26 @@
+import threading
 import time
 from typing import Callable
 import httpx
 
 class JWKSClient:
-    """Fetches identity's JWKS document and caches keys by kid.
+    """Caches identity's JWKS by kid; TTL refresh picks up rotations without a restart.
+    An unknown kid refreshes too, floored by min_refresh_interval_seconds: auth runs before
+    the rate limiter, so made-up kids could otherwise hammer identity once per request."""
 
-    - TTL refresh keeps rotations flowing without a restart.
-    - Unknown-kid triggers an immediate refresh (handles fresh rotations before TTL).
-    - Fetcher is injectable so tests can supply a JWKS dict without patching httpx."""
-
-    def __init__(self, jwks_url: str, ttl_seconds: int = 3600, timeout_seconds: float = 5.0, fetcher: Callable[[], dict] | None = None):
+    def __init__(self, jwks_url: str, ttl_seconds: int = 3600, timeout_seconds: float = 5.0, fetcher: Callable[[], dict] | None = None, min_refresh_interval_seconds: float = 30.0):
         self._jwks_url = jwks_url
         self._ttl = ttl_seconds
         self._timeout = timeout_seconds
         self._fetcher = fetcher or self._http_fetcher
+        self._min_refresh_interval = min_refresh_interval_seconds
         self._cache: dict[str, dict] = {}
         self._cache_expires_at = 0.0
+        self._last_attempt_at = 0.0
+        self._last_error: Exception | None = None
+        # Guards the attempt timestamp only. The fetch itself happens outside it so
+        # concurrent verifications never queue behind someone else's HTTP call.
+        self._lock = threading.Lock()
 
     def _http_fetcher(self) -> dict:
         resp = httpx.get(self._jwks_url, timeout=self._timeout)
@@ -23,22 +28,42 @@ class JWKSClient:
         return resp.json()
 
     def get_key(self, kid: str | None) -> dict | None:
-        """Return the JWK for kid, refreshing cache if expired or if kid is unknown.
-        Two refreshes at most per call: TTL check, then unknown-kid check."""
+        """Return the JWK for kid, refreshing at most once per call — and at most
+        once per min_refresh_interval_seconds however many unknown kids arrive."""
         now = time.time()
-        if now >= self._cache_expires_at:
-            self._refresh()
-        if kid and kid not in self._cache:
-            self._refresh()
-        return self._cache.get(kid) if kid else None
+        if now >= self._cache_expires_at or (kid and kid not in self._cache):
+            self._maybe_refresh(now)
+        key = self._cache.get(kid) if kid else None
+        if key is None and not self._cache and self._last_error is not None:
+            # Nothing cached and identity is unreachable: surface that instead of
+            # letting it read as "your token is bad". Once we hold keys we stay quiet.
+            raise self._last_error
+        return key
 
-    def _refresh(self) -> None:
-        payload = self._fetcher()
+    def _maybe_refresh(self, now: float) -> None:
+        with self._lock:
+            if now - self._last_attempt_at < self._min_refresh_interval:
+                return
+            self._last_attempt_at = now
+        try:
+            payload = self._fetcher()
+        except Exception as e:
+            self._last_error = e
+            return
         keys = payload.get("keys", []) if isinstance(payload, dict) else []
-        self._cache = {k["kid"]: k for k in keys if k.get("kid")}
+        parsed = {k["kid"]: k for k in keys if k.get("kid")}
+        if not parsed:
+            # An empty or unparseable document is far likelier to be a bad response
+            # than identity genuinely publishing no keys. Keep what we have.
+            self._last_error = ValueError("JWKS document contained no usable keys")
+            return
+        self._cache = parsed
         self._cache_expires_at = time.time() + self._ttl
+        self._last_error = None
 
     def invalidate(self) -> None:
         """Force the next get_key() to re-fetch. Useful if the caller knows a
-        rotation just happened."""
+        rotation just happened. Clears the interval floor too — this is a local,
+        trusted signal, not something a caller's token can trigger."""
         self._cache_expires_at = 0.0
+        self._last_attempt_at = 0.0

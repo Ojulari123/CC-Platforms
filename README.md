@@ -31,8 +31,9 @@ Then edit `services/identity/.env` and set `DATABASE_URL` to your Neon connectio
 ```bash
 docker compose up --build
 ```
-- Identity API: <http://localhost:8001>
-- Swagger UI: <http://localhost:8001/docs>
+- Identity API: <http://localhost:8001> (Swagger UI at `/docs`)
+- Pulse API: <http://localhost:8002> (Swagger UI at `/docs`)
+- Forge API: <http://localhost:8003> (Swagger UI at `/docs`)
 - Local Postgres: `localhost:5432` (sandbox — identity itself points at Neon by default)
 
 Stop with `Ctrl+C`. Wipe the local DB volume with `docker compose down -v`.
@@ -48,9 +49,28 @@ alembic upgrade head
 uvicorn app.main:app --reload --port 8001
 ```
 
+### Forge only, no Docker
+Same shape as identity. Forge needs a running identity to verify tokens against.
+```bash
+cp services/forge/.env.example services/forge/.env    # first time only
+cd services/forge
+python3.14 -m venv .venv && source .venv/bin/activate
+pip install -e ../../packages/core && pip install -r requirements-dev.txt
+
+alembic upgrade head
+uvicorn app.main:app --reload --port 8003
+```
+
+Forge's Nuxt frontend (login + datasets UI) is separate:
+```bash
+cd services/forge/frontend  &&  npm install  &&  npm run dev
+```
+
 ### Just the tests (no DB, no server — SQLite in-memory + ephemeral RSA keys)
 ```bash
 cd services/identity  &&  .venv/bin/pytest    # identity suite
+cd services/pulse     &&  .venv/bin/pytest    # pulse suite
+cd services/forge     &&  .venv/bin/pytest    # forge suite
 cd packages/core      &&  .venv/bin/pytest    # shared verifier suite
 ```
 
@@ -78,6 +98,7 @@ CC-Platforms/
 | GET | `/health` | — | DB reachable check |
 | GET | `/.well-known/jwks.json` | — | Public key for products to verify tokens |
 | POST | `/auth/register` | — | Bootstrap only: first user → platform admin + first department; 403 after |
+| POST | `/auth/signup` | — | Self-serve signup → **unplaced** non-admin account (gated by `SIGNUP_ALLOWED_DOMAINS`) |
 | POST | `/auth/login` | — | Email + password → token pair |
 | POST | `/auth/refresh` | — | Rotate refresh token, get new pair |
 | POST | `/auth/logout` | — | Revoke a refresh token |
@@ -91,6 +112,7 @@ CC-Platforms/
 | GET / PATCH | `/departments/{id}` | member / admin | View / rename a department |
 | PUT / DELETE | `/departments/{id}/head[/{user_id}]` | platform admin | Set / clear the department head |
 | GET | `/departments/{id}/members` | member | Roster (paginated: `limit`,`offset`; filters: `role`,`team_id`,`q`) |
+| POST | `/departments/{id}/members` | admin | Place an existing user (e.g. a fresh signup) into the department |
 | PATCH / DELETE | `/departments/{id}/members/{user_id}` | admin | Change role/team · remove (with handover) |
 | POST / GET / DELETE | `/departments/{id}/invites[/{invite_id}]` | admin | Create / list / revoke invites |
 | POST / GET | `/departments/{id}/teams` | admin / member | Create / list teams |
@@ -99,10 +121,14 @@ CC-Platforms/
 | GET | `/departments/{id}/teams/{tid}/members` | member | Team roster |
 | PUT / DELETE | `/departments/{id}/teams/{tid}/members/{user_id}` | admin / team lead | Add / remove from team |
 | GET | `/teams` | Bearer | Flat "all teams I can see" across departments |
+| GET | `/platform/users` | platform admin | Every account across every department (filters `q`, `is_active`; paginated) |
 | POST | `/platform/users/{id}/deactivate` · `/reactivate` | platform admin | Offboard / restore an account |
 | GET / PUT / DELETE | `/platform/admins[/{id}]` | platform admin | List / grant / revoke platform admin |
 | GET | `/invites/preview` | — | Public invite preview (who invited you, which dept) |
 | POST | `/invites/accept` | — | Redeem an invite (token from the email) |
+| POST | `/oauth/token` | client id + secret | Service-to-service token (OAuth2 client credentials, scoped, short-lived) |
+| POST | `/internal/users/emails` | service token | Batch `user_id` → email (scope `users:read:email`) |
+| POST | `/internal/users/profiles` | service token | Batch `user_id` → name / avatar / `is_active` (scope `users:read:profile`) |
 
 **Department actions name the `dept_id` in the path** (e.g. `PATCH
 /departments/12`), and permission is checked against *that* department — so
@@ -112,6 +138,21 @@ Engineering. The token carries every membership; there is no "active department"
 Interactive versions at `/docs`. In Swagger's **Authorize** box paste the raw
 token only (starts `eyJ`) — it adds the `Bearer ` prefix itself, and pasting it
 twice gives `401 Invalid token`.
+
+## Endpoints (forge, current)
+
+| Method | Path | Auth | Purpose |
+|---|---|---|---|
+| GET | `/` · `/health` | — | Service ping · DB reachable check |
+| POST | `/datasets` | Bearer | Upload a CSV as a dataset (multipart; capped at `MAX_UPLOAD_MB`) |
+| GET | `/datasets` | Bearer | Own datasets + shared samples (paginated: `limit`,`offset`) |
+| GET | `/datasets/{id}` | Bearer | Dataset metadata |
+| GET | `/datasets/{id}/preview` | Bearer | First `rows` rows (default `DATASET_PREVIEW_ROWS`, max 500) |
+| DELETE | `/datasets/{id}` | Bearer | Delete — owner only; sample datasets can't be deleted |
+
+Forge verifies identity's tokens locally via `packages/core` and identity's JWKS;
+it never reads identity's database. Pulse's endpoints are documented in
+[services/pulse/README.md](services/pulse/README.md).
 
 ## Two databases — which is which
 
@@ -143,8 +184,10 @@ Browser: **http://localhost:8080** (Adminer, starts with the stack).
 | Username / Password | `CC_POSTGRES_USER` / `CC_POSTGRES_PASSWORD` from your root `.env` |
 | Database | `identity` |
 
-Or from the terminal:
+Or from the terminal. The role is whatever `CC_POSTGRES_USER` is set to in your root
+`.env` (`.env.example` defaults it to `crescent`), so read it from the container's own
+environment rather than hardcoding a name:
 
 ```bash
-docker compose exec postgres psql -U admin -d identity -c "select id, email from users;"
+docker compose exec postgres sh -c 'psql -U "$POSTGRES_USER" -d identity -c "select id, email from users;"'
 ```

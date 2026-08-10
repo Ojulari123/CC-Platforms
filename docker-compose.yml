@@ -52,10 +52,10 @@ services:
         condition: service_healthy
     volumes:
       - ./services/identity:/app
-    command: >
-      sh -c "alembic upgrade head &&
-             uvicorn app.main:app --host 0.0.0.0 --port 8000
-             --reload --reload-dir app"
+    # Exec form on purpose. The folded-scalar version of this kept the newline
+    # before `--reload` (YAML `>` does not fold a more-indented line), so sh saw
+    # the flags as a second command and uvicorn ran with no reloader at all.
+    command: ["sh", "-c", "alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload --reload-dir app"]
 
   redis:
     image: redis:7-alpine
@@ -94,10 +94,8 @@ services:
     volumes:
       - ./services/pulse:/app
       - ./packages/core:/packages/core
-    command: >
-      sh -c "alembic upgrade head &&
-             uvicorn app.main:app --host 0.0.0.0 --port 8000
-             --reload --reload-dir app"
+    # Exec form on purpose — same YAML folding trap as identity and forge.
+    command: ["sh", "-c", "alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload --reload-dir app"]
 
   pulse-worker:
     # Runs the Celery jobs (the GitHub sync). Same image/env as pulse, different
@@ -138,6 +136,42 @@ services:
       - ./services/pulse:/app
       - ./packages/core:/packages/core
     command: celery -A app.celery_app.celery beat --loglevel=info
+
+  forge:
+    # Build context is the repo ROOT (not services/forge) so the image can pull
+    # in the shared packages/core. See services/forge/Dockerfile. No worker/beat —
+    # Forge has no background jobs yet; it uses Redis only for rate-limit counters.
+    build:
+      context: .
+      dockerfile: services/forge/Dockerfile
+    env_file:
+      - ./services/forge/.env
+    # Same as the others: `environment:` beats `env_file:`, so in Docker Forge
+    # always talks to the local sandbox Postgres (its own `forge` database), and
+    # verifies tokens against identity's in-cluster JWKS URL. IDENTITY_API_URL is
+    # pinned here too so a standalone .env pointing at localhost can't break the
+    # in-container call; the "forge" client id/secret come from the env_file.
+    environment:
+      DATABASE_URL: postgresql+psycopg://${CC_POSTGRES_USER:-crescent}:${CC_POSTGRES_PASSWORD:-crescent}@postgres:5432/forge
+      IDENTITY_JWKS_URL: http://identity:8000/.well-known/jwks.json
+      IDENTITY_API_URL: http://identity:8000
+      REDIS_URL: redis://redis:6379/0
+    ports:
+      - "8003:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      identity:
+        condition: service_started
+      redis:
+        condition: service_healthy
+    volumes:
+      - ./services/forge:/app
+      - ./packages/core:/packages/core
+    # Exec form on purpose. The folded-scalar version of this kept the newline
+    # before `--reload` (YAML `>` does not fold a more-indented line), so sh saw
+    # the flags as a second command and uvicorn ran with no reloader at all.
+    command: ["sh", "-c", "alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload --reload-dir app"]
 
 volumes:
   postgres_data:

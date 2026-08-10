@@ -35,6 +35,14 @@ class TestCreateInvite:
         listed = client.get(f"/departments/{dept_id}/invites", headers=auth(registered_user["tokens"]))
         assert listed.json() == []
 
+    def test_invite_to_unknown_department_404(self, client, registered_user, sent_emails):
+        """A platform admin skips the membership check, so a bogus dept_id gets
+        all the way to the email with no department behind it."""
+        r = _invite(client, registered_user["tokens"], 999999)
+        assert r.status_code == 404
+        assert r.json()["detail"] == "Department not found"
+        assert sent_emails == []
+
     def test_engineer_cannot_invite(self, client, registered_user, engineer_user, sent_emails):
         r = _invite(client, engineer_user, registered_user["dept_id"], email="friend@example.com")
         assert r.status_code == 403

@@ -104,6 +104,13 @@ problem cannot occur.
 > approvals would wait for them, or a department admin steps in. If cover is
 > needed routinely we'd add deputies — say so before Pulse's approval flow is
 > built in week 4.
+>
+> **ANSWERED 2026-08-08 — deputies were built.** Cover is permanent, not
+> occasional: every Pulse repository carries a **lead and a deputy** and both can
+> approve, so nothing stalls when one is away. There is no leave/presence system
+> to detect "away" with, so co-approval replaced the fallback rather than adding
+> to it. Note this landed on the **repo**, not the team — see
+> `2026-07-30-repo-centric-reporting.md`.
 
 **Who can put people on a team.** Department admins, for any team — plus that
 team's lead, for their own team only. The reasoning: the lead approves the
@@ -128,6 +135,22 @@ weeks.
 
 ## Decision 4 — Registration is bootstrap-only
 
+> **STATUS 2026-08-08 — partly superseded: domain self-signup shipped.** The open
+> question at the end of this decision has been answered by what was built. There
+> are now **three** doors, not two: bootstrap registration, invites, and
+> `POST /auth/signup` — open self-signup gated by the `SIGNUP_ALLOWED_DOMAINS`
+> allowlist, so only addresses at a listed domain may use it. (Blank means any
+> domain, which is the wrong setting for production.)
+>
+> The two objections raised below are both handled rather than overruled: a
+> self-signup lands with **no department and no membership** and is never a
+> platform admin, so nobody self-assigns "manager" and no department is created by
+> accident. They can log in but belong to nothing until an admin places them. What
+> signup does *not* give us is the free email verification invites had — the
+> allowlist proves the domain, not the mailbox.
+>
+> The reasoning below is left as written; it is why signup was built this narrowly.
+
 The **first** registration creates the platform admin and the first department.
 After that `POST /auth/register` returns 403 and everyone joins by invite
 (`POST /departments/{id}/invites` → emailed link → `POST /invites/accept`).
@@ -143,6 +166,9 @@ you control the address by opening the link.
 > `@cyphercrescent.com` address be able to self-register and wait for approval?
 > Invite-only is tighter and is what I've built; domain-based signup is more
 > convenient at larger headcounts.
+>
+> **ANSWERED 2026-08-08 — domain self-signup shipped.** See the status note at
+> the top of this decision.
 
 ---
 
@@ -191,10 +217,39 @@ eligibility) but it should be a decision rather than an accident.
 > or approve anything beyond the team they lead — for example, read all reports
 > in their department? If yes, the role starts carrying real permissions and we
 > should say so before the approval flow is written.
+>
+> **ANSWERED 2026-08-08 — no. The answer stayed "nothing".** Decision 6 below
+> proposed giving `manager` a department-wide read, but it was superseded before
+> it was built (see `2026-07-30-repo-centric-reporting.md`). Pulse gates every
+> read and every approval on being the report's author, the repo's lead or
+> deputy, `role: "admin"` in the department, or a platform admin — the plain
+> `manager` role appears in none of those checks. So it remains a job title plus
+> an eligibility gate: you must hold manager-or-admin to be *appointed* a repo
+> lead or deputy, and the power comes from the appointment, not the role.
 
 ---
 
 ## Decision 6 — Report visibility vs approval in Pulse (agreed session 04, not yet built)
+
+> **STATUS 2026-08-08 — SUPERSEDED, never built. Do not implement from this
+> section.** A week after this was agreed, reporting was reorganised around
+> **GitHub repositories instead of teams**, which replaced both halves of the
+> model below. See `2026-07-30-repo-centric-reporting.md` for what actually
+> shipped. The short version:
+>
+> - **Approval** is not the team lead. It's the **repo's lead *and* deputy**,
+>   either of whom can decide, plus a department admin or platform admin as an
+>   override. `Team.manager_user_id` no longer routes anything.
+> - **Reading** does not widen by the `manager` role. The table below gives a
+>   department `manager` read access to every report in the department; that was
+>   dropped. In the shipped code the plain `manager` role grants **no** dept-wide
+>   read on its own — you see your own reports, plus the repos you lead or
+>   deputise. Department-wide read is `role: "admin"` only.
+> - **Absent leads** are covered by the deputy co-approving, not by a department
+>   admin stepping in as a fallback.
+>
+> Kept in place because it records what was considered and why the repo model had
+> to replace it.
 
 This answers the two questions left open above — what `role: "manager"` should
 do, and what happens when a lead is away — now that the supervisor has weighed
@@ -253,9 +308,9 @@ token that other services trust.
 | 1 | Department id in the URL; role scoped per department | Mostly technical — no action needed |
 | 2 | Platform admin flag + endpoint to appoint others | **Who holds it?** |
 | 3 | One team per person per department | ✅ Confirmed session 04 — one team per person |
-| 4 | Bootstrap-only registration, then invite-only | **Invite-only, or domain self-signup?** |
+| 4 | Bootstrap-only registration, then invite-only | ✅ Answered 2026-08-08 — **both**: domain self-signup shipped alongside invites, gated by `SIGNUP_ALLOWED_DOMAINS` |
 | 5 | Each department has one named head | **Can a head name their successor?** |
-| 6 | Pulse: `manager` reads all dept reports, team lead approves; admin covers absent leads | ✅ Agreed session 04 — build with Pulse |
+| 6 | Pulse: `manager` reads all dept reports, team lead approves; admin covers absent leads | ⚠️ **SUPERSEDED 2026-08-08, never built** — replaced by repo lead + deputy co-approval; see `2026-07-30-repo-centric-reporting.md` |
 | — | A manager may lead several teams | **Not needed yet — already supported if you want it** |
 
 Also still open from earlier sessions: confirming **Brevo** as the email

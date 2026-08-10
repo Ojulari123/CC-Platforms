@@ -8,6 +8,12 @@ class RegisterRequest(BaseModel):
     last_name: str = Field(min_length=1, max_length=100)
     dept_name: str = Field(min_length=1, max_length=200)
 
+class SignupRequest(BaseModel):
+    email: EmailStr
+    password: str = Field(min_length=8, max_length=72)
+    first_name: str = Field(min_length=1, max_length=100)
+    last_name: str = Field(min_length=1, max_length=100)
+
 class LoginRequest(BaseModel):
     email: EmailStr
     password: str
@@ -47,11 +53,8 @@ class MembershipResponse(BaseModel):
     role: str
 
 class UserMeResponse(BaseModel):
-    """/me — full identity view plus EVERY department the caller belongs to.
-
-    Deliberately a list, not one "active" department: a person can be an admin
-    in Engineering and an engineer in Data, and picking one for them silently
-    locked them out of the other."""
+    """/me — plus EVERY department the caller belongs to. A list, not one "active"
+    department: picking one for them silently locked them out of the other."""
     id: int
     email: EmailStr
     first_name: str

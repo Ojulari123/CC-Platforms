@@ -1,6 +1,7 @@
 from datetime import date, datetime
 from typing import Literal
 from pydantic import BaseModel, ConfigDict, Field
+from app.schemas.users import UserRef
 
 # The five report states. Used to validate the ?status= list filter, so a typo
 # gets a clear 422 instead of silently matching nothing.
@@ -35,6 +36,7 @@ class ReportResponse(BaseModel):
 
     id: int
     author_user_id: int
+    author: UserRef | None = None  # filled from identity; null if it can't be resolved
     repo_id: int
     dept_id: int | None
     week_start: date
@@ -43,6 +45,7 @@ class ReportResponse(BaseModel):
     summary_exec: str | None
     next_week_goals: str | None
     generated_at: datetime | None  # set when the summaries were AI-drafted; null if hand-written
+    prompt_version: str | None  # which prompt drafted it; null if hand-written or generated before we recorded it
     created_at: datetime
     updated_at: datetime
 
@@ -57,6 +60,7 @@ class ApprovalResponse(BaseModel):
     id: int
     report_id: int
     actor_user_id: int
+    actor: UserRef | None = None
     action: str
     note: str | None
     created_at: datetime
@@ -73,6 +77,7 @@ class CommentResponse(BaseModel):
     id: int
     report_id: int
     author_user_id: int
+    author: UserRef | None = None
     body: str
     created_at: datetime
     edited_at: datetime | None

@@ -46,7 +46,6 @@ def build_authorize_url(user_id: int) -> str:
     return f"{settings.GITHUB_OAUTH_BASE}/login/oauth/authorize?{urlencode(params)}"
 
 def exchange_code_for_token(code: str) -> str:
-    """Swap the one-time `code` for an access token. Monkeypatched in tests."""
     resp = httpx.post(
         f"{settings.GITHUB_OAUTH_BASE}/login/oauth/access_token",
         headers={"Accept": "application/json"},
@@ -67,7 +66,6 @@ def exchange_code_for_token(code: str) -> str:
     return token
 
 def fetch_github_user(token: str) -> dict:
-    """GET /user with the token → the connecting GitHub identity. Monkeypatched in tests."""
     resp = httpx.get(
         f"{settings.GITHUB_API_URL}/user",
         headers={"Authorization": f"Bearer {token}", "Accept": "application/vnd.github+json"},

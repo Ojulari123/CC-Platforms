@@ -1,8 +1,8 @@
 from fastapi import APIRouter
-from app.security import get_public_jwk
+from app.security import get_public_jwks
 
 router = APIRouter(tags=["jwks"])
 
 @router.get("/.well-known/jwks.json")
 def jwks() -> dict:
-    return {"keys": [get_public_jwk()]}
+    return {"keys": list(get_public_jwks())}

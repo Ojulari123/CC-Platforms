@@ -1,10 +1,6 @@
-"""Teams sit inside a department, and a person's team is recorded on their
-department membership (Membership.team_id).
-
-One team per person per department — a weekly Pulse report then has exactly one
-team and one approving manager, with no tie to break. If people need to split
-across teams, this becomes a join table; see
-docs/decisions/2026-07-23-identity-structure.md."""
+"""Teams sit inside a department; a person's team is on their membership. One team
+per person, so a Pulse report has exactly one approving manager — splitting across
+teams means a join table (docs/decisions/2026-07-23-identity-structure.md)."""
 import re
 from fastapi import HTTPException
 from sqlalchemy import func, select
@@ -52,7 +48,7 @@ def list_all_teams(db: Session, user: User) -> list[TeamListItem]:
         .outerjoin(lead, lead.id == Team.manager_user_id)
     )
     if not user.is_platform_admin:
-        mine = select(Membership.dept_id).where(Membership.user_id == user.id, Membership.is_active.is_(True))
+        mine = select(Membership.dept_id).where(Membership.user_id == user.id)
         q = q.where(Team.dept_id.in_(mine))
     rows = db.execute(q.order_by(Department.name, Team.name)).all()
     return [
@@ -66,6 +62,11 @@ def list_all_teams(db: Session, user: User) -> list[TeamListItem]:
     ]
 
 def create_team(db: Session, dept_id: int, payload: TeamCreate) -> Team:
+    # A platform admin passes the dept_id guard without a membership lookup, so
+    # nothing upstream has proved the department exists.
+    if not db.get(Department, dept_id):
+        raise HTTPException(status_code=404, detail="Department not found")
+
     team = Team(dept_id=dept_id, name=payload.name, slug=_unique_team_slug(db, dept_id, _slugify(payload.name)))
     db.add(team)
     db.commit()
@@ -81,22 +82,15 @@ def _to_team_response(db: Session, team: Team) -> TeamResponse:
     )
 
 def set_manager(db: Session, dept_id: int, team_id: int, manager_user_id: int | None) -> TeamResponse:
-    """Appoint (or clear) the team's lead.
-
-    The lead must be in the department and hold manager or admin — an engineer
-    leading a team could approve their own peers' reports without that ever
-    being an explicit decision.
-
-    Leading a team and being ON it are separate facts. Appointing therefore
-    moves nobody and vacates nothing: it can't strand another team, and one
-    person can lead several teams if that's how the department works."""
+    """Appoint (or clear) the team's lead. Must already hold manager or admin —
+    otherwise an engineer ends up approving their peers' reports by accident.
+    Leading and being rostered are separate, so this moves and vacates nothing."""
     team = get_team(db, dept_id, team_id)
 
     if manager_user_id is not None:
         membership = db.scalar(select(Membership).where(
             Membership.user_id == manager_user_id,
             Membership.dept_id == dept_id,
-            Membership.is_active.is_(True),
         ))
         if not membership:
             raise HTTPException(status_code=400, detail="The team lead must be a member of this department")
@@ -109,9 +103,8 @@ def set_manager(db: Session, dept_id: int, team_id: int, manager_user_id: int | 
     return _to_team_response(db, team)
 
 def update_team(db: Session, dept_id: int, team_id: int, payload: TeamUpdate) -> TeamResponse:
-    """Rename only. The lead has its own endpoint — appointing one has side
-    effects (moves the person, vacates their old team) that don't belong hidden
-    inside a rename."""
+    """Rename only. The lead has its own endpoint — a privilege change doesn't belong
+    hidden inside a rename."""
     team = get_team(db, dept_id, team_id)
     team.name = payload.name
     team.slug = _unique_team_slug(db, dept_id, _slugify(payload.name), exclude_id=team_id)
@@ -137,7 +130,7 @@ def list_team_members(db: Session, dept_id: int, team_id: int) -> list[MemberRes
     return [
         MemberResponse(
             user_id=u.id, email=u.email, first_name=u.first_name, last_name=u.last_name,
-            role=m.role, team_id=m.team_id, is_active=m.is_active,
+            role=m.role, team_id=m.team_id, is_active=u.is_active,
         )
         for m, u in rows
     ]
@@ -160,14 +153,12 @@ def add_team_member(db: Session, dept_id: int, team_id: int, user_id: int) -> Me
     user = db.get(User, user_id)
     return MemberResponse(
         user_id=user.id, email=user.email, first_name=user.first_name, last_name=user.last_name,
-        role=membership.role, team_id=membership.team_id, is_active=membership.is_active,
+        role=membership.role, team_id=membership.team_id, is_active=user.is_active,
     )
 
 def remove_team_member(db: Session, dept_id: int, team_id: int, user_id: int) -> None:
-    """Take someone off the team's roster. They stay in the department, just
-    unassigned — and if they lead this team they still lead it, since leading
-    and being rostered are separate facts. Use DELETE .../manager to step
-    someone down."""
+    """Off the roster, still in the department — and still leading it if they did.
+    Use DELETE .../manager to step someone down."""
     get_team(db, dept_id, team_id)
     membership = _membership_in_dept(db, dept_id, user_id)
     if membership.team_id != team_id:

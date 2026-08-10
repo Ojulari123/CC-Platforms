@@ -42,15 +42,41 @@ def send(to: str, subject: str, html: str) -> None:
 
 def build_report_ready_html(report, review_url: str) -> str:
     """HTML body for the 'report ready for review' email. review_url points at the
-    frontend report page. NOTE: the frontend is Week 5, so the link won't resolve yet
-    — same known state as identity's invite emails."""
+    frontend report page."""
     return (
         f"<p>A weekly report (#{report.id}) is ready for your review.</p>"
         f'<p><a href="{review_url}">Open the report</a> to approve, reject, or request changes.</p>'
         "<p>If this wasn't expected, you can ignore this email.</p>"
     )
 
-def notify_report_ready(db, report) -> None:
+def build_no_approver_html(report, repo, review_url: str) -> str:
+    """HTML body for the 'your report has no reviewer' email sent back to the author."""
+    return (
+        f"<p>Your weekly report (#{report.id}) was submitted, but nobody is named to review it.</p>"
+        f"<p><b>{repo.full_name}</b> hasn't been filed under a department and has no lead or deputy.</p>"
+        "<p>Ask a platform admin to file the repository under a department (or name a repo "
+        "lead) — the report is already submitted and becomes reviewable as soon as they do.</p>"
+        f'<p><a href="{review_url}">Open the report</a></p>'
+    )
+
+def _notify_no_approver(report, repo) -> None:
+    """Submitted onto an unfiled repo with no lead or deputy: no named approver exists,
+    so tell the author what admin action unblocks it instead of failing silently."""
+    logger.warning(
+        "report %s submitted with no named approver — repo %s has no department, lead, or deputy",
+        report.id, repo.id,
+    )
+    email = resolve_emails([report.author_user_id]).get(report.author_user_id)
+    if not email:
+        logger.warning("report %s: could not resolve the author's email to warn them", report.id)
+        return
+    send(
+        to=email,
+        subject="Your report was submitted, but has no reviewer yet",
+        html=build_no_approver_html(report, repo, f"{settings.FRONTEND_URL}/reports/{report.id}"),
+    )
+
+def notify_report_ready(report) -> None:
     """Best-effort notification that a report is now awaiting review. Called AFTER the
     submit commit so a notification problem can never roll back or block the submission.
 
@@ -58,12 +84,19 @@ def notify_report_ready(db, report) -> None:
     emails each one a link to the report. The WHOLE thing is wrapped so it can NEVER
     raise: identity down, resolution failing, email misconfigured, or Brevo erroring are
     all logged and swallowed. A submit must never fail because a notification did.
+
+    Each recipient is sent independently — one address Brevo rejects must not stop the
+    other approver being notified. When there is no lead, no deputy and no department,
+    nobody is named to review it, so the author is told instead of nothing happening.
     """
     try:
         repo = report.repository
         approver_ids = [uid for uid in (repo.lead_user_id, repo.deputy_user_id) if uid is not None]
         if not approver_ids:
-            logger.info("report %s ready for review — no approvers to notify", report.id)
+            if report.dept_id is None:
+                _notify_no_approver(report, repo)
+            else:
+                logger.info("report %s ready for review — no approvers to notify", report.id)
             return
 
         emails = resolve_emails(approver_ids)
@@ -73,10 +106,19 @@ def notify_report_ready(db, report) -> None:
 
         review_url = f"{settings.FRONTEND_URL}/reports/{report.id}"
         html = build_report_ready_html(report, review_url)
-        for email in emails.values():
-            send(to=email, subject="A report is ready for your review", html=html)
     except (IdentityResolutionError, EmailNotConfigured, EmailSendError) as e:
         # Expected failure modes (identity/config/provider) — warn, don't alarm.
         logger.warning("notify_report_ready skipped for report %s: %s", getattr(report, "id", "?"), e)
+        return
     except Exception as e:
         logger.error("notify_report_ready failed for report %s: %s", getattr(report, "id", "?"), e)
+        return
+
+    # One try per recipient: a bad address only loses that approver's email.
+    for user_id, email in emails.items():
+        try:
+            send(to=email, subject="A report is ready for your review", html=html)
+        except (EmailNotConfigured, EmailSendError) as e:
+            logger.warning("notify_report_ready: report %s not emailed to %s (user %s): %s", report.id, email, user_id, e)
+        except Exception as e:
+            logger.error("notify_report_ready: report %s unexpected failure emailing %s (user %s): %s", report.id, email, user_id, e)

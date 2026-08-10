@@ -1,9 +1,10 @@
 from datetime import date, datetime, timezone
 import pytest
 from app.models import Commit, Issue, LlmUsage, PullRequest, Report, Repository
-from app.services import llm
+from app.services import generation, llm
 from app.services.generation import _MAX_ITEMS_PER_KIND
 from app.services.llm import LLMError, LLMResult
+from app.services.prompts import PROMPT_VERSION
 
 DEPT = 1
 LEAD_ID = 20
@@ -77,6 +78,38 @@ class TestGenerateHappyPath:
         assert "token_count" not in body
         assert mock_llm["calls"] == 1
 
+    def test_generation_stamps_the_prompt_version(self, client, act_as, db, mock_llm):
+        """Without this the version constant was declared and stored nowhere, so
+        "which prompt wrote this draft?" had no answer."""
+        repo = _seed_repo(db)
+        _seed_week_activity(db, repo.id)
+        act_as(**ENGINEER)
+        r = client.post("/reports/generate", json={"repo_id": repo.id, "week_start": WEEK})
+        assert r.status_code == 201, r.text
+        assert r.json()["prompt_version"] == PROMPT_VERSION
+        assert db.get(Report, r.json()["id"]).prompt_version == PROMPT_VERSION
+
+    def test_regenerating_restamps_the_prompt_version(self, client, act_as, db, mock_llm, monkeypatch):
+        repo = _seed_repo(db)
+        _seed_week_activity(db, repo.id)
+        act_as(**ENGINEER)
+        first = client.post("/reports/generate", json={"repo_id": repo.id, "week_start": WEEK}).json()
+        monkeypatch.setattr(generation, "PROMPT_VERSION", "2099-01-01.9")
+        again = client.post("/reports/generate", json={"repo_id": repo.id, "week_start": WEEK}).json()
+        assert again["id"] == first["id"]
+        assert again["prompt_version"] == "2099-01-01.9"
+
+    def test_a_hand_written_report_has_no_prompt_version(self, client, act_as, db):
+        """Reports created before this column existed read back null, and so do
+        hand-written ones — neither may break the response."""
+        repo = _seed_repo(db)
+        _seed_week_activity(db, repo.id)
+        act_as(**ENGINEER)
+        r = client.post("/reports", json={"repo_id": repo.id, "week_start": WEEK})
+        assert r.status_code == 201, r.text
+        assert r.json()["prompt_version"] is None
+        assert client.get(f"/reports/{r.json()['id']}").json()["prompt_version"] is None
+
     def test_generation_records_llm_usage(self, client, act_as, db, mock_llm):
         repo = _seed_repo(db)
         _seed_week_activity(db, repo.id)
@@ -88,6 +121,24 @@ class TestGenerateHappyPath:
         assert usage[0].report_id == r.json()["id"]
         assert usage[0].user_id == 10
         assert usage[0].tokens == 321
+
+    def test_report_and_usage_land_in_one_commit(self, client, act_as, db, mock_llm, monkeypatch):
+        """The usage row is written in the SAME transaction as the report, so a broken
+        ledger write can't leave a saved report the caller was told failed."""
+        repo = _seed_repo(db)
+        _seed_week_activity(db, repo.id)
+
+        def _broken_ledger(**kwargs):
+            raise RuntimeError("llm_usage insert failed")
+
+        monkeypatch.setattr(generation, "LlmUsage", _broken_ledger)
+        act_as(**ENGINEER)
+        with pytest.raises(RuntimeError):
+            client.post("/reports/generate", json={"repo_id": repo.id, "week_start": WEEK})
+
+        # All or nothing: no orphan report, no orphan usage row.
+        assert db.query(Report).count() == 0
+        assert db.query(LlmUsage).count() == 0
 
     def test_sparse_activity_still_generates(self, client, act_as, db, mock_llm):
         repo = _seed_repo(db)

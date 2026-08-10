@@ -1,5 +1,14 @@
+import time
 import pytest
-from app.rate_limit import limiter
+from fastapi import FastAPI, Request
+from fastapi.testclient import TestClient
+from slowapi import _rate_limit_exceeded_handler
+from slowapi.errors import RateLimitExceeded
+from pydantic import ValidationError
+from app import rate_limit
+from app.config import Settings, settings
+from app.rate_limit import limiter, user_or_address_key
+from tests.conftest import auth
 
 @pytest.fixture
 def rate_limited():
@@ -42,3 +51,217 @@ def test_limits_do_not_leak_into_other_tests(client):
     for _ in range(11):
         r = client.post("/auth/login", json=payload)
         assert r.status_code == 401
+
+
+def _bad_change(client, tokens):
+    return client.post(
+        "/auth/change-password",
+        json={"current_password": "Wrong123!pass", "new_password": "Fresh123!pass"},
+        headers=auth(tokens),
+    )
+
+class TestAuthenticatedRoutesAreKeyedByUser:
+    def test_two_users_from_one_address_get_separate_buckets(self, client, registered_user, engineer_user, rate_limited):
+        """Same TestClient, so identical client address. Alice burning the
+        change-password limit must not throttle the engineer."""
+        limiter.reset()  # the fixtures above already spent quota on /auth/*
+
+        for _ in range(5):
+            assert _bad_change(client, registered_user["tokens"]).status_code == 401
+        assert _bad_change(client, registered_user["tokens"]).status_code == 429
+
+        assert _bad_change(client, engineer_user).status_code == 401
+
+def _build_probe_app():
+    """A minimal app on the real key function — /auth/change-password rejects a forged
+    token before the limiter runs, so it can't show the fallback paths. Built once:
+    slowapi keys limits by endpoint name, so rebuilding would stack duplicates."""
+    app = FastAPI()
+    app.state.limiter = limiter
+    app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+
+    @app.get("/probe")
+    @limiter.limit("3/minute", key_func=user_or_address_key)
+    def probe(request: Request):
+        return {"ok": True}
+
+    return TestClient(app)
+
+_probe = _build_probe_app()
+
+def _probe_from(address):
+    """Another caller of the same probe app, at a different address. Same app on
+    purpose — a second app would register the limit twice."""
+    return TestClient(_probe.app, client=(address, 40000))
+
+def _rogue_token(sub):
+    """A well-formed access token signed with a key that isn't identity's, down to
+    borrowing identity's kid. Only a signature check tells it apart from a real one."""
+    from cryptography.hazmat.primitives import serialization
+    from cryptography.hazmat.primitives.asymmetric import rsa
+    from jose import jwt
+    from app.config import settings as app_settings
+    from app.security import get_key_id
+
+    key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    pem = key.private_bytes(
+        encoding=serialization.Encoding.PEM,
+        format=serialization.PrivateFormat.PKCS8,
+        encryption_algorithm=serialization.NoEncryption(),
+    ).decode()
+    now = int(time.time())
+    return jwt.encode(
+        {"sub": str(sub), "email": "a@b.com", "memberships": [], "is_platform_admin": False,
+         "tv": 0, "leads": [], "token_type": "access", "iss": app_settings.JWT_ISSUER,
+         "iat": now, "exp": now + 900},
+        pem, algorithm="RS256", headers={"kid": get_key_id()},
+    )
+
+class TestUnverifiableTokensFallBackToTheAddress:
+    def test_forged_bearer_tokens_share_one_bucket(self, rate_limited):
+        """A made-up token must not mint a fresh bucket per value — every one of
+        these falls back to the caller's address."""
+        for i in range(3):
+            assert _probe.get("/probe", headers={"Authorization": f"Bearer forged-{i}"}).status_code == 200
+        assert _probe.get("/probe", headers={"Authorization": "Bearer forged-99"}).status_code == 429
+
+    def test_absent_and_malformed_headers_land_on_the_same_address_bucket(self, rate_limited):
+        assert _probe.get("/probe").status_code == 200
+        assert _probe.get("/probe", headers={"Authorization": "Bearer"}).status_code == 200
+        assert _probe.get("/probe", headers={"Authorization": "Basic abc"}).status_code == 200
+        assert _probe.get("/probe").status_code == 429
+
+    def test_a_real_token_is_not_dragged_into_the_fallback_bucket(self, client, registered_user, rate_limited):
+        """The fallback must be the address, not a key everyone shares — an
+        exhausted address bucket must leave a genuine caller alone."""
+        limiter.reset()
+        for _ in range(3):
+            assert _probe.get("/probe", headers={"Authorization": "Bearer forged"}).status_code == 200
+        assert _probe.get("/probe", headers={"Authorization": "Bearer forged"}).status_code == 429
+
+        assert _probe.get("/probe", headers=auth(registered_user["tokens"])).status_code == 200
+
+    def test_the_fallback_is_the_address_and_not_one_shared_key(self, rate_limited):
+        """Two callers with unusable tokens must still be told apart. A constant
+        fallback key would pass the tests above and quietly let one stranger
+        throttle every other."""
+        for _ in range(3):
+            assert _probe_from("198.51.100.1").get("/probe", headers={"Authorization": "Bearer forged"}).status_code == 200
+        assert _probe_from("198.51.100.1").get("/probe", headers={"Authorization": "Bearer forged"}).status_code == 429
+
+        assert _probe_from("198.51.100.2").get("/probe", headers={"Authorization": "Bearer forged"}).status_code == 200
+
+    def test_a_token_signed_by_someone_else_cannot_claim_a_users_bucket(self, client, registered_user, rate_limited):
+        """The reason the key function verifies rather than just reads `sub`:
+        otherwise anyone could mint sub=<victim> and spend their quota."""
+        limiter.reset()
+        user_id = registered_user["tokens"]["user"]["id"]
+        for _ in range(3):
+            assert _probe.get("/probe", headers={"Authorization": f"Bearer {_rogue_token(user_id)}"}).status_code == 200
+        assert _probe.get("/probe", headers={"Authorization": f"Bearer {_rogue_token(user_id)}"}).status_code == 429
+
+        assert _probe.get("/probe", headers=auth(registered_user["tokens"])).status_code == 200
+
+def _login(client, xff):
+    return client.post(
+        "/auth/login",
+        json={"email": "ghost@example.com", "password": "Wrong123!pass"},
+        headers={"X-Forwarded-For": xff},
+    )
+
+class TestForwardedForIsOnlyReadWhenTrusted:
+    def test_untrusted_forwarded_header_buys_nothing(self, client, rate_limited, monkeypatch):
+        """The default. A new X-Forwarded-For per request must not reset the
+        count, or the header becomes a bypass for every address limit."""
+        monkeypatch.setattr(settings, "TRUST_PROXY_HEADERS", False)
+        for i in range(10):
+            assert _login(client, f"10.0.0.{i}").status_code == 401
+        assert _login(client, "10.0.0.250").status_code == 429
+
+    def test_trusted_forwarded_addresses_get_separate_buckets(self, client, rate_limited, monkeypatch):
+        monkeypatch.setattr(settings, "TRUST_PROXY_HEADERS", True)
+        monkeypatch.setattr(settings, "TRUSTED_PROXY_COUNT", 1)
+        for _ in range(10):
+            assert _login(client, "203.0.113.1").status_code == 401
+        assert _login(client, "203.0.113.1").status_code == 429
+
+        assert _login(client, "203.0.113.2").status_code == 401
+
+    def test_only_the_entry_the_trusted_proxy_wrote_counts(self, client, rate_limited, monkeypatch):
+        """With one proxy in front, the rightmost entry is the one it appended.
+        Entries to the left came from the caller, so varying them must not shake
+        the limit off."""
+        monkeypatch.setattr(settings, "TRUST_PROXY_HEADERS", True)
+        monkeypatch.setattr(settings, "TRUSTED_PROXY_COUNT", 1)
+        for i in range(10):
+            assert _login(client, f"1.2.3.{i}, 203.0.113.9").status_code == 401
+        assert _login(client, "9.9.9.9, 203.0.113.9").status_code == 429
+
+    def test_a_second_hop_is_skipped_when_two_proxies_are_declared(self, client, rate_limited, monkeypatch):
+        """Two proxies: the rightmost entry is our own inner proxy, so the caller
+        is one further left."""
+        monkeypatch.setattr(settings, "TRUST_PROXY_HEADERS", True)
+        monkeypatch.setattr(settings, "TRUSTED_PROXY_COUNT", 2)
+        for _ in range(10):
+            assert _login(client, "198.51.100.4, 203.0.113.9").status_code == 401
+        assert _login(client, "198.51.100.4, 203.0.113.9").status_code == 429
+
+        assert _login(client, "198.51.100.5, 203.0.113.9").status_code == 401
+
+
+def _request(xff: str | None, client=("10.0.0.1", 1234)):
+    headers = [(b"x-forwarded-for", xff.encode())] if xff is not None else []
+    return Request({"type": "http", "method": "GET", "path": "/", "headers": headers, "client": client})
+
+class TestAHeaderShorterThanTheProxyCountIsNotTrusted:
+    """The mirror of a count below 1: with 3 hops and TRUSTED_PROXY_COUNT=9 the old
+    `hops[-min(count, len)]` landed on hops[0] — the wholly caller-supplied end. Fewer
+    hops than proxies we run means this isn't our header, so the socket address is used."""
+
+    @pytest.fixture(autouse=True)
+    def _trusted(self, monkeypatch):
+        monkeypatch.setattr(settings, "TRUST_PROXY_HEADERS", True)
+        monkeypatch.setattr(rate_limit, "_short_forwarded_header_warned", False)
+
+    def test_a_short_header_is_ignored_rather_than_read_from_its_left(self, monkeypatch):
+        monkeypatch.setattr(settings, "TRUSTED_PROXY_COUNT", 9)
+        assert rate_limit.client_address(_request("1.2.3.4, 5.6.7.8, 203.0.113.9")) == "10.0.0.1"
+
+    def test_a_header_exactly_as_long_as_the_count_is_still_read(self, monkeypatch):
+        monkeypatch.setattr(settings, "TRUSTED_PROXY_COUNT", 3)
+        assert rate_limit.client_address(_request("1.2.3.4, 5.6.7.8, 203.0.113.9")) == "1.2.3.4"
+
+    def test_a_short_header_cannot_mint_a_fresh_bucket_per_request(self, rate_limited, monkeypatch):
+        monkeypatch.setattr(settings, "TRUSTED_PROXY_COUNT", 9)
+        for i in range(3):
+            assert _probe.get("/probe", headers={"X-Forwarded-For": f"1.2.3.{i}, 203.0.113.9"}).status_code == 200
+        assert _probe.get("/probe", headers={"X-Forwarded-For": "9.9.9.9, 203.0.113.9"}).status_code == 429
+
+    def test_the_misconfiguration_is_warned_about_once_not_per_request(self, monkeypatch, caplog):
+        """A caller chooses when this fires, so a warning per request would be a
+        log-flooding lever. One per process is enough to spot a real misconfiguration."""
+        monkeypatch.setattr(settings, "TRUSTED_PROXY_COUNT", 4)
+        with caplog.at_level("WARNING"):
+            for _ in range(5):
+                rate_limit.client_address(_request("1.2.3.4"))
+        assert len([r for r in caplog.records if "TRUSTED_PROXY_COUNT" in r.getMessage()]) == 1
+
+class TestTrustedProxyCountRefusesToDropBelowOne:
+    """0 selects the leftmost X-Forwarded-For entry — the wholly caller-supplied end —
+    so anyone could invent an address and get a fresh bucket. Refused when settings
+    load, the way a malformed retired key refuses the boot."""
+
+    @pytest.mark.parametrize("bad", [0, -1, -5])
+    def test_settings_will_not_load_with_a_count_below_one(self, bad):
+        with pytest.raises(ValidationError) as exc:
+            Settings(TRUSTED_PROXY_COUNT=bad)
+        assert "TRUSTED_PROXY_COUNT must be 1 or more" in str(exc.value)
+
+    @pytest.mark.parametrize("good", [1, 2, 5])
+    def test_the_valid_range_is_untouched(self, good):
+        assert Settings(TRUSTED_PROXY_COUNT=good).TRUSTED_PROXY_COUNT == good
+
+    def test_a_count_below_one_cannot_be_set_after_load_either(self):
+        with pytest.raises(ValidationError):
+            settings.TRUSTED_PROXY_COUNT = 0
+        assert settings.TRUSTED_PROXY_COUNT >= 1

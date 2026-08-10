@@ -115,6 +115,59 @@ def test_second_run_is_incremental(db, monkeypatch):
     assert fake.pr_since[0] is None
     assert fake.pr_since[1] is not None
 
+def test_untracked_repo_is_skipped(db, monkeypatch):
+    """Untracking must actually stop the pull, not just filter listings — so this
+    checks the fake was never asked for anything and no rows were written."""
+    monkeypatch.setattr(settings, "GITHUB_REPOS", "org/alpha")
+    _connect_account(db)
+    fake = _rich_fake()
+    sync_service.run_full_sync(db, make_client=lambda t: fake)  # first pass creates the repo
+
+    repo = db.scalar(select(Repository).where(Repository.full_name == "org/alpha"))
+    repo.is_tracked = False
+    db.commit()
+    synced_at = repo.last_synced_at
+    calls_before = len(fake.commit_since)
+    commits_before = db.scalar(select(func.count()).select_from(Commit))
+    built = []
+
+    def _make(token):
+        built.append(token)
+        return fake
+
+    runs = sync_service.run_full_sync(db, make_client=_make)
+
+    assert len(runs) == 1 and runs[0].status == "skipped"
+    assert runs[0].repo_id == repo.id and "not tracked" in runs[0].detail
+    assert built == []  # no GitHub client was even constructed
+    assert len(fake.commit_since) == calls_before
+    assert db.scalar(select(func.count()).select_from(Commit)) == commits_before
+    db.refresh(repo)
+    assert repo.last_synced_at == synced_at  # cursor untouched
+
+def test_retracked_repo_syncs_again(db, monkeypatch):
+    monkeypatch.setattr(settings, "GITHUB_REPOS", "org/alpha")
+    _connect_account(db)
+    fake = _rich_fake()
+    sync_service.run_full_sync(db, make_client=lambda t: fake)
+    repo = db.scalar(select(Repository).where(Repository.full_name == "org/alpha"))
+    repo.is_tracked = False
+    db.commit()
+    sync_service.run_full_sync(db, make_client=lambda t: fake)
+    repo.is_tracked = True
+    db.commit()
+
+    runs = sync_service.run_full_sync(db, make_client=lambda t: fake)
+    assert runs[0].status == "success", runs[0].detail
+
+def test_a_repo_never_synced_before_is_not_treated_as_untracked(db, monkeypatch):
+    """No Repository row yet means no switch has been thrown — a brand-new allowlist
+    entry must still sync on its first pass."""
+    monkeypatch.setattr(settings, "GITHUB_REPOS", "org/alpha")
+    _connect_account(db)
+    runs = sync_service.run_full_sync(db, make_client=lambda t: _rich_fake())
+    assert runs[0].status == "success", runs[0].detail
+
 def test_no_repos_configured_records_a_no_op(db, monkeypatch):
     monkeypatch.setattr(settings, "GITHUB_REPOS", "")
     runs = sync_service.run_full_sync(db)
@@ -205,6 +258,13 @@ def test_sync_trigger_requires_admin(client, act_as, monkeypatch):
     act_as(user_id=10, memberships=[{"dept_id": 1, "team_id": None, "role": "engineer"}])
     assert client.post("/github/sync?wait=true").status_code == 403
 
+def test_sync_trigger_rejects_a_department_admin(client, act_as, monkeypatch):
+    # A full sync burns the shared GitHub quota across every allowlisted repo, so
+    # running one is a platform-admin call — a department admin is not enough.
+    monkeypatch.setattr(settings, "GITHUB_REPOS", "")
+    act_as(user_id=30, memberships=[{"dept_id": 1, "team_id": None, "role": "admin"}])
+    assert client.post("/github/sync?wait=true").status_code == 403
+
 def test_sync_trigger_inline_returns_results(client, act_as, monkeypatch):
     monkeypatch.setattr(settings, "GITHUB_REPOS", "")
     act_as(user_id=99, memberships=[], is_platform_admin=True)
@@ -221,6 +281,83 @@ def test_sync_trigger_enqueues_by_default(client, act_as, monkeypatch):
     act_as(user_id=99, memberships=[], is_platform_admin=True)
     r = client.post("/github/sync")
     assert r.status_code == 200 and r.json() == {"mode": "queued", "task_id": "task-123"}
+
+class TestSyncRunHistory:
+    """GET /github/sync-runs — the answer to "why is my data stale?". Scoped like the
+    repository list: you see history for repos you can see."""
+
+    DEPT = 1
+    ENGINEER = dict(user_id=10, memberships=[{"dept_id": DEPT, "team_id": None, "role": "engineer"}])
+    OUTSIDER = dict(user_id=40, memberships=[{"dept_id": 2, "team_id": None, "role": "engineer"}])
+    PLATFORM = dict(user_id=99, memberships=[], is_platform_admin=True)
+
+    def _seed(self, db, dept_id=DEPT, gh_id=1, name="alpha"):
+        repo = Repository(github_repo_id=gh_id, full_name=f"org/{name}", owner="org", name=name, dept_id=dept_id)
+        db.add(repo)
+        db.commit()
+        db.refresh(repo)
+        return repo
+
+    def _run(self, db, repo, status="success", detail="org/alpha: commits=3"):
+        run = SyncRun(repo_id=repo.id if repo else None, status=status, detail=detail)
+        db.add(run)
+        db.commit()
+        db.refresh(run)
+        return run
+
+    def test_requires_auth(self, client):
+        assert client.get("/github/sync-runs").status_code == 401
+
+    def test_returns_history_with_enough_to_explain_staleness(self, client, act_as, db):
+        repo = self._seed(db)
+        self._run(db, repo, status="rate_limited", detail="org/alpha: resumes at 12:30")
+        act_as(**self.ENGINEER)
+
+        body = client.get("/github/sync-runs").json()
+        assert body["total"] == 1
+        item = body["items"][0]
+        assert item["status"] == "rate_limited"
+        assert "resumes at 12:30" in item["detail"]
+        assert item["repo_full_name"] == "org/alpha"
+        assert item["started_at"] is not None
+
+    def test_a_user_outside_the_repos_scope_sees_nothing(self, client, act_as, db):
+        repo = self._seed(db)
+        self._run(db, repo)
+        act_as(**self.OUTSIDER)
+        body = client.get("/github/sync-runs").json()
+        assert body["total"] == 0 and body["items"] == []
+
+    def test_filtering_by_repo_id_does_not_bypass_the_scope(self, client, act_as, db):
+        repo = self._seed(db)
+        self._run(db, repo)
+        act_as(**self.OUTSIDER)
+        assert client.get(f"/github/sync-runs?repo_id={repo.id}").json()["total"] == 0
+
+    def test_repo_less_rows_are_platform_admin_only(self, client, act_as, db):
+        # "no repos configured" / "no connected account" are platform config problems,
+        # not something a department can act on.
+        self._run(db, None, status="error", detail="no connected GitHub account to sync with")
+        act_as(**self.ENGINEER)
+        assert client.get("/github/sync-runs").json()["total"] == 0
+        act_as(**self.PLATFORM)
+        assert client.get("/github/sync-runs").json()["total"] == 1
+
+    def test_newest_first_and_paged(self, client, act_as, db):
+        repo = self._seed(db)
+        for i in range(3):
+            self._run(db, repo, detail=f"run {i}")
+        act_as(**self.ENGINEER)
+        body = client.get("/github/sync-runs?limit=2&offset=0").json()
+        assert body["total"] == 3 and body["limit"] == 2
+        assert [i["detail"] for i in body["items"]] == ["run 2", "run 1"]
+
+    def test_a_skipped_run_is_visible(self, client, act_as, db):
+        repo = self._seed(db)
+        self._run(db, repo, status="skipped", detail="org/alpha: not tracked")
+        act_as(**self.ENGINEER)
+        assert client.get("/github/sync-runs").json()["items"][0]["status"] == "skipped"
+
 
 def test_daily_sync_is_registered_on_the_celery_app():
     assert "app.tasks.sync_all_repos" in celery.tasks

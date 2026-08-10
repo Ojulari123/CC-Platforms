@@ -2,18 +2,25 @@
 
 **Scope:** the platform's database design, kept current with the code.
 
-Two databases, because of the core rule *"products own their own data and
+Three databases, because of the core rule *"products own their own data and
 reference identity by id"* (see `CLAUDE.md`):
 
-1. **Identity DB** — `services/identity`. **Built & migrated `0001`–`0007`.**
-   People, departments, teams, memberships, sessions, invites, password resets.
-2. **Pulse DB** — `services/pulse`. **Built & migrated `0001`–`0004`.** Two
+1. **Identity DB** — `services/identity`. **Built & migrated `0001`–`0010`.**
+   People, departments, teams, memberships, sessions, invites, password resets,
+   and (migration `0008`) **service clients** for service-to-service auth.
+2. **Pulse DB** — `services/pulse`. **Built & migrated `0001`–`0006`.** Two
    domains: the **reporting** domain (reports, approvals, comments, plus the
    Week-4 `llm_usage` ledger) and the **GitHub sync** domain (connected accounts,
    repos, commits, PRs, reviews, issues, sync runs). Reporting is **repo-centric**
    (session 05): a report is about a repo, and each repo has a department, a lead,
    and a deputy. Week 4 (session 06) adds AI-drafted summaries — `reports` gains
-   `generated_at` — and a token-usage ledger (`llm_usage`).
+   `generated_at` — and a token-usage ledger (`llm_usage`). Since then, `0005`
+   dropped `commits.additions`/`deletions` (declared but never populated: GitHub's
+   commit-list endpoint doesn't return line counts) and `0006` added
+   `reports.prompt_version`.
+3. **Forge DB** — `services/forge`. **Built & migrated `0001`–`0002`.** Product 2
+   (no-code ML). One table so far: **datasets** (uploaded + bundled sample CSVs),
+   with the CSV content stored in the row.
 
 > **Cross-service references are by id, not foreign keys.** Pulse stores
 > `author_user_id`, `dept_id`, `lead_user_id`, etc. as plain integers pointing at
@@ -51,6 +58,7 @@ erDiagram
         bool email_verified "default false"
         bool is_platform_admin "runs whole workspace"
         int token_version "bumped to kill all sessions"
+        timestamptz onboarded_at "nullable, first department placement, never cleared"
         timestamptz created_at
         timestamptz updated_at
     }
@@ -77,7 +85,6 @@ erDiagram
         int dept_id FK "->departments, CASCADE"
         int team_id FK "->teams, SET NULL, nullable"
         string role "admin | manager | engineer"
-        bool is_active "default true"
         timestamptz created_at
         timestamptz updated_at
     }
@@ -111,7 +118,21 @@ erDiagram
         timestamptz used_at "nullable; single-use"
         timestamptz created_at
     }
+    service_clients {
+        int id PK
+        string client_id UK "e.g. 'pulse', indexed"
+        string client_secret_hash "bcrypt, raw never stored"
+        string scopes "space-delimited, e.g. 'users:read:email'"
+        bool is_active "default true; revocable without delete"
+        timestamptz created_at
+        timestamptz updated_at
+    }
 ```
+
+> **`service_clients` is standalone** (no relationship to `users`). It's a
+> non-human caller — another service (Pulse) authenticating as itself via OAuth2
+> client-credentials to mint a scoped service token. The `pulse` row is seeded on
+> startup from `PULSE_CLIENT_SECRET`. Migration `0008`.
 
 > **Teams are parked.** The boss's session-05 call is repos, not teams. The team
 > model above is still built and tested but no longer drives Pulse reporting; it's
@@ -164,8 +185,6 @@ erDiagram
         int author_user_id "-> identity.users (by id, nullable)"
         string author_github_login "nullable"
         text message "nullable"
-        int additions "nullable"
-        int deletions "nullable"
         string url "nullable"
         timestamptz committed_at
         timestamptz created_at
@@ -249,6 +268,7 @@ erDiagram
         text summary_exec "AI-drafted, editable (Week 4)"
         text next_week_goals "AI-drafted, editable (Week 4)"
         timestamptz generated_at "nullable; set when AI-drafted, null if hand-written (Week 4)"
+        string prompt_version "nullable; PROMPT_VERSION at draft time, null if hand-written"
         timestamptz created_at
         timestamptz updated_at
     }
@@ -293,12 +313,44 @@ erDiagram
 
 ---
 
+## Forge database
+
+Product 2 (no-code ML). One table so far. People are referenced by identity
+`user_id` only — **no FK crosses into identity**.
+
+```mermaid
+erDiagram
+    datasets {
+        int id PK
+        int owner_user_id "-> identity.users (by id, nullable; NULL for samples), indexed"
+        bool is_sample "default false; samples are owner-less and visible to all"
+        string name
+        string original_filename "nullable"
+        text content "the raw CSV text — stored in the row, not on disk"
+        text columns "JSON-encoded list of header column names"
+        int row_count "data rows, excluding the header"
+        timestamptz created_at
+        timestamptz updated_at
+    }
+```
+
+> **`uq_sample_name` — partial unique index** on `name` WHERE `is_sample`
+> (migration `0002`). Stops two workers booting at once from double-seeding a
+> bundled sample; user uploads are excluded by the predicate, so duplicate private
+> dataset names stay allowed. A caller sees their own datasets plus every sample and
+> nothing else (enforced in `app/services/datasets.py`, not the schema).
+
+---
+
 ## Constraints that matter (enforced)
 
 **Identity:** `users.email` · `departments.slug` · `refresh_tokens.token_hash` ·
-`invites.token_hash` · `password_reset_tokens.token_hash` all unique.
-`memberships (user_id, dept_id)` unique. `teams (dept_id, slug)` unique.
+`invites.token_hash` · `password_reset_tokens.token_hash` · `service_clients.client_id`
+all unique. `memberships (user_id, dept_id)` unique. `teams (dept_id, slug)` unique.
 `manager_user_id` / `head_user_id` have no uniqueness (one person may lead many).
+
+**Forge:** `datasets` has the **partial** unique index `uq_sample_name` (`name`
+WHERE `is_sample`) — sample names are unique; user-upload names are not constrained.
 
 **Pulse:** `repositories.github_repo_id`, `pull_requests.github_pr_id`,
 `reviews.github_review_id`, `issues.github_issue_id`,

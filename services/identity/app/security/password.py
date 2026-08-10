@@ -2,11 +2,9 @@ import re
 import bcrypt
 from fastapi import HTTPException
 
-# bcrypt only reads the first 72 BYTES of a password and ignores the rest —
-# silently. Before this cap, a 103-character password could be logged into with
-# just its first 72 characters, while the API advertised a 128-character limit.
-# Rejecting is honest; accepting-and-truncating gives false confidence.
-# Bytes, not characters: one emoji or accented letter can be 2–4 bytes.
+# bcrypt silently ignores everything past 72 BYTES, so a longer password used to be
+# loggable-into with just its first 72. Reject rather than truncate. Bytes, not
+# characters — one emoji is 2-4.
 MAX_PASSWORD_BYTES = 72
 
 def hash_password(password: str) -> str:

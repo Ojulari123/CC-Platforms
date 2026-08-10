@@ -2,7 +2,7 @@ from fastapi import APIRouter, Depends, Query, status
 from sqlalchemy.orm import Session
 from app.db import get_db
 from app.models import User
-from app.schemas.departments import DepartmentCreate, DepartmentResponse, DepartmentUpdate, InviteCreate, InviteResponse, MemberListResponse, MemberResponse, MemberUpdate, Role
+from app.schemas.departments import DepartmentCreate, DepartmentResponse, DepartmentUpdate, InviteCreate, InviteResponse, MemberAdd, MemberListResponse, MemberResponse, MemberUpdate, Role
 from app.security import get_current_user, require_dept_role, require_platform_admin
 from app.services import departments as dept_service
 from app.services import invites as invites_service
@@ -56,13 +56,15 @@ def list_members(
 ) -> MemberListResponse:
     return dept_service.list_members(db, dept_id, limit=limit, offset=offset, role=role, team_id=team_id, q=q)
 
+@router.post("/{dept_id}/members", response_model=MemberResponse, status_code=status.HTTP_201_CREATED)
+def add_member(dept_id: int, payload: MemberAdd, _: User = Depends(dept_admin), db: Session = Depends(get_db)) -> MemberResponse:
+    return dept_service.add_member(db, dept_id, payload.user_id, payload.role, payload.team_id)
+
 @router.patch("/{dept_id}/members/{member_user_id}", response_model=MemberResponse)
 def update_member(dept_id: int, member_user_id: int, payload: MemberUpdate, replacement_user_id: int | None = Query(default=None, description="Hand any team(s)/headship the demotion costs them to this person"), 
                   allow_unled: bool = Query(default=False, description="Demote anyway, leaving those without anyone in charge"), _: User = Depends(dept_admin), db: Session = Depends(get_db)) -> MemberResponse:
     """Demoting someone out of the role a title requires is refused with a 409
-    naming what they'd stop being able to run — same handover choice as removal.
-    Otherwise a demoted engineer would keep leading a team and keep managing its
-    roster."""
+    naming what they'd stop being able to run"""
     return dept_service.update_member(
         db, dept_id, member_user_id, payload,
         replacement_user_id=replacement_user_id,
@@ -71,10 +73,9 @@ def update_member(dept_id: int, member_user_id: int, payload: MemberUpdate, repl
 
 @router.delete("/{dept_id}/members/{member_user_id}", status_code=status.HTTP_204_NO_CONTENT)
 def remove_member(dept_id: int, member_user_id: int, replacement_user_id: int | None = Query(default=None, description="Hand their team(s)/headship to this person instead of leaving them empty"), allow_unled: bool = Query(default=False, description="Proceed even though teams or the department will be left without a lead"), _: User = Depends(dept_admin), db: Session = Depends(get_db)) -> None:
-    """Removing someone who leads a team (or heads the department) is refused
-    with a 409 naming what would be left leaderless — pass replacement_user_id
-    to hand it over, or allow_unled=true to accept the gap knowingly. Without
-    this, a team could silently end up with nobody able to approve its reports."""
+    """Removing someone who leads a team or heads the department is refused with a 409
+    naming what would be left leaderless. Hand it over with replacement_user_id, or
+    accept the gap knowingly with allow_unled."""
     dept_service.remove_member(
         db, dept_id, member_user_id,
         replacement_user_id=replacement_user_id,

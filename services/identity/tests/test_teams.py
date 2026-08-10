@@ -46,6 +46,13 @@ class TestTeamCrud:
         r = client.patch(f"/departments/{dept}/teams/{team_id}", json={"name": "Core"}, headers=admin)
         assert r.json()["slug"] == "core"
 
+    def test_create_team_in_unknown_department_404(self, client, admin):
+        """A platform admin skips the membership check, so nothing else stops a
+        bogus dept_id reaching the insert."""
+        r = client.post("/departments/999999/teams", json={"name": "Ghost"}, headers=admin)
+        assert r.status_code == 404
+        assert r.json()["detail"] == "Department not found"
+
     def test_engineer_cannot_create_or_delete(self, client, dept, admin, engineer_user):
         eng = auth(engineer_user)
         assert client.post(f"/departments/{dept}/teams", json={"name": "Sneaky"}, headers=eng).status_code == 403

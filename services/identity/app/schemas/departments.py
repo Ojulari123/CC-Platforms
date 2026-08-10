@@ -54,6 +54,8 @@ class MemberResponse(BaseModel):
     last_name: str
     role: str
     team_id: int | None
+    # The account's status, not a membership flag — a roster has to show who can
+    # no longer log in.
     is_active: bool
 
 class MemberListResponse(BaseModel):
@@ -61,6 +63,11 @@ class MemberListResponse(BaseModel):
     total: int
     limit: int
     offset: int
+
+class MemberAdd(BaseModel):
+    user_id: int
+    role: Role
+    team_id: int | None = None
 
 class MemberUpdate(BaseModel):
     role: Role | None = None
@@ -81,9 +88,6 @@ class InviteResponse(BaseModel):
     expires_at: datetime
 
 class InvitePreview(BaseModel):
-    """What the accept page shows before asking for a password. Deliberately
-    thin — this is public, so it leaks nothing beyond what the invitee was
-    already told in their email."""
     email: EmailStr
     dept_name: str
     team_name: str | None = None
@@ -98,9 +102,6 @@ class InviteAccept(BaseModel):
     password: str | None = Field(default=None, max_length=72)
 
 class UserAccountResponse(BaseModel):
-    """Returned when an account is deactivated or reactivated. `still_leads` and
-    `still_heads` surface what the person remains responsible for, so a leaver
-    who runs a team doesn't quietly leave it with a lead who can't log in."""
     id: int
     email: EmailStr
     first_name: str
@@ -120,9 +121,6 @@ class PlatformAdminResponse(BaseModel):
     is_platform_admin: bool
 
 class PlatformUserResponse(BaseModel):
-    """One row of the workspace-wide user list. Deliberately no department/team
-    context — this is the platform admin's flat view of every account, not a
-    department roster (that's MemberResponse)."""
     model_config = ConfigDict(from_attributes=True)
 
     id: int

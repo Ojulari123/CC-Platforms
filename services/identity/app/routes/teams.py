@@ -34,11 +34,8 @@ def delete_team(dept_id: int, team_id: int, _: User = Depends(dept_admin), db: S
 
 @router.put("/{team_id}/manager/{manager_user_id}", response_model=TeamResponse)
 def set_team_manager(dept_id: int, team_id: int, manager_user_id: int, _: User = Depends(dept_admin), db: Session = Depends(get_db)) -> TeamResponse:
-    """Appoint the team's lead — the person who approves its weekly reports.
-
-    Side effects, deliberately: they're added to this team (a lead who isn't a
-    member makes no sense), which means they leave whatever team they were on,
-    and any other team they led here is left without a lead."""
+    """Appoint the team's lead — the person who approves its weekly reports. A title
+    change only: it does not put them on the team or take them off another."""
     return team_service.set_manager(db, dept_id, team_id, manager_user_id)
 
 @router.delete("/{team_id}/manager", response_model=TeamResponse)

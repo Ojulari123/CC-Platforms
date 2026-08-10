@@ -41,6 +41,22 @@ class TestRegister:
         r = _register(client)
         assert r.status_code == 403
 
+    def test_signed_up_user_does_not_close_bootstrap(self, client):
+        # A non-admin signup arriving BEFORE any admin must not brick register:
+        # the gate is a platform admin existing, not any user at all.
+        signup = client.post("/auth/signup", json={
+            "email": "early@example.com",
+            "password": "Test123!password",
+            "first_name": "Early",
+            "last_name": "Bird",
+        })
+        assert signup.status_code == 201, signup.text
+        r = _register(client, email="admin@example.com")
+        assert r.status_code == 201, r.text
+        me = client.get("/me", headers={"Authorization": f"Bearer {r.json()['access_token']}"}).json()
+        assert me["is_platform_admin"] is True
+        assert me["memberships"][0]["role"] == "admin"
+
     def test_email_is_lowercased(self, client):
         r = _register(client, email="Bob@Example.COM")
         assert r.status_code == 201
@@ -131,6 +147,23 @@ class TestRefresh:
         r3 = client.post("/auth/refresh", json={"refresh_token": new_refresh})
         assert r3.status_code == 401
 
+    def test_reuse_detection_kills_outstanding_access_tokens(self, client, registered_user):
+        original_access = registered_user["tokens"]["access_token"]
+        rotated_access = client.post(
+            "/auth/refresh", json={"refresh_token": registered_user["tokens"]["refresh_token"]},
+        ).json()["access_token"]
+        assert client.get("/me", headers={"Authorization": f"Bearer {rotated_access}"}).status_code == 200
+
+        # Replay the revoked token — reuse detection fires.
+        client.post("/auth/refresh", json={"refresh_token": registered_user["tokens"]["refresh_token"]})
+
+        # Revoking the family has to reach access tokens too, otherwise the stolen
+        # session keeps reading data until the access token expires on its own.
+        for token in (original_access, rotated_access):
+            r = client.get("/me", headers={"Authorization": f"Bearer {token}"})
+            assert r.status_code == 401
+            assert "revoked" in r.json()["detail"].lower()
+
     def test_unknown_refresh_token_401(self, client):
         r = client.post("/auth/refresh", json={"refresh_token": "totally-bogus"})
         assert r.status_code == 401
@@ -146,6 +179,18 @@ class TestLogout:
     def test_unknown_token_still_204(self, client):
         r = client.post("/auth/logout", json={"refresh_token": "never-existed"})
         assert r.status_code == 204
+
+    def test_other_devices_are_left_alone(self, client, registered_user):
+        """Signing out of one device must not sign the person out everywhere —
+        that's what /auth/logout-all is for."""
+        other = client.post("/auth/login", json={
+            "email": registered_user["email"], "password": registered_user["password"],
+        }).json()
+
+        assert client.post("/auth/logout", json={"refresh_token": registered_user["tokens"]["refresh_token"]}).status_code == 204
+
+        assert client.get("/me", headers={"Authorization": f"Bearer {other['access_token']}"}).status_code == 200
+        assert client.post("/auth/refresh", json={"refresh_token": other["refresh_token"]}).status_code == 200
 
 class TestChangePassword:
     NEW = "NewPass1!secret"

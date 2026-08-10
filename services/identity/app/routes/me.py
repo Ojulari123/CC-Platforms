@@ -13,7 +13,7 @@ def _me_response(db: Session, user: User) -> UserMeResponse:
         select(Membership, Department, Team)
         .join(Department, Department.id == Membership.dept_id)
         .outerjoin(Team, Team.id == Membership.team_id)
-        .where(Membership.user_id == user.id, Membership.is_active.is_(True))
+        .where(Membership.user_id == user.id)
         .order_by(Department.name)
     ).all()
     return UserMeResponse(

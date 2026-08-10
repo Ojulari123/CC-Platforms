@@ -38,6 +38,13 @@ def list_users(
 def deactivate_user(user_id: int, actor: User = Depends(require_platform_admin), db: Session = Depends(get_db)) -> UserAccountResponse:
     return platform_service.deactivate_user(db, user_id, actor)
 
+@accounts_router.delete("/{user_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_user(user_id: int, actor: User = Depends(require_platform_admin), db: Session = Depends(get_db)) -> None:
+    """Permanent, and only for an account that was never part of the workspace — a
+    typo'd signup, a test login. Anything with history behind it is refused with the
+    reason and pointed at deactivation."""
+    platform_service.delete_user(db, user_id, actor)
+
 @accounts_router.post("/{user_id}/reactivate", response_model=UserAccountResponse)
 def reactivate_user(user_id: int, _: User = Depends(require_platform_admin), db: Session = Depends(get_db)) -> UserAccountResponse:
     return platform_service.reactivate_user(db, user_id)

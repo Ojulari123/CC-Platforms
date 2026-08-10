@@ -14,7 +14,7 @@ ACTION_CHANGES_REQUESTED = "changes_requested"
 
 class Report(Base):
     """One engineer's weekly report, about a repo. Pulse never stores names/emails, and never reads identity's
-    database. The AI-drafted summary fields are plain editable text for now; the generation step is Week 4"""
+    database. The AI-drafted summary fields are plain editable text; services/generation.py writes them, and they stay hand-editable"""
     __tablename__ = "reports"
 
     id = Column(Integer, primary_key=True)
@@ -27,6 +27,7 @@ class Report(Base):
     summary_exec = Column(Text, nullable=True)
     next_week_goals = Column(Text, nullable=True)
     generated_at = Column(TIMESTAMP(timezone=True), nullable=True)  # when the AI drafted the summaries; null if written by hand
+    prompt_version = Column(String(50), nullable=True)  # prompts.PROMPT_VERSION at draft time; null for hand-written or pre-0006 reports
     created_at = Column(TIMESTAMP(timezone=True), server_default=func.now(), nullable=False)
     updated_at = Column(TIMESTAMP(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
 
@@ -130,8 +131,6 @@ class Commit(Base):
     author_user_id = Column(Integer, index=True, nullable=True)
     author_github_login = Column(String(255), nullable=True)
     message = Column(Text, nullable=True)
-    additions = Column(Integer, nullable=True)
-    deletions = Column(Integer, nullable=True)
     url = Column(String(500), nullable=True)
     committed_at = Column(TIMESTAMP(timezone=True), index=True, nullable=False)
     created_at = Column(TIMESTAMP(timezone=True), server_default=func.now(), nullable=False)
@@ -164,7 +163,6 @@ class PullRequest(Base):
     __table_args__ = (UniqueConstraint("repo_id", "number", name="uq_pr_repo_number"),)
 
 class Review(Base):
-    """A review left on a pull request (approved / changes requested / commented)"""
     __tablename__ = "reviews"
 
     id = Column(Integer, primary_key=True)
@@ -207,7 +205,9 @@ class SyncRun(Base):
 
     id = Column(Integer, primary_key=True)
     repo_id = Column(Integer, ForeignKey("repositories.id", ondelete="CASCADE"), index=True, nullable=True)
-    status = Column(String(20), nullable=False)  # running | success | error
+    status = Column(String(20), nullable=False)  # running | success | error | rate_limited | skipped
     detail = Column(Text, nullable=True)
     started_at = Column(TIMESTAMP(timezone=True), server_default=func.now(), nullable=False)
     finished_at = Column(TIMESTAMP(timezone=True), nullable=True)
+
+    repository = relationship("Repository")

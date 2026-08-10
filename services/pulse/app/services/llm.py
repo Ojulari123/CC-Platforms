@@ -41,13 +41,12 @@ def _build_client():
             "LLM is not configured: LLM_API_KEY is empty. Set it in the environment to "
             "enable report generation."
         )
-    from openai import OpenAI  # imported lazily
+    from openai import OpenAI
 
     return OpenAI(api_key=settings.LLM_API_KEY, timeout=settings.LLM_TIMEOUT_SECONDS)
 
 
 def _call_once(client, activity_payload: dict):
-    """One provider round-trip using JSON-schema structured output."""
     return client.chat.completions.create(
         model=settings.LLM_MODEL,
         max_tokens=settings.LLM_MAX_OUTPUT_TOKENS,

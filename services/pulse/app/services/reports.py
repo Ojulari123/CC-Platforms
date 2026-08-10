@@ -33,7 +33,6 @@ def _get_report(db: Session, report_id: int) -> Report:
 def _repo_of(db: Session, report: Report) -> Repository | None:
     return db.get(Repository, report.repo_id)
 
-# ── permission checks (token + the repo's own row) ─────────────────────────────
 def _can_read(user: TokenClaims, report: Report, repo: Repository | None) -> bool:
     if user.is_platform_admin:
         return True
@@ -48,6 +47,11 @@ def _require_can_read(user: TokenClaims, report: Report, repo: Repository | None
         raise HTTPException(status_code=403, detail="You don't have access to this report")
 
 def _can_approve(user: TokenClaims, report: Report, repo: Repository | None) -> bool:
+    # Nobody reviews their own work, whatever role they hold — same reason you can't
+    # approve your own PR. This has to come first or a platform admin (or a lead
+    # reporting on their own repo) self-approves.
+    if report.author_user_id == user.user_id:
+        return False
     if user.is_platform_admin:
         return True
     if repo is not None and user.user_id in (repo.lead_user_id, repo.deputy_user_id):
@@ -83,7 +87,6 @@ def _may_report_on(db: Session, user: TokenClaims, repo: Repository) -> bool:
         return True
     return _has_activity(db, user.user_id, repo.id)
 
-# ── operations ────────────────────────────────────────────────────────────────
 def create_report(db: Session, user: TokenClaims, payload: ReportCreate) -> Report:
     repo = db.get(Repository, payload.repo_id)
     if not repo:
@@ -157,7 +160,10 @@ def review_queue(db: Session, user: TokenClaims, limit: int, offset: int, status
     me' call; this is that call.
 
     Scope mirrors _can_approve"""
-    filters = [Report.status == status] if status else []
+    # Your own report is never yours to decide, so it never sits in your inbox.
+    filters = [Report.author_user_id != user.user_id]
+    if status:
+        filters.append(Report.status == status)
     if not user.is_platform_admin:
         approver_repo_ids = select(Repository.id).where(
             or_(Repository.lead_user_id == user.user_id, Repository.deputy_user_id == user.user_id)
@@ -202,13 +208,23 @@ def submit_report(db: Session, user: TokenClaims, report_id: int) -> Report:
     db.refresh(report)
     # Best-effort: after the commit so a notification problem can never block or roll
     # back the submission. notify_report_ready swallows its own errors.
-    notify_report_ready(db, report)
+    notify_report_ready(report)
     return report
 
 def decide_report(db: Session, user: TokenClaims, report_id: int, action: str, note: str | None = None) -> Report:
     """Approve / reject / request-changes on a submitted report. Either of the
     repo's two approvers (lead or deputy) may decide, plus a dept/platform admin."""
     report = _get_report(db, report_id)
+    if report.author_user_id == user.user_id:
+        raise HTTPException(
+            status_code=403,
+            detail=(
+                "You can't decide your own report. Ask this repo's lead or deputy, an "
+                "admin of its department, or another platform admin to review it — if "
+                "the repo has none of those, ask a platform admin to file it under a "
+                "department or name a lead."
+            ),
+        )
     if not _can_approve(user, report, _repo_of(db, report)):
         raise HTTPException(status_code=403, detail="Only this repo's lead or deputy (or a department admin) can decide this report")
     if report.status != STATUS_SUBMITTED:
@@ -265,7 +281,6 @@ def edit_comment(db: Session, user: TokenClaims, report_id: int, comment_id: int
     return comment
 
 def delete_comment(db: Session, user: TokenClaims, report_id: int, comment_id: int) -> None:
-    """Delete your own comment."""
     comment = _get_comment(db, report_id, comment_id)
     if comment.author_user_id != user.user_id:
         raise HTTPException(status_code=403, detail="You can only delete your own comment")
