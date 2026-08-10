@@ -16,7 +16,6 @@ class TestListAndGet:
         assert client.get(f"/departments/{registered_user['dept_id']}").status_code == 401
 
     def test_non_member_cannot_read_a_department(self, client, registered_user, engineer_user, second_dept):
-        # The engineer belongs to Engineering only, so Data is off limits.
         r = client.get(f"/departments/{second_dept}", headers=auth(engineer_user))
         assert r.status_code == 403
         assert "Not a member" in r.json()["detail"]
@@ -92,8 +91,6 @@ class TestMembers:
         assert r2.json()["items"][0]["email"] != r.json()["items"][0]["email"]
 
     def test_list_members_of_unknown_department_404(self, client, registered_user):
-        """Same answer as GET /departments/9999 — an empty roster would read as
-        'this department has nobody in it'."""
         r = client.get("/departments/9999/members", headers=auth(registered_user["tokens"]))
         assert r.status_code == 404
         assert r.json()["detail"] == "Department not found"
@@ -118,7 +115,6 @@ class TestMembers:
     def test_member_of_another_department_is_404(self, client, registered_user, second_dept, invite_user):
         bob = invite_user(registered_user["tokens"], second_dept, "bob@example.com", "engineer")
         bob_id = client.get("/me", headers=auth(bob)).json()["id"]
-        # Bob is in Data, not Engineering.
         r = client.patch(f"/departments/{registered_user['dept_id']}/members/{bob_id}", json={"role": "manager"}, headers=auth(registered_user["tokens"]))
         assert r.status_code == 404
 
@@ -143,7 +139,6 @@ class TestRemoveMember:
         assert client.get("/me", headers=auth(engineer_user)).status_code == 401
 
     def test_removal_keeps_the_account_and_other_departments(self, client, registered_user, second_dept, invite_user):
-        """Removing someone from one department must not touch their other one."""
         tokens = registered_user["tokens"]
         bob = invite_user(tokens, second_dept, "bob@example.com", "engineer")
         bob_id = client.get("/me", headers=auth(bob)).json()["id"]
@@ -167,14 +162,10 @@ class TestRemoveMember:
         assert r.status_code == 403
 
 class TestCrossDepartmentRoles:
-    """The bug this restructure exists to fix: one person, two departments,
-    different role in each, neither leaking into the other."""
-
     def test_admin_in_one_department_is_only_an_engineer_in_another(self, client, registered_user, second_dept, invite_user):
         tokens = registered_user["tokens"]
         eng_dept = registered_user["dept_id"]
 
-        # Bob: admin of Data, engineer in Engineering.
         bob = invite_user(tokens, second_dept, "bob@example.com", "admin")
         invite_user(tokens, eng_dept, "bob@example.com", "engineer")
         bob = client.post("/auth/login", json={"email": "bob@example.com", "password": "Test123!password"}).json()
@@ -182,9 +173,7 @@ class TestCrossDepartmentRoles:
         roles = {m["dept_id"]: m["role"] for m in client.get("/me", headers=auth(bob)).json()["memberships"]}
         assert roles == {second_dept: "admin", eng_dept: "engineer"}
 
-        # He can rename the department he administers...
         assert client.patch(f"/departments/{second_dept}", json={"name": "Data Platform"}, headers=auth(bob)).status_code == 200
-        # ...but not the one where he's an engineer.
         assert client.patch(f"/departments/{eng_dept}", json={"name": "Nope"}, headers=auth(bob)).status_code == 403
 
 class TestPlatformAdmins:
@@ -195,7 +184,6 @@ class TestPlatformAdmins:
         assert client.get("/me", headers=auth(engineer_user)).json()["is_platform_admin"] is False
 
     def test_platform_admin_can_administer_a_department_they_are_not_in(self, client, registered_user, second_dept):
-        # Alice has no membership in Data, but runs the platform.
         r = client.patch(f"/departments/{second_dept}", json={"name": "Data Science"}, headers=auth(registered_user["tokens"]))
         assert r.status_code == 200
 
@@ -208,15 +196,12 @@ class TestPlatformAdmins:
         assert eng_id in [a["id"] for a in listed]
 
     def test_granting_forces_a_fresh_token(self, client, registered_user, engineer_user):
-        """Their old token still claims is_platform_admin=false, so it's revoked
-        rather than left to disagree with the database for 15 minutes."""
         eng_id = client.get("/me", headers=auth(engineer_user)).json()["id"]
         client.put(f"/platform/admins/{eng_id}", headers=auth(registered_user["tokens"]))
         assert client.get("/me", headers=auth(engineer_user)).status_code == 401
 
         fresh = client.post("/auth/login", json={"email": "eng@example.com", "password": "Test123!password"}).json()
         assert client.get("/me", headers=auth(fresh)).json()["is_platform_admin"] is True
-        # And the new privilege actually works.
         assert client.post("/departments", json={"name": "New Dept"}, headers=auth(fresh)).status_code == 201
 
     def test_engineer_cannot_grant_platform_admin(self, client, registered_user, engineer_user):
@@ -285,7 +270,6 @@ class TestDepartmentHead:
         assert r.json()["head_user_id"] is None
 
     def test_dept_admin_cannot_name_the_head(self, client, registered_user, invite_user):
-        """Who runs a department is decided from above it."""
         dept = registered_user["dept_id"]
         other, other_id = self._admin_member(client, registered_user, invite_user)
         r = client.put(f"/departments/{dept}/head/{other_id}", headers=auth(other))
@@ -301,8 +285,6 @@ class TestDepartmentHead:
 
 
 class TestRemovingSomeoneInCharge:
-    """Nothing may quietly end up with nobody running it."""
-
     def _lead_of_a_team(self, client, registered_user, invite_user):
         dept, admin = registered_user["dept_id"], auth(registered_user["tokens"])
         team_id = client.post(f"/departments/{dept}/teams", json={"name": "Platform"}, headers=admin).json()["id"]
@@ -356,10 +338,6 @@ class TestRemovingSomeoneInCharge:
         assert client.delete(f"/departments/{dept}/members/{eng_id}", headers=admin).status_code == 204
 
 class TestDemotionCannotStrandATitle:
-    """A role is checked when a title is granted, never after. Without these guards a
-    demoted lead kept the team and its roster — permission reads Team.manager_user_id,
-    which never re-checks the role."""
-
     def _lead(self, client, registered_user, invite_user, email="mgr@example.com"):
         dept, admin = registered_user["dept_id"], auth(registered_user["tokens"])
         team = client.post(f"/departments/{dept}/teams", json={"name": "Platform"}, headers=admin).json()["id"]
@@ -373,7 +351,6 @@ class TestDemotionCannotStrandATitle:
         r = client.patch(f"/departments/{dept}/members/{mgr_id}", json={"role": "engineer"}, headers=admin)
         assert r.status_code == 409
         assert "leads Platform" in r.json()["detail"]
-        # Nothing changed: still a manager, still the lead.
         assert client.get(f"/departments/{dept}/teams/{team}", headers=admin).json()["manager_user_id"] == mgr_id
         members = client.get(f"/departments/{dept}/members", headers=admin).json()["items"]
         assert next(m for m in members if m["user_id"] == mgr_id)["role"] == "manager"
@@ -386,7 +363,6 @@ class TestDemotionCannotStrandATitle:
         assert client.get(f"/departments/{dept}/teams/{team}", headers=admin).json()["manager_user_id"] is None
 
     def test_demoted_lead_loses_roster_power(self, client, registered_user, invite_user, engineer_user):
-        """The actual privilege bug: demotion must end their access."""
         dept, admin, team, _, mgr_id = self._lead(client, registered_user, invite_user)
         client.patch(f"/departments/{dept}/members/{mgr_id}?allow_unled=true", json={"role": "engineer"}, headers=admin)
 
@@ -405,15 +381,12 @@ class TestDemotionCannotStrandATitle:
         assert client.get(f"/departments/{dept}/teams/{team}", headers=admin).json()["manager_user_id"] == successor_id
 
     def test_manager_to_admin_keeps_the_team(self, client, registered_user, invite_user):
-        """Promotion doesn't cost eligibility, so it must not trigger handover."""
         dept, admin, team, _, mgr_id = self._lead(client, registered_user, invite_user)
         r = client.patch(f"/departments/{dept}/members/{mgr_id}", json={"role": "admin"}, headers=admin)
         assert r.status_code == 200
         assert client.get(f"/departments/{dept}/teams/{team}", headers=admin).json()["manager_user_id"] == mgr_id
 
     def test_admin_to_manager_costs_the_headship_but_not_the_team(self, client, registered_user, invite_user):
-        """Heading needs admin; leading only needs manager. So this demotion
-        invalidates one title and not the other."""
         dept, admin = registered_user["dept_id"], auth(registered_user["tokens"])
         team = client.post(f"/departments/{dept}/teams", json={"name": "Platform"}, headers=admin).json()["id"]
         head = invite_user(registered_user["tokens"], dept, "head@example.com", "admin")

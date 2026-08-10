@@ -1,8 +1,7 @@
 import type { UserRef } from "~/types/api";
 
-// Pulse sends the resolved person alongside the raw id, and the person is null
-// whenever identity couldn't be reached. Never render the id on its own as if it
-// were a name, and never render "null".
+// `person` is null whenever identity couldn't be reached, so never render the id on
+// its own as if it were a name.
 export function personName(person: UserRef | null | undefined, userId: number): string {
   if (!person) return `Unknown user (#${userId})`;
   const full = `${person.first_name ?? ""} ${person.last_name ?? ""}`.trim();
@@ -46,9 +45,8 @@ export function actionLabel(action: string): string {
 
 const DATE_ONLY = /^(\d{4})-(\d{2})-(\d{2})$/;
 
-// A date-only value (week_start) has no timezone: `new Date("2026-08-03")` is UTC
-// midnight, which renders as Aug 2 anywhere west of UTC. Build it in local time so the
-// day shown is always the day stored. Timestamps still parse normally.
+// A date-only value has no timezone: `new Date("2026-08-03")` is UTC midnight, which
+// renders as Aug 2 anywhere west of UTC. Build it in local time instead.
 export function formatDate(value: string | null | undefined): string {
   if (!value) return "—";
   const parts = DATE_ONLY.exec(value);
@@ -72,7 +70,6 @@ export function formatDateTime(value: string | null | undefined): string {
   });
 }
 
-// The Monday of the given date's week — the same canonical week key the API uses.
 export function mondayOf(d: Date): string {
   const copy = new Date(Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()));
   const weekday = (copy.getUTCDay() + 6) % 7;
@@ -80,9 +77,8 @@ export function mondayOf(d: Date): string {
   return copy.toISOString().slice(0, 10);
 }
 
-// Same date-only rule as formatDate, in reverse: toISOString() would answer in UTC, so
-// after 20:00 west of UTC the ?since= window started a day too late. Read off the local
-// calendar day instead.
+// Same date-only rule in reverse: toISOString() answers in UTC, so after 20:00 west of
+// UTC the ?since= window started a day too late.
 function isoLocalDate(d: Date): string {
   const pad = (n: number) => String(n).padStart(2, "0");
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
@@ -99,8 +95,6 @@ export function httpStatus(err: unknown): number | undefined {
     ?? (err as { status?: number })?.status;
 }
 
-// FastAPI puts the human-readable reason in `detail`; surface that rather than
-// "Request failed with status 409".
 export function apiMessage(err: unknown, fallback: string): string {
   const detail = (err as { data?: { detail?: unknown } })?.data?.detail;
   if (typeof detail === "string" && detail.trim()) return detail;

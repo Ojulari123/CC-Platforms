@@ -16,7 +16,6 @@ logger = logging.getLogger(__name__)
 _STORAGE_OPTIONS = {"socket_connect_timeout": 2, "socket_timeout": 2}
 
 def _resolve_storage_uri() -> str | None:
-    """Redis URI if Redis actually answers, else None so slowapi uses memory://."""
     if not settings.REDIS_URL:
         return None
     try:
@@ -57,9 +56,8 @@ def client_address(request: Request) -> str:
     return get_remote_address(request)
 
 def address_key(request: Request) -> str:
-    """Key for routes with no caller to attribute the request to. Forge has none
-    yet — every limited route is authenticated — so this is the fallback that
-    user_or_address_key lands on, not a key any route uses on its own."""
+    """Not used directly by any route: every limited route is authenticated, so this
+    is only the fallback user_or_address_key lands on."""
     return f"ip:{client_address(request)}"
 
 def user_or_address_key(request: Request) -> str:

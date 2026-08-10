@@ -113,8 +113,21 @@ def main() -> None:
 
     try:
         from app.security import create_access_token
-    except ModuleNotFoundError:
-        sys.exit("Run this from inside services/identity (so `app` and keys/ are found).")
+    except ModuleNotFoundError as exc:
+        # Two very different problems used to print the same line. `app` missing is a
+        # working-directory problem; anything else means identity's own dependencies
+        # aren't installed on this host, which no amount of cd-ing will fix.
+        missing = exc.name or "?"
+        if missing == "app" or missing.startswith("app."):
+            sys.exit(f"No module named '{missing}'. Run this from inside services/identity "
+                     "(so `app` and keys/ are found):\n"
+                     "    cd services/identity && python ../../scripts/mint-dev-token.py --user-id 1")
+        sys.exit(f"No module named '{missing}'. `app` itself imported, so the directory is right — "
+                 f"this host just doesn't have identity's dependencies installed. Either install them "
+                 f"(pip install -r services/identity/requirements.txt, LOCAL DEVELOPMENT ONLY) or run "
+                 f"the script inside the container, which already has them:\n"
+                 "    docker compose exec -T -w /app identity python - --user-id 1 "
+                 "--identity-url http://localhost:8000 < scripts/mint-dev-token.py")
 
     memberships = []
     for spec in args.membership:

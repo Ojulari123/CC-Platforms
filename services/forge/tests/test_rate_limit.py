@@ -1,6 +1,3 @@
-"""The rest of the suite runs with RATE_LIMIT_ENABLED=false (see conftest) so
-normal tests aren't throttled. These tests switch the limiter back on for their
-duration and make real repeated requests until the limit actually fires."""
 import base64
 import hashlib
 import time
@@ -10,6 +7,7 @@ from cryptography.hazmat.primitives.asymmetric import rsa
 from fastapi import FastAPI, Request
 from fastapi.testclient import TestClient
 from jose import jwt
+from limits.storage import memory as limits_memory
 from slowapi import _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 from app import rate_limit
@@ -21,9 +19,6 @@ from app.rate_limit import limiter
 CSV = b"name,age\nAlice,30\n"
 
 class _FakeStorage:
-    """Stands in for a limits storage backend so the Redis probe can be tested
-    without a Redis."""
-
     def __init__(self, reachable: bool):
         self._reachable = reachable
 
@@ -33,9 +28,31 @@ class _FakeStorage:
 def _upload(client):
     return client.post("/datasets", files={"file": ("people.csv", CSV, "text/csv")})
 
+class _FrozenClock:
+    """Stands in for the `time` module inside the limiter's in-memory storage."""
+
+    def __init__(self, now):
+        self._now = now
+
+    def time(self):
+        return self._now
+
+@pytest.fixture(autouse=True)
+def _deterministic_limiter(monkeypatch):
+    # A window opens on a key's first hit and closes a minute of real time later, so on
+    # a slow enough run the allowance a test just spent expires before the request that
+    # is meant to be refused. Frozen, only requests can spend a window.
+    monkeypatch.setattr(limits_memory, "time", _FrozenClock(time.time()))
+    # The flip side: a window now never expires on its own. A test that wants to watch
+    # one lapse has to move the _FrozenClock forward itself — waiting will never work.
+    # slowapi keeps counters on one limiter for the whole process; clear them either
+    # side so what a test sees never depends on which tests ran before it.
+    rate_limit.limiter.reset()
+    yield
+    rate_limit.limiter.reset()
+
 @pytest.fixture
 def limits_on():
-    """Turn limiting on and start from clean counters, then put it back."""
     rate_limit.limiter.reset()
     rate_limit.limiter.enabled = True
     yield
@@ -137,8 +154,6 @@ def _bearer(pem, user_id):
 
 class TestAuthenticatedRoutesAreKeyedByUser:
     def test_two_users_from_one_address_get_separate_buckets(self, client, act_as, limits_on):
-        """The whole point. One TestClient, so both callers share an address —
-        user 7 burning the upload limit must leave user 8 alone."""
         act_as(7)
         codes = [client.post("/datasets", files={"file": ("a.csv", CSV, "text/csv")}, headers=_bearer(_IDENTITY_PEM, 7)).status_code for _ in range(11)]
         assert codes[:10] == [201] * 10
@@ -164,8 +179,6 @@ def _build_probe_app():
 _probe = _build_probe_app()
 
 def _probe_from(address):
-    """Another caller of the same probe app, at a different address. Same app on
-    purpose — a second app would register the limit twice."""
     return TestClient(_probe.app, client=(address, 40000))
 
 class TestUnverifiableTokensFallBackToTheAddress:
@@ -181,9 +194,6 @@ class TestUnverifiableTokensFallBackToTheAddress:
         assert _probe.get("/probe").status_code == 429
 
     def test_the_fallback_is_the_address_and_not_one_shared_key(self, limits_on):
-        """Two callers with unusable tokens must still be told apart. A constant
-        fallback key would pass the tests above and quietly let one stranger
-        throttle every other."""
         for _ in range(3):
             assert _probe_from("198.51.100.1").get("/probe", headers={"Authorization": "Bearer forged"}).status_code == 200
         assert _probe_from("198.51.100.1").get("/probe", headers={"Authorization": "Bearer forged"}).status_code == 429
@@ -198,8 +208,6 @@ class TestUnverifiableTokensFallBackToTheAddress:
         assert _probe.get("/probe", headers=_bearer(_IDENTITY_PEM, 7)).status_code == 200
 
     def test_a_token_signed_by_someone_else_cannot_claim_a_users_bucket(self, limits_on):
-        """The reason the key function verifies rather than just reads `sub`:
-        otherwise anyone could mint sub=<victim> and spend their quota."""
         for _ in range(3):
             assert _probe.get("/probe", headers=_bearer(_ROGUE_PEM, 7)).status_code == 200
         assert _probe.get("/probe", headers=_bearer(_ROGUE_PEM, 7)).status_code == 429
@@ -208,8 +216,6 @@ class TestUnverifiableTokensFallBackToTheAddress:
 
 class TestForwardedForIsOnlyReadWhenTrusted:
     def test_untrusted_forwarded_header_buys_nothing(self, limits_on, monkeypatch):
-        """The default. A new X-Forwarded-For per request must not reset the
-        count, or the header becomes a bypass for every address limit."""
         monkeypatch.setattr(settings, "TRUST_PROXY_HEADERS", False)
         for i in range(3):
             assert _probe.get("/probe", headers={"X-Forwarded-For": f"10.0.0.{i}"}).status_code == 200
@@ -225,9 +231,6 @@ class TestForwardedForIsOnlyReadWhenTrusted:
         assert _probe.get("/probe", headers={"X-Forwarded-For": "203.0.113.2"}).status_code == 200
 
     def test_only_the_entry_the_trusted_proxy_wrote_counts(self, limits_on, monkeypatch):
-        """With one proxy in front, the rightmost entry is the one it appended.
-        Entries to the left came from the caller, so varying them must not shake
-        the limit off."""
         monkeypatch.setattr(settings, "TRUST_PROXY_HEADERS", True)
         monkeypatch.setattr(settings, "TRUSTED_PROXY_COUNT", 1)
         for i in range(3):
@@ -279,8 +282,6 @@ class TestAHeaderShorterThanTheProxyCountIsNotTrusted:
         assert _probe.get("/probe", headers={"X-Forwarded-For": "9.9.9.9, 203.0.113.9"}).status_code == 429
 
     def test_the_misconfiguration_is_warned_about_once_not_per_request(self, monkeypatch, caplog):
-        """A caller chooses when this fires, so a warning per request would be a
-        log-flooding lever. One per process is enough to spot a real misconfiguration."""
         monkeypatch.setattr(settings, "TRUSTED_PROXY_COUNT", 4)
         with caplog.at_level("WARNING"):
             for _ in range(5):

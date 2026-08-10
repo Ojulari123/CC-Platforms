@@ -23,9 +23,6 @@ def list_users(
     _: User = Depends(require_platform_admin),
     db: Session = Depends(get_db),
 ) -> PlatformUserListResponse:
-    """The workspace-wide user directory — every account across every department,
-    for platform admins only. Distinct from a department roster, which is scoped
-    to one department and shows role/team."""
     users, total = platform_service.list_users(db, q=q, is_active=is_active, limit=limit, offset=offset)
     return PlatformUserListResponse(
         items=[PlatformUserResponse.model_validate(u) for u in users],
@@ -40,9 +37,6 @@ def deactivate_user(user_id: int, actor: User = Depends(require_platform_admin),
 
 @accounts_router.delete("/{user_id}", status_code=status.HTTP_204_NO_CONTENT)
 def delete_user(user_id: int, actor: User = Depends(require_platform_admin), db: Session = Depends(get_db)) -> None:
-    """Permanent, and only for an account that was never part of the workspace — a
-    typo'd signup, a test login. Anything with history behind it is refused with the
-    reason and pointed at deactivation."""
     platform_service.delete_user(db, user_id, actor)
 
 @accounts_router.post("/{user_id}/reactivate", response_model=UserAccountResponse)

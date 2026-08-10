@@ -1,13 +1,9 @@
-"""Talking to identity as a *service* (not as a user): client-credentials auth plus
-id-batch lookups on identity's /internal endpoints. One instance per service."""
 import threading
 import time
 from typing import Callable
 import httpx
 
 HTTP_TIMEOUT = 10.0
-# Refresh the cached service token this many seconds BEFORE it expires, so we never
-# hand out one that dies mid-request.
 TOKEN_EXPIRY_SKEW_SECONDS = 30
 # Identity rejects a larger id batch with a 422.
 MAX_LOOKUP_IDS = 200
@@ -17,9 +13,6 @@ class IdentityUnavailable(Exception):
     "no such user" — absence of an answer is not a verdict."""
 
 class ServiceTokenClient:
-    """Mints a scoped service token via OAuth2 client-credentials, caches it in-process
-    until it's about to expire, and re-mints once on a 401 (a cached token can be
-    rotated or revoked between calls). `poster` is injectable so tests never patch httpx."""
 
     def __init__(self, base_url: str, client_id: str, client_secret: str, timeout_seconds: float = HTTP_TIMEOUT, poster: Callable[..., httpx.Response] | None = None):
         self._base_url = base_url.rstrip("/")
@@ -33,8 +26,6 @@ class ServiceTokenClient:
 
     @property
     def configured(self) -> bool:
-        """No secret means this deploy was never wired to identity — refuse to call
-        rather than firing doomed requests."""
         return bool(self._client_secret)
 
     def _http_poster(self, url: str, json: dict, headers: dict | None = None) -> httpx.Response:
@@ -73,9 +64,6 @@ class ServiceTokenClient:
             return self._token
 
     def lookup(self, path: str, user_ids: list[int]) -> dict:
-        """One authenticated id-batch lookup against an internal identity endpoint.
-        Returns the decoded body; raises IdentityUnavailable on anything that went
-        wrong, so a caller can never mistake a failure for an answer."""
         if len(user_ids) > MAX_LOOKUP_IDS:
             raise ValueError(f"At most {MAX_LOOKUP_IDS} ids per lookup")
         if not self.configured:

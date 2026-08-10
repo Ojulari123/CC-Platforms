@@ -1,5 +1,3 @@
-// A Nuxt layer: a product `extends` this directory and picks up the composables,
-// route middleware and types below as if they were its own files.
 
 // Node builtins are off-limits here — Nuxt typechecks a layer's config with the app's
 // tsconfig, which loads no ambient @types. decodeURIComponent covers paths with spaces.

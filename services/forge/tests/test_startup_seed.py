@@ -1,5 +1,3 @@
-"""Boot the app through the real FastAPI lifespan and prove the sample seeding
-actually runs against the DB the tests inspect."""
 import app.main
 from fastapi.testclient import TestClient
 from sqlalchemy import func, select
@@ -11,7 +9,6 @@ def _sample_count(db) -> int:
 def test_boot_seeds_two_samples(monkeypatch, test_sessionmaker, db, act_as):
     monkeypatch.setattr(app.main, "SessionLocal", test_sessionmaker)
     with TestClient(app.main.app) as boot_client:
-        # Samples must be in the same DB the test reads
         assert _sample_count(db) == 2
         act_as(4242)  # a user who has uploaded nothing
         r = boot_client.get("/datasets")

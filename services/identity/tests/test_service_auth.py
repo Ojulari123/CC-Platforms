@@ -36,8 +36,6 @@ def _get_service_token(client, secret=CLIENT_SECRET):
 
 
 class TestClientCredentialsToken:
-    """OAuth2 client-credentials mint at POST /oauth/token."""
-
     def test_valid_credentials_returns_token(self, client, db_session):
         _seed(db_session)
         r = client.post("/oauth/token", json={
@@ -88,8 +86,6 @@ class TestClientCredentialsToken:
 
 
 class TestEmailLookup:
-    """POST /internal/users/emails — scope-gated service-to-service lookup."""
-
     def _users(self, client, registered_user, invite_user):
         alice = client.get("/me", headers={"Authorization": f"Bearer {registered_user['tokens']['access_token']}"}).json()
         eng = invite_user(registered_user["tokens"], registered_user["dept_id"], "eng@example.com", "engineer")
@@ -128,7 +124,6 @@ class TestEmailLookup:
         assert r.status_code == 403
 
     def test_user_access_token_is_rejected(self, client, db_session, registered_user):
-        """A normal user JWT must NOT open a service endpoint — wrong token_type."""
         user_token = registered_user["tokens"]["access_token"]
         r = client.post("/internal/users/emails",
                         json={"user_ids": [1]},
@@ -156,8 +151,6 @@ class TestEmailLookup:
         assert r.status_code == 401
 
     def test_batch_cap_is_enforced(self, client, db_session):
-        """Uncapped, this endpoint harvests the company address book. Over the cap is
-        a 422 — Pydantic rejects it before any DB work happens."""
         _seed(db_session)
         token = _get_service_token(client)
         r = client.post("/internal/users/emails",
@@ -175,9 +168,6 @@ class TestEmailLookup:
 
 
 class TestProfileLookup:
-    """POST /internal/users/profiles — name + avatar for rendering a person,
-    behind its own lower-privilege scope."""
-
     def _users(self, client, registered_user, invite_user):
         alice = client.get("/me", headers={"Authorization": f"Bearer {registered_user['tokens']['access_token']}"}).json()
         eng = invite_user(registered_user["tokens"], registered_user["dept_id"], "eng@example.com", "engineer")
@@ -203,7 +193,6 @@ class TestProfileLookup:
         assert got[eng["id"]]["avatar_url"] is None
 
     def test_response_never_carries_email(self, client, db_session, registered_user):
-        """The whole point of the scope split — a profile read must not leak an address."""
         alice = client.get("/me", headers={"Authorization": f"Bearer {registered_user['tokens']['access_token']}"}).json()
         _seed(db_session, scopes=PROFILE_SCOPE)
         token = _get_service_token(client)
@@ -226,8 +215,6 @@ class TestProfileLookup:
         assert ids == [alice["id"]]
 
     def test_unknown_ids_are_named_not_just_missing(self, client, db_session, registered_user):
-        """Omission alone can't tell "no such user" from "identity didn't answer",
-        so Pulse can never safely clean up after a deleted account."""
         alice = client.get("/me", headers={"Authorization": f"Bearer {registered_user['tokens']['access_token']}"}).json()
         _seed(db_session, scopes=PROFILE_SCOPE)
         token = _get_service_token(client)
@@ -257,8 +244,6 @@ class TestProfileLookup:
         assert {u["user_id"] for u in body["users"]} | set(body["unknown_user_ids"]) == set(requested)
 
     def test_deactivated_user_is_not_reported_unknown(self, client, db_session, registered_user, invite_user):
-        """"Unknown" must mean gone, not merely offboarded — otherwise a caller
-        acting on the new field would wipe a former member's records."""
         alice, eng = self._users(client, registered_user, invite_user)
         client.post(f"/platform/users/{eng['id']}/deactivate",
                     headers={"Authorization": f"Bearer {registered_user['tokens']['access_token']}"})
@@ -270,7 +255,6 @@ class TestProfileLookup:
         assert body["users"][0]["is_active"] is False
 
     def test_existing_users_array_shape_is_unchanged(self, client, db_session, registered_user):
-        """Pulse already reads `users`; the new field must be purely additive."""
         alice = client.get("/me", headers={"Authorization": f"Bearer {registered_user['tokens']['access_token']}"}).json()
         _seed(db_session, scopes=PROFILE_SCOPE)
         token = _get_service_token(client)
@@ -280,8 +264,6 @@ class TestProfileLookup:
         assert [u["user_id"] for u in body["users"]] == [alice["id"]]
 
     def test_both_lists_are_sorted_by_id(self, client, db_session, registered_user, invite_user):
-        """Deterministic ordering, but callers still key by user_id — the two
-        lists are not positionally aligned with the request."""
         alice, eng = self._users(client, registered_user, invite_user)
         _seed(db_session, scopes=PROFILE_SCOPE)
         token = _get_service_token(client)
@@ -300,8 +282,6 @@ class TestProfileLookup:
         assert r.json() == {"users": [], "unknown_user_ids": []}
 
     def test_deactivated_user_still_resolves(self, client, db_session, registered_user, invite_user):
-        """Someone who has left must still render on their old reports — but flagged
-        is_active=False so the UI can label them a former member."""
         alice, eng = self._users(client, registered_user, invite_user)
         d = client.post(f"/platform/users/{eng['id']}/deactivate",
                         headers={"Authorization": f"Bearer {registered_user['tokens']['access_token']}"})
@@ -318,7 +298,6 @@ class TestProfileLookup:
         assert body[0]["is_active"] is False
 
     def test_batch_cap_is_enforced(self, client, db_session):
-        """Uncapped, this endpoint is an enumeration tool. Over the cap is a 422."""
         _seed(db_session, scopes=PROFILE_SCOPE)
         token = _get_service_token(client)
         r = client.post("/internal/users/profiles",
@@ -335,7 +314,6 @@ class TestProfileLookup:
         assert r.status_code == 200
 
     def test_email_scope_alone_cannot_read_profiles(self, client, db_session, registered_user):
-        """The split has to bite in both directions, or it's decoration."""
         alice = client.get("/me", headers={"Authorization": f"Bearer {registered_user['tokens']['access_token']}"}).json()
         _seed(db_session, scopes=SCOPE)
         token = _get_service_token(client)
@@ -361,7 +339,6 @@ class TestProfileLookup:
         assert r.status_code == 403
 
     def test_user_access_token_is_rejected(self, client, db_session, registered_user):
-        """A normal user JWT must NOT open a service endpoint — wrong token_type."""
         user_token = registered_user["tokens"]["access_token"]
         r = client.post("/internal/users/profiles", json={"user_ids": [1]},
                         headers={"Authorization": f"Bearer {user_token}"})
@@ -373,10 +350,6 @@ class TestProfileLookup:
 
 
 class TestTokenVersionLookup:
-    """POST /internal/users/token-versions — lets a service that verifies tokens
-    locally against JWKS notice a session was killed, instead of honouring the dead
-    access token for the rest of its 15 minutes."""
-
     def _users(self, client, registered_user, invite_user):
         alice = client.get("/me", headers={"Authorization": f"Bearer {registered_user['tokens']['access_token']}"}).json()
         eng = invite_user(registered_user["tokens"], registered_user["dept_id"], "eng@example.com", "engineer")
@@ -395,9 +368,6 @@ class TestTokenVersionLookup:
         assert got == {alice["id"]: 0, eng["id"]: 0}
 
     def test_version_moves_past_the_tv_in_an_issued_token_after_logout_all(self, client, db_session, registered_user):
-        """The live failure this closes: after logout-everywhere identity 401s, but a
-        downstream verifying locally keeps accepting the old access token until it
-        expires. Comparing its tv against this number is what lets it stop."""
         tokens = registered_user["tokens"]
         alice = client.get("/me", headers={"Authorization": f"Bearer {tokens['access_token']}"}).json()
         stale_tv = jwt.get_unverified_claims(tokens["access_token"])["tv"]
@@ -414,8 +384,6 @@ class TestTokenVersionLookup:
         assert after["users"][0]["token_version"] > stale_tv
 
     def test_unknown_ids_are_named_not_just_missing(self, client, db_session, registered_user):
-        """A caller must be able to tell "no such user" from "no answer" — silence
-        read as a pass is exactly the bug this endpoint exists to remove."""
         alice = client.get("/me", headers={"Authorization": f"Bearer {registered_user['tokens']['access_token']}"}).json()
         _seed(db_session, scopes=TOKEN_VERSION_SCOPE)
         token = _get_service_token(client)
@@ -444,8 +412,6 @@ class TestTokenVersionLookup:
         assert body["unknown_user_ids"] == []
 
     def test_deactivated_user_still_resolves(self, client, db_session, registered_user, invite_user):
-        """Deactivation bumps token_version, so the number alone already condemns their
-        tokens. They must not come back unknown, which would mean the same thing by luck."""
         alice, eng = self._users(client, registered_user, invite_user)
         assert client.post(f"/platform/users/{eng['id']}/deactivate",
                            headers={"Authorization": f"Bearer {registered_user['tokens']['access_token']}"}).status_code == 200
@@ -457,8 +423,6 @@ class TestTokenVersionLookup:
         assert body["users"][0]["token_version"] > 0
 
     def test_response_carries_no_pii(self, client, db_session, registered_user):
-        """The reason this is its own scope — a verification primitive must not be a
-        way to read the address book."""
         alice = client.get("/me", headers={"Authorization": f"Bearer {registered_user['tokens']['access_token']}"}).json()
         _seed(db_session, scopes=TOKEN_VERSION_SCOPE)
         token = _get_service_token(client)
@@ -500,7 +464,6 @@ class TestTokenVersionLookup:
         assert r.status_code == 403
 
     def test_email_and_profile_scopes_alone_cannot_read_token_versions(self, client, db_session):
-        """The new scope has to actually gate, not ride along on the PII ones."""
         _seed(db_session, scopes=f"{SCOPE} {PROFILE_SCOPE}")
         token = _get_service_token(client)
         r = client.post("/internal/users/token-versions", json={"user_ids": [1]},
@@ -515,7 +478,6 @@ class TestTokenVersionLookup:
         assert client.post("/internal/users/profiles", json={"user_ids": [1]}, headers=headers).status_code == 403
 
     def test_user_access_token_is_rejected(self, client, db_session, registered_user):
-        """A normal user JWT must NOT open a service endpoint — wrong token_type."""
         user_token = registered_user["tokens"]["access_token"]
         r = client.post("/internal/users/token-versions", json={"user_ids": [1]},
                         headers={"Authorization": f"Bearer {user_token}"})
@@ -540,8 +502,6 @@ class TestTokenVersionLookup:
 
 
 class TestSeed:
-    """The idempotent provisioning helper."""
-
     def test_seed_creates_client(self, db_session):
         _seed(db_session)
         rows = db_session.scalars(select(ServiceClient).where(ServiceClient.client_id == CLIENT_ID)).all()
@@ -557,12 +517,9 @@ class TestSeed:
         assert rows[0].scopes == "new:scope"
 
     def test_seed_does_not_reactivate_a_revoked_client(self, db_session, client):
-        """Manual revocation (is_active=False) must survive a re-seed on boot —
-        otherwise the seed silently undoes revocation, defeating the registry."""
         c = _seed(db_session)
         c.is_active = False
         db_session.commit()
-        # re-seed with a rotated secret, as a restart would
         _seed(db_session, secret="rotated-secret")
         c = db_session.scalar(select(ServiceClient).where(ServiceClient.client_id == CLIENT_ID))
         assert c.is_active is False
@@ -574,9 +531,6 @@ class TestSeed:
         assert r.status_code == 401
 
     def test_pulse_seed_grants_email_profile_and_token_version_scopes(self, db_session, monkeypatch):
-        """The Pulse client must come out of a boot able to do all three lookups — and
-        nothing more. A silent over-grant here is how a service ends up with the
-        whole address book by accident."""
         from app.config import settings
         monkeypatch.setattr(settings, "PULSE_CLIENT_SECRET", CLIENT_SECRET)
         c = seed_pulse_client(db_session)
@@ -590,8 +544,6 @@ class TestSeed:
         assert seed_pulse_client(db_session) is None
 
     def test_pulse_seed_is_idempotent_and_keeps_revocation(self, db_session, monkeypatch):
-        """Re-seeding on every boot must not duplicate the row, and must not
-        resurrect a client someone deliberately switched off."""
         from app.config import settings
         monkeypatch.setattr(settings, "PULSE_CLIENT_SECRET", CLIENT_SECRET)
         c = seed_pulse_client(db_session)
@@ -604,8 +556,6 @@ class TestSeed:
         assert rows[0].is_active is False
 
     def test_forge_seed_creates_client_with_only_the_verify_scope(self, db_session, monkeypatch):
-        """Forge shows no names or addresses, so it gets tokens:verify and nothing
-        else. Handing it Pulse's scopes would give it the address book for free."""
         from app.config import settings
         monkeypatch.setattr(settings, "FORGE_CLIENT_SECRET", CLIENT_SECRET)
         c = seed_forge_client(db_session)
@@ -635,7 +585,6 @@ class TestSeed:
         assert rows[0].is_active is False
 
     def test_forge_and_pulse_are_separate_clients(self, db_session, monkeypatch):
-        """Two rows, two secrets, two scope sets — not one shared credential."""
         from app.config import settings
         monkeypatch.setattr(settings, "PULSE_CLIENT_SECRET", CLIENT_SECRET)
         monkeypatch.setattr(settings, "FORGE_CLIENT_SECRET", "a-different-secret")
@@ -646,8 +595,6 @@ class TestSeed:
         assert f.scopes == FORGE_SCOPES
 
     def test_forge_seeded_credentials_verify_tokens_but_read_no_pii(self, db_session, client, monkeypatch):
-        """End to end on the seeded client: mint a token with the real credentials,
-        then confirm it opens token-versions and is refused on both PII lookups."""
         from app.config import settings
         monkeypatch.setattr(settings, "FORGE_CLIENT_SECRET", CLIENT_SECRET)
         seed_forge_client(db_session)
@@ -664,7 +611,6 @@ class TestSeed:
 
     def test_seed_secret_verifies(self, db_session, client):
         _seed(db_session)
-        # the rotated secret is what the token endpoint must accept
         _seed(db_session, secret="rotated-secret")
         r = client.post("/oauth/token", json={
             "grant_type": "client_credentials",

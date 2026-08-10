@@ -14,14 +14,11 @@ class GitHubAccountResponse(BaseModel):
     connected_at: datetime
 
 class SyncRunResponse(BaseModel):
-    """One repo's turn in one sync pass. `detail` carries the per-kind counts on
-    success and the reason on anything else — including, when rate-limited, when
-    GitHub says we can resume."""
     model_config = ConfigDict(from_attributes=True)
 
     id: int
     repo_id: int | None
-    repo_full_name: str | None = None  # denormalised so a list renders without a second call
+    repo_full_name: str | None = None
     status: str
     detail: str | None
     started_at: datetime

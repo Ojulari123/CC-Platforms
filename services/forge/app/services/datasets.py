@@ -1,5 +1,3 @@
-"""Forge owns these rows; the uploader is referenced by identity `user_id` only, and the raw
-CSV lives in the DB so there is no storage volume. A caller sees their own plus the samples."""
 import csv
 import io
 import json
@@ -13,8 +11,6 @@ from app.samples import SAMPLE_DATASETS
 from app.schemas.datasets import DatasetPreview
 
 def _parse_csv(raw_bytes: bytes) -> tuple[str, list[str], int]:
-    """Returns (text, header_columns, row_count). Rejects (400) non-UTF-8, empty or
-    headerless files; a header with no data rows is a legitimate empty-but-typed dataset."""
     if len(raw_bytes) > settings.MAX_UPLOAD_MB * 1024 * 1024:
         raise HTTPException(status_code=413, detail=f"File exceeds the {settings.MAX_UPLOAD_MB} MB limit")
     try:
@@ -24,7 +20,6 @@ def _parse_csv(raw_bytes: bytes) -> tuple[str, list[str], int]:
     if not text.strip():
         raise HTTPException(status_code=400, detail="File is empty")
     try:
-        # csv.reader raises csv.Error on things like a NUL byte or a field over its internal size limit
         rows = list(csv.reader(io.StringIO(text)))
     except csv.Error as exc:
         raise HTTPException(status_code=400, detail=f"Malformed CSV: {exc}")

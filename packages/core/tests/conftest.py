@@ -1,6 +1,3 @@
-"""Shared fixtures: generate an RSA keypair once per test session, build a JWKS
-document from the public key, and offer helpers to sign tokens with the private
-key. Nothing hits the network."""
 import base64, hashlib, time, uuid
 from typing import Any
 import pytest
@@ -49,8 +46,6 @@ def jwks_client(jwks_doc):
 
 @pytest.fixture
 def sign_token(rsa_keypair):
-    """Return a helper that mints an access token with the test keypair. Callers
-    override any claim via kwargs; defaults produce a valid token."""
 
     def _sign(**overrides: Any) -> str:
         now = int(time.time())

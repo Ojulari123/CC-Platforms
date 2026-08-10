@@ -1,20 +1,15 @@
-"""Symmetric encryption for secrets at rest, and for the OAuth `state`.
-
-Fernet is an authenticated symmetric encryption from the `cryptography` library (it
-comes in via crescent_core). The key lives ONLY in the environment
-(GITHUB_TOKEN_ENC_KEY), never in the database — so a leaked database doesn't hand
-over anyone's GitHub token.
-
+"""The Fernet key lives ONLY in the environment (GITHUB_TOKEN_ENC_KEY), never in the
+database, so a leaked database doesn't hand over anyone's GitHub token.
 """
 import json
 from cryptography.fernet import Fernet, InvalidToken
 from app.config import settings
 
 class TokenEncryptionNotConfigured(RuntimeError):
-    """GITHUB_TOKEN_ENC_KEY is missing."""
+    pass
 
 class InvalidStateError(Exception):
-    """The OAuth state blob was forged, tampered with, or expired."""
+    pass
 
 def _fernet() -> Fernet:
     if not settings.GITHUB_TOKEN_ENC_KEY:

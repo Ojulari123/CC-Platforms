@@ -17,8 +17,6 @@ def register(request: Request, payload: RegisterRequest, db: Session = Depends(g
 @router.post("/signup", response_model=TokenPair, status_code=status.HTTP_201_CREATED)
 @limiter.limit("5/minute")
 def signup(request: Request, payload: SignupRequest, db: Session = Depends(get_db)) -> TokenPair:
-    """Open self-signup — creates an account with no department. Distinct from
-    /register, which is bootstrap-only. An admin places the new user afterwards."""
     return auth_service.signup_user(db, payload)
 
 @router.post("/login", response_model=TokenPair)

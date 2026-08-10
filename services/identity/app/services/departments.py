@@ -40,8 +40,6 @@ def list_departments(db: Session) -> list[DepartmentResponse]:
     return [_to_dept_response(db, d) for d in db.scalars(select(Department).order_by(Department.name))]
 
 def set_head(db: Session, dept_id: int, head_user_id: int | None) -> DepartmentResponse:
-    """Name (or clear) the head. They must already be an admin here — granting that
-    silently would hide a privilege change inside a title change. Promote first."""
     department = get_department(db, dept_id)
 
     if head_user_id is not None:
@@ -75,8 +73,6 @@ def update_department(db: Session, dept_id: int, payload: DepartmentUpdate) -> D
     return _to_dept_response(db, department)
 
 def delete_department(db: Session, dept_id: int) -> None:
-    """Only an empty department can go. Deleting one with people in it would
-    cascade their memberships away and silently strip their access."""
     department = get_department(db, dept_id)
     members = db.scalar(select(func.count()).select_from(Membership).where(Membership.dept_id == dept_id))
     if members:
@@ -180,7 +176,6 @@ def update_member(db: Session, dept_id: int, member_user_id: int, payload: Membe
             _assert_not_last_admin(db, dept_id, member_user_id, "demote")
         _handover(
             db, dept_id, member_user_id, replacement_user_id, allow_unled,
-            # Leading a team needs manager-or-admin; heading a department needs admin.
             losing_team_leadership=new_role not in ("manager", "admin"),
             losing_headship=new_role != "admin",
             action=f"Demoting them to {new_role}",
@@ -197,8 +192,6 @@ def update_member(db: Session, dept_id: int, member_user_id: int, payload: Membe
     return _to_member_response(db, membership)
 
 def _handover(db: Session, dept_id: int, user_id: int, replacement_user_id: int | None, allow_unled: bool, *, losing_team_leadership: bool = True, losing_headship: bool = True, action: str = "Removing them") -> None:
-    """Deal with whatever this person is in charge of before they stop being able
-    to do it"""
     department = get_department(db, dept_id)
     led_teams = (
         list(db.scalars(select(Team).where(Team.dept_id == dept_id, Team.manager_user_id == user_id)))
@@ -246,8 +239,6 @@ def _handover(db: Session, dept_id: int, user_id: int, replacement_user_id: int 
     )
 
 def remove_member(db: Session, dept_id: int, member_user_id: int, replacement_user_id: int | None = None, allow_unled: bool = False) -> None:
-    """Deletes the membership only — the account survives, keeping any other
-    department. Sessions are revoked so it takes effect now, not at token expiry."""
     membership = _get_membership(db, dept_id, member_user_id)
     if membership.role == "admin":
         _assert_not_last_admin(db, dept_id, member_user_id, "remove")

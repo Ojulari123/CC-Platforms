@@ -60,9 +60,8 @@ const repo = computed(() =>
   repositories.value.find((r) => r.id === report.value?.repo_id) ?? null,
 );
 
-// Mirrors the API's _can_approve: platform admin, the repo's lead or deputy, or an
-// admin of the report's department. Getting it wrong only shows or hides buttons —
-// the API decides.
+// Mirrors the API's _can_approve. Getting it wrong only shows or hides buttons — the
+// API decides.
 const canApprove = computed(() => {
   const r = report.value;
   const user = me.value;
@@ -106,7 +105,6 @@ const save = useMutation({
 
 const submit = useMutation({
   mutationFn: async () => {
-    // Submitting with unsaved text in the boxes would quietly send the old version.
     if (editing.value) {
       await api.request<ReportResponse>(`/reports/${id.value}`, {
         method: "PATCH",

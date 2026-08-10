@@ -8,14 +8,12 @@ logger = logging.getLogger(__name__)
 BREVO_URL = "https://api.brevo.com/v3/smtp/email"
 
 class EmailNotConfigured(Exception):
-    """BREVO_API_KEY / EMAIL_FROM missing from the environment."""
+    pass
 
 class EmailSendError(Exception):
-    """Brevo rejected the request or was unreachable."""
+    pass
 
 def send(to: str, subject: str, html: str) -> None:
-    # Settings are read lazily inside the function so importing this module never
-    # touches config/network. Keeps the CI import check green.
     if not settings.BREVO_API_KEY or not settings.EMAIL_FROM:
         raise EmailNotConfigured("Set BREVO_API_KEY and EMAIL_FROM in .env")
     try:
@@ -35,14 +33,11 @@ def send(to: str, subject: str, html: str) -> None:
         raise EmailSendError(f"Failed to send email: {e}") from e
 
     if resp.status_code >= 400:
-        # Brevo puts the actual reason in the body
         # Log it so failures aren't opaque, but never log the API key.
         logger.error("Brevo rejected email to %s: HTTP %s — %s", to, resp.status_code, resp.text[:500])
         raise EmailSendError(f"Provider rejected the email (HTTP {resp.status_code})")
 
 def build_report_ready_html(report, review_url: str) -> str:
-    """HTML body for the 'report ready for review' email. review_url points at the
-    frontend report page."""
     return (
         f"<p>A weekly report (#{report.id}) is ready for your review.</p>"
         f'<p><a href="{review_url}">Open the report</a> to approve, reject, or request changes.</p>'
@@ -50,7 +45,6 @@ def build_report_ready_html(report, review_url: str) -> str:
     )
 
 def build_no_approver_html(report, repo, review_url: str) -> str:
-    """HTML body for the 'your report has no reviewer' email sent back to the author."""
     return (
         f"<p>Your weekly report (#{report.id}) was submitted, but nobody is named to review it.</p>"
         f"<p><b>{repo.full_name}</b> hasn't been filed under a department and has no lead or deputy.</p>"
@@ -60,8 +54,6 @@ def build_no_approver_html(report, repo, review_url: str) -> str:
     )
 
 def _notify_no_approver(report, repo) -> None:
-    """Submitted onto an unfiled repo with no lead or deputy: no named approver exists,
-    so tell the author what admin action unblocks it instead of failing silently."""
     logger.warning(
         "report %s submitted with no named approver — repo %s has no department, lead, or deputy",
         report.id, repo.id,
@@ -77,18 +69,6 @@ def _notify_no_approver(report, repo) -> None:
     )
 
 def notify_report_ready(report) -> None:
-    """Best-effort notification that a report is now awaiting review. Called AFTER the
-    submit commit so a notification problem can never roll back or block the submission.
-
-    Resolves the repo's approvers (lead/deputy) to email addresses via identity, then
-    emails each one a link to the report. The WHOLE thing is wrapped so it can NEVER
-    raise: identity down, resolution failing, email misconfigured, or Brevo erroring are
-    all logged and swallowed. A submit must never fail because a notification did.
-
-    Each recipient is sent independently — one address Brevo rejects must not stop the
-    other approver being notified. When there is no lead, no deputy and no department,
-    nobody is named to review it, so the author is told instead of nothing happening.
-    """
     try:
         repo = report.repository
         approver_ids = [uid for uid in (repo.lead_user_id, repo.deputy_user_id) if uid is not None]
@@ -107,14 +87,12 @@ def notify_report_ready(report) -> None:
         review_url = f"{settings.FRONTEND_URL}/reports/{report.id}"
         html = build_report_ready_html(report, review_url)
     except (IdentityResolutionError, EmailNotConfigured, EmailSendError) as e:
-        # Expected failure modes (identity/config/provider) — warn, don't alarm.
         logger.warning("notify_report_ready skipped for report %s: %s", getattr(report, "id", "?"), e)
         return
     except Exception as e:
         logger.error("notify_report_ready failed for report %s: %s", getattr(report, "id", "?"), e)
         return
 
-    # One try per recipient: a bad address only loses that approver's email.
     for user_id, email in emails.items():
         try:
             send(to=email, subject="A report is ready for your review", html=html)

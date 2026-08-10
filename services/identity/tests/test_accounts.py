@@ -17,12 +17,10 @@ class TestDeactivate:
     def test_existing_sessions_die_immediately(self, client, registered_user, engineer_user):
         eng_id = client.get("/me", headers=auth(engineer_user)).json()["id"]
         _deactivate(client, registered_user["tokens"], eng_id)
-        # The token they were holding a moment ago is now useless.
         assert client.get("/me", headers=auth(engineer_user)).status_code == 403
         assert client.post("/auth/refresh", json={"refresh_token": engineer_user["refresh_token"]}).status_code == 401
 
     def test_account_and_memberships_survive(self, client, registered_user, engineer_user):
-        """Deactivation is reversible, so nothing is torn down."""
         dept = registered_user["dept_id"]
         eng_id = client.get("/me", headers=auth(engineer_user)).json()["id"]
         _deactivate(client, registered_user["tokens"], eng_id)
@@ -41,7 +39,6 @@ class TestDeactivate:
         assert me["memberships"][0]["dept_id"] == registered_user["dept_id"]
 
     def test_response_surfaces_what_they_still_run(self, client, registered_user, invite_user):
-        """Not blocked, but never silent: you can see what needs reassigning."""
         dept, admin = registered_user["dept_id"], auth(registered_user["tokens"])
         team = client.post(f"/departments/{dept}/teams", json={"name": "Platform"}, headers=admin).json()["id"]
         mgr = invite_user(registered_user["tokens"], dept, "mgr@example.com", "manager")
@@ -59,9 +56,6 @@ class TestDeactivate:
         assert "your own account" in r.json()["detail"]
 
     def test_the_workspace_cannot_be_locked_out(self, client, registered_user, invite_user):
-        """Deactivating requires platform admin, so the only person who could
-        deactivate the last platform admin is that person — and the self-check
-        stops them. One admin can still deactivate another once a second exists."""
         dept = registered_user["dept_id"]
         bob = invite_user(registered_user["tokens"], dept, "bob@example.com", "admin")
         bob_id = client.get("/me", headers=auth(bob)).json()["id"]

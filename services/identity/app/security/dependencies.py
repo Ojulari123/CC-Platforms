@@ -9,8 +9,6 @@ from app.security.jwt import decode_access_token, decode_service_token
 _bearer = HTTPBearer(auto_error=False)
 
 def get_current_user(creds: HTTPAuthorizationCredentials | None = Depends(_bearer), db: Session = Depends(get_db)) -> User:
-    """Verify the token and load the user. The tv check is what makes outstanding
-    access tokens die after a password change or logout-everywhere."""
     if not creds or not creds.credentials:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Not authenticated", headers={"WWW-Authenticate": "Bearer"})
 
@@ -26,10 +24,6 @@ def get_current_user(creds: HTTPAuthorizationCredentials | None = Depends(_beare
     return user
 
 def require_service_scope(scope: str):
-    """Guard a service-to-service endpoint: a SERVICE token carrying `scope`. A user
-    access token is rejected on token_type. Returns the payload, so the handler can
-    see which client called."""
-
     def _check(creds: HTTPAuthorizationCredentials | None = Depends(_bearer)) -> dict:
         if not creds or not creds.credentials:
             raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Not authenticated", headers={"WWW-Authenticate": "Bearer"})

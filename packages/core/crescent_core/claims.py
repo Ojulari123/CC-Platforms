@@ -18,7 +18,6 @@ class TokenClaims:
     leads: tuple[int, ...] = ()
 
     def role_in(self, dept_id: int) -> str | None:
-        """The caller's role in one department, or None if they're not in it."""
         for m in self.memberships:
             if m.dept_id == dept_id:
                 return m.role

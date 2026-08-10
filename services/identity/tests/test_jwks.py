@@ -30,8 +30,6 @@ def _write_keypair(directory: str, name: str) -> tuple[str, str]:
 
 @pytest.fixture
 def rotate():
-    """Point identity at a different keypair mid-test, the way a restart after
-    scripts/rotate-identity-keys.sh does, and put it back afterwards."""
     original = (settings.JWT_PRIVATE_KEY_PATH, settings.JWT_PUBLIC_KEY_PATH, settings.JWT_RETIRED_PUBLIC_KEYS_DIR)
 
     def _rotate(private_path: str, public_path: str, retired_dir: str) -> None:
@@ -76,8 +74,6 @@ def test_access_token_verifies_against_jwks_public_key(client, registered_user):
     assert payload["sub"]
 
 def test_single_keypair_with_no_retired_dir_publishes_one_key(client, rotate):
-    """The shape every existing deployment already has: one keypair, no retired
-    directory on disk at all. Must be untouched by the rotation support."""
     with tempfile.TemporaryDirectory() as d:
         priv, pub = _write_keypair(d, "solo")
         rotate(priv, pub, os.path.join(d, "retired-does-not-exist"))
@@ -97,9 +93,6 @@ def test_distinct_keys_get_distinct_kids(rotate):
         assert get_key_id() != kid_a
 
 class TestGracefulHandover:
-    """A rotation must be a handover, not a cutover: the old key keeps verifying
-    tokens it already signed while the new key takes over signing."""
-
     def test_old_token_still_verifies_and_new_tokens_use_the_new_key(self, client, rotate):
         with tempfile.TemporaryDirectory() as d:
             retired = os.path.join(d, "retired")
@@ -119,14 +112,11 @@ class TestGracefulHandover:
             assert kid_b != kid_a
             assert jwt.get_unverified_header(token_a)["kid"] == kid_a
             assert jwt.get_unverified_header(token_b)["kid"] == kid_b
-            # Both survive identity's real verification path.
             assert decode_access_token(token_a)["email"] == "rot@example.com"
             assert decode_access_token(token_b)["email"] == "rot@example.com"
 
             published = {k["kid"]: k for k in client.get("/.well-known/jwks.json").json()["keys"]}
             assert set(published) == {kid_a, kid_b}
-            # And against the published JWKS itself, key selected by kid the way a
-            # downstream service does it.
             for token, kid in ((token_a, kid_a), (token_b, kid_b)):
                 assert jwt.decode(token, published[kid], algorithms=["RS256"], issuer=settings.JWT_ISSUER)["sub"] == "1"
 
@@ -174,8 +164,6 @@ class TestGracefulHandover:
             assert len(client.get("/.well-known/jwks.json").json()["keys"]) == 1
 
     def test_retired_key_cannot_sign(self, client, rotate):
-        """A retired key is published for verification only — identity signs with
-        the active key and nothing else."""
         with tempfile.TemporaryDirectory() as d:
             retired = os.path.join(d, "retired")
             os.makedirs(retired)
@@ -187,8 +175,6 @@ class TestGracefulHandover:
                 assert jwt.get_unverified_header(_mint())["kid"] == get_key_id()
 
 def test_token_with_an_unknown_kid_is_rejected(rotate):
-    """An unknown kid must not become a way to skip verification — it falls back
-    to the active key, which the forged signature then fails."""
     with tempfile.TemporaryDirectory() as d:
         a_priv, a_pub = _write_keypair(d, "a")
         rogue_priv, _ = _write_keypair(d, "rogue")
@@ -207,7 +193,6 @@ def test_malformed_token_is_rejected():
     assert exc.value.status_code == 401
 
 def test_non_rsa_key_in_the_retired_dir_is_refused(client, rotate):
-    """Loud failure beats quietly not publishing a key someone's token needs."""
     with tempfile.TemporaryDirectory() as d:
         retired = os.path.join(d, "retired")
         os.makedirs(retired)
@@ -228,10 +213,6 @@ def test_missing_key_file_names_the_path(rotate):
             _mint()
 
 class TestStartupKeyValidation:
-    """A file that was already bad when the process started must stop the process
-    starting, not 500 /.well-known/jwks.json later. Every service verifies tokens
-    against that endpoint, so a request-time failure there is platform-wide."""
-
     def test_bad_retired_key_refuses_the_boot_and_names_the_file(self, rotate):
         with tempfile.TemporaryDirectory() as d:
             retired = os.path.join(d, "retired")
@@ -260,7 +241,6 @@ class TestStartupKeyValidation:
                     pass
 
     def test_a_private_key_left_in_the_retired_dir_refuses_the_boot(self, rotate):
-        """The mistake the rotation script is built to avoid, caught anyway."""
         with tempfile.TemporaryDirectory() as d:
             retired = os.path.join(d, "retired")
             os.makedirs(retired)
@@ -272,7 +252,6 @@ class TestStartupKeyValidation:
                     pass
 
     def test_missing_retired_dir_boots_normally(self, rotate):
-        """What every single-keypair deployment and CI looks like."""
         with tempfile.TemporaryDirectory() as d:
             a_priv, a_pub = _write_keypair(d, "a")
             rotate(a_priv, a_pub, os.path.join(d, "no-such-dir"))

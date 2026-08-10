@@ -9,10 +9,6 @@ from crescent_core.verify import InvalidToken, verify_access_token
 _bearer = HTTPBearer(auto_error=False)
 
 def current_user_dep(jwks_client: JWKSClient, issuer: str, revocation_checker: RevocationChecker | None = None) -> Callable[..., TokenClaims]:
-    """Build the dependency once at startup and reuse the returned dep everywhere.
-    Pass revocation_checker to also drop tokens identity has since revoked; without
-    one the token's signature and expiry are the only gates (previous behaviour)."""
-
     def _current_user(creds: HTTPAuthorizationCredentials | None = Depends(_bearer)) -> TokenClaims:
         if not creds or not creds.credentials:
             raise HTTPException(
@@ -44,8 +40,7 @@ def current_user_dep(jwks_client: JWKSClient, issuer: str, revocation_checker: R
 
 def require_dept_role(current_user: Callable[..., TokenClaims], *allowed_roles: str) -> Callable[..., TokenClaims]:
     """`dept_id` is read from the URL path, so the check is always against the
-    department actually being acted on — a manager in Engineering does not get
-    manager rights in Data."""
+    department actually being acted on, not one the caller happens to manage."""
 
     def _check(dept_id: int, user: TokenClaims = Depends(current_user)) -> TokenClaims:
         if user.is_platform_admin:

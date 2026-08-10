@@ -50,7 +50,6 @@ def test_upload_header_only_is_allowed_with_zero_rows(client, act_as):
 
 def test_upload_rejects_oversized_file(client, act_as):
     act_as(7)
-    # One byte over the 5 MB default limit → 413.
     big = b"a,b\n" + b"x,y\n" * (5 * 1024 * 1024)
     r = _upload(client, content=big)
     assert r.status_code == 413
@@ -172,7 +171,6 @@ def test_get_missing_is_404(client, act_as):
 
 def test_preview_returns_first_n_rows_and_truncated_flag(client, act_as):
     act_as(7)
-    # 12 data rows, preview 5 → truncated True.
     rows = "".join(f"{i},v{i}\n" for i in range(12))
     content = ("a,b\n" + rows).encode("utf-8")
     ds_id = _upload(client, content=content).json()["id"]

@@ -55,8 +55,6 @@ class TestMemberFilters:
         assert by_email["total"] == 1
         assert by_email["items"][0]["email"] == "findme@example.com"
 
-        # invite_user sets last_name="Tester" on everyone it creates; alice is
-        # "Anderson", so this matches the two invitees and not the admin.
         by_last_name = _members(client, tokens, dept, q="tester").json()
         assert by_last_name["total"] == 2
 
@@ -75,10 +73,6 @@ class TestMemberFilters:
         assert _members(client, tokens, dept, role="wizard").status_code == 422
 
 class TestMembershipHasNoActiveFlag:
-    """A membership is either there or deleted. The old is_active column claimed a
-    middle state nothing ever wrote, so every filter on it was permanently true. The
-    field that survives it reports the ACCOUNT's status."""
-
     def test_the_column_is_gone(self):
         assert "is_active" not in Membership.__table__.columns
 
@@ -101,9 +95,6 @@ class TestMembershipHasNoActiveFlag:
         assert r.json()[0]["is_active"] is True
 
     def test_a_deactivated_account_still_shows_on_the_roster(self, client, registered_user, engineer_user):
-        """Deactivating an ACCOUNT is a separate thing from department membership,
-        and always was — the roster filters never looked at it. Proves dropping
-        the membership flag didn't quietly wire the two together."""
         tokens, dept = registered_user["tokens"], registered_user["dept_id"]
         user_id = engineer_user["user"]["id"]
         assert client.post(f"/platform/users/{user_id}/deactivate", headers=auth(tokens)).status_code == 200
@@ -113,8 +104,6 @@ class TestMembershipHasNoActiveFlag:
 
 class TestMemberActiveStatusComesFromTheAccount:
     def test_a_deactivated_member_reads_as_inactive(self, client, registered_user, engineer_user):
-        """They stay on the roster, marked — a department admin has to be able to
-        see who can no longer log in."""
         tokens, dept = registered_user["tokens"], registered_user["dept_id"]
         user_id = engineer_user["user"]["id"]
         client.post(f"/platform/users/{user_id}/deactivate", headers=auth(tokens))
@@ -142,8 +131,6 @@ class TestMemberActiveStatusComesFromTheAccount:
         assert by_email["eng@example.com"]["is_active"] is True
 
     def test_the_roster_costs_the_same_however_many_members(self, client, registered_user, invite_user):
-        """The status comes off the join the roster already does. If it ever
-        turned into a lookup per row this count would grow with the roster."""
         tokens, dept = registered_user["tokens"], registered_user["dept_id"]
         invite_user(tokens, dept, "eng1@example.com", "engineer")
 

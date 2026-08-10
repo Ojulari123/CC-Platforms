@@ -1,5 +1,3 @@
-"""The shared pagination primitive: bounds on the query params, and the Page
-response shape products build their list endpoints on."""
 import pytest
 from fastapi import Depends, FastAPI
 from fastapi.testclient import TestClient

@@ -28,7 +28,6 @@ class TestSignup:
         assert me["email_verified"] is False
 
     def test_signup_does_not_create_a_department(self, client, registered_user):
-        # registered_user made the first (and so far only) department.
         before = len(client.get("/departments", headers=auth(registered_user["tokens"])).json())
         _signup(client, email="another@example.com")
         after = len(client.get("/departments", headers=auth(registered_user["tokens"])).json())
@@ -55,11 +54,7 @@ class TestSignup:
         assert r.status_code == 200, r.text
 
 class TestSignupDomainGate:
-    """SIGNUP_ALLOWED_DOMAINS locks who may sign up. Empty (default) = anyone;
-    set = only those domains."""
-
     def test_empty_allows_any_domain(self, client):
-        # Default fixture state — SIGNUP_ALLOWED_DOMAINS is "".
         assert settings.signup_allowed_domains_list == []
         r = _signup(client, email="anyone@gmail.com")
         assert r.status_code == 201, r.text
@@ -81,9 +76,6 @@ class TestSignupDomainGate:
         assert r.status_code == 201, r.text
 
 class TestSignupGateStartupWarning:
-    """The gate fails OPEN, so an unset allowlist has to announce itself at boot
-    instead of quietly letting the whole internet register."""
-
     def test_empty_allowlist_warns_at_startup(self, caplog):
         import logging
         from fastapi.testclient import TestClient
@@ -107,9 +99,6 @@ class TestSignupGateStartupWarning:
         assert not [r for r in caplog.records if "SIGNUP_ALLOWED_DOMAINS" in r.message]
 
 class TestPlacement:
-    """POST /departments/{dept_id}/members — put an existing (e.g. signed-up)
-    user into a department. Dept admin or platform admin only."""
-
     def _signup_id(self, client, email):
         tokens = _signup(client, email=email).json()
         return client.get("/me", headers=auth(tokens)).json()["id"], tokens
@@ -202,7 +191,6 @@ class TestPlacement:
         assert r.status_code == 400
 
     def test_places_existing_user_into_a_second_department(self, client, registered_user, second_dept, invite_user):
-        # An already-placed user joining a SECOND dept without a fresh invite.
         eng = invite_user(registered_user["tokens"], registered_user["dept_id"], "multi@example.com", "engineer")
         user_id = client.get("/me", headers=auth(eng)).json()["id"]
         r = client.post(

@@ -9,7 +9,6 @@ export type {
   UserResponse,
 } from "@crescent/ui/types/api";
 
-// forge: DatasetResponse
 export interface DatasetResponse {
   id: number;
   owner_user_id: number | null;
@@ -21,14 +20,12 @@ export interface DatasetResponse {
   created_at: string;
 }
 
-// forge: DatasetSummary (GET /datasets/summary) — the dashboard's single call
 export interface DatasetSummary {
   owned_count: number;
   sample_count: number;
   recent: DatasetResponse[];
 }
 
-// forge: DatasetPreview (GET /datasets/{id}/preview)
 export interface DatasetPreview {
   columns: string[];
   rows: string[][];

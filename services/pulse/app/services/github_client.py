@@ -1,11 +1,3 @@
-"""A thin GitHub REST client for the sync engine.
-
-Handles pagination and rate limits
-
-`sleep` is injectable and every call goes through one httpx client, so tests drive
-it with `httpx.MockTransport` — no real network and no real waits.
-"""
-
 import logging
 import re
 import time
@@ -26,12 +18,6 @@ def _parse_dt(value: str | None) -> datetime | None:
     return datetime.fromisoformat(value.replace("Z", "+00:00")) if value else None
 
 class GitHubRateLimited(Exception):
-    """GitHub is rate limiting us and waiting it out here isn't sensible — either the
-    reset is further away than `max_wait_seconds` (the primary quota resets on the hour,
-    so that can be ~an hour) or short waits ran out of retries.
-
-    Carries how long is left and the wall-clock time the sync can resume, so the caller
-    can record something more useful than "error"."""
 
     def __init__(self, wait_seconds: float, url: str):
         self.wait_seconds = max(0.0, wait_seconds)
@@ -42,7 +28,7 @@ class GitHubRateLimited(Exception):
         )
 
 class GitHubClient:
-    _MAX_RETRIES = 3  # first try + 3 short-wait retries
+    _MAX_RETRIES = 3
 
     def __init__(self, token: str, base_url: str | None = None, sleep: Callable[[float], None] = time.sleep, max_wait_seconds: int = 60, transport: httpx.BaseTransport | None = None):
         self._base = (base_url or settings.GITHUB_API_URL).rstrip("/")
@@ -65,7 +51,6 @@ class GitHubClient:
         if resp.status_code == 429:
             return True
         if resp.status_code == 403:
-            # primary = quota exhausted; secondary = abuse detection, carries Retry-After
             return resp.headers.get("X-RateLimit-Remaining") == "0" or "Retry-After" in resp.headers
         return False
 
@@ -78,12 +63,9 @@ class GitHubClient:
         return max(0, reset - int(time.time()))
 
     def _request(self, url: str, params: dict | None = None) -> httpx.Response:
-        # Short waits (<= max_wait_seconds) are slept through and retried, backing off
-        # 1s, 2s, 4s so we don't hammer the API. Anything longer means the primary quota
-        # is gone until GitHub's hourly reset: sleeping through that would pin a worker
-        # for the best part of an hour, so we stop and raise GitHubRateLimited with when
-        # it can resume. Persistent short waits also give up after _MAX_RETRIES rather
-        # than looping forever.
+        # Short waits are slept through; anything longer means the primary quota is gone
+        # until GitHub's hourly reset, and sleeping through that would pin a worker for
+        # the best part of an hour.
         for attempt in range(self._MAX_RETRIES + 1):
             resp = self._http.get(url, params=params)
             if not self._is_rate_limited(resp):
@@ -102,10 +84,10 @@ class GitHubClient:
         rows: list[dict] = []
         while url:
             resp = self._request(url, params=params)
-            params = None  # the next-page URL already carries the query
+            params = None
             for row in resp.json():
                 if stop is not None and stop(row):
-                    return rows  # newest-first → everything past here is older
+                    return rows
                 rows.append(row)
             url = _next_link(resp.headers.get("Link", ""))
         return rows
@@ -113,8 +95,11 @@ class GitHubClient:
     def get_repo(self, full_name: str) -> dict:
         return self._request(f"{self._base}/repos/{full_name}").json()
 
-    def list_commits(self, full_name: str, since: str | None = None) -> list[dict]:
-        return self._paginate(f"/repos/{full_name}/commits", {"since": since} if since else {})
+    def list_commits(self, full_name: str, since: str | None = None, sha: str | None = None) -> list[dict]:
+        return self._paginate(f"/repos/{full_name}/commits", {k: v for k, v in (("since", since), ("sha", sha)) if v})
+
+    def list_branches(self, full_name: str) -> list[dict]:
+        return self._paginate(f"/repos/{full_name}/branches")
 
     def list_pull_requests(self, full_name: str, since: datetime | None = None) -> list[dict]:
         # /pulls has no `since` param, but sorted updated-desc lets us stop early.

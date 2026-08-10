@@ -55,8 +55,6 @@ const isEmpty = computed(() => {
   return !!c && c.commits === 0 && c.pull_requests === 0 && c.reviews === 0 && c.issues === 0;
 });
 
-// Only asked for once the week looks empty and you're looking at yourself — this is
-// the "why is there nothing here?" answer, not something to fetch on every load.
 const { data: githubAccount, isFetched: githubChecked } = useQuery({
   queryKey: ["github-account"],
   enabled: computed(() => viewingSelf.value && isEmpty.value),
@@ -86,8 +84,7 @@ async function connectGitHub() {
   try {
     const res = await api.request<{ authorize_url: string }>("/github/connect");
     // Same tab on purpose: window.open after an await is outside the click's call
-    // stack and gets blocked as a popup, and the callback sends the browser back here
-    // anyway. Nothing on this page is unsaved, so there is no state to lose.
+    // stack and gets blocked as a popup.
     window.location.href = res.authorize_url;
   } catch (err: unknown) {
     connectError.value = apiMessage(err, "Could not start the GitHub connection.");
@@ -95,8 +92,6 @@ async function connectGitHub() {
   }
 }
 
-// The GitHub callback lands on Pulse (it holds the client secret) and bounces the
-// browser back here with one of these codes. Wording lives here, not in the URL.
 const CONNECT_MESSAGES: Record<string, { ok: boolean; text: string }> = {
   connected: {
     ok: true,
@@ -130,13 +125,10 @@ onMounted(() => {
   const outcome = route.query.github;
   if (typeof outcome !== "string") return;
   connectResult.value = CONNECT_MESSAGES[outcome] ?? CONNECT_MESSAGES.failed!;
-  // Clear the marker so a refresh or a bookmark doesn't replay the banner.
   const { github: _github, ...rest } = route.query;
   router.replace({ query: rest });
 });
 
-// Pulse's own `user` object is null whenever it can't resolve the id through identity,
-// but we picked this person out of an identity-sourced list, so prefer that name.
 const selectedTeammate = computed(
   () => teammates.value.find((mate) => mate.user_id === selectedUserId.value) ?? null,
 );

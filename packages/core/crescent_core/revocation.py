@@ -22,9 +22,6 @@ class Verdict(str, Enum):
     UNAVAILABLE = "unavailable"
 
 class RevocationChecker:
-    """One identity call per user per ttl_seconds, however many requests arrive.
-    After a failed lookup it backs off for failure_backoff_seconds so an identity
-    outage costs a trickle of calls rather than one per request."""
 
     def __init__(self, client: ServiceTokenClient, ttl_seconds: float = 60.0, failure_backoff_seconds: float = 10.0, log_interval_seconds: float = 30.0, clock: Callable[[], float] = time.monotonic):
         self._client = client
@@ -33,8 +30,6 @@ class RevocationChecker:
         self._log_interval = log_interval_seconds
         self._clock = clock
         self._lock = threading.Lock()
-        # user_id -> (deadline, current token_version). None means "identity did not
-        # answer"; it suppresses retries, it is never a verdict about the user.
         self._cache: dict[int, tuple[float, int | None]] = {}
         self._suppressed = 0
         self._next_log_at = 0.0
@@ -95,7 +90,6 @@ class RevocationChecker:
         return Verdict.UNAVAILABLE
 
     def _log(self, err: Exception) -> None:
-        """Throttled: an outage must be visible in the logs without drowning them."""
         now = self._clock()
         with self._lock:
             self._suppressed += 1

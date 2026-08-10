@@ -43,10 +43,8 @@ class IssueItem(BaseModel):
     gh_created_at: datetime | None
 
 class ActivityResponse(BaseModel):
-    """One engineer's synced GitHub activity: totals plus the most recent items of
-    each kind. This is what the dashboard renders and what the AI summaries read."""
     user_id: int
-    user: UserRef | None = None  # filled from identity; null if it can't be resolved
+    user: UserRef | None = None
     since: date | None
     counts: ActivityCounts
     recent_commits: list[CommitItem]

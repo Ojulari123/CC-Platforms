@@ -8,10 +8,6 @@ def _register(client, email="bob@example.com", password="Test123!password", depa
     })
 
 class TestRegister:
-    """Registration is BOOTSTRAP ONLY — the first call sets up the platform
-    admin and the first department, then the door closes and everyone else
-    arrives by invite."""
-
     def test_creates_user_and_returns_token_pair(self, client):
         r = _register(client)
         assert r.status_code == 201
@@ -138,12 +134,10 @@ class TestRefresh:
         assert r1.status_code == 200
         new_refresh = r1.json()["refresh_token"]
 
-        # Old (now revoked) token replayed — should trigger family nuke.
         r2 = client.post("/auth/refresh", json={"refresh_token": registered_user["tokens"]["refresh_token"]})
         assert r2.status_code == 401
         assert "reuse detected" in r2.json()["detail"].lower()
 
-        # The current-good token from the same family is now also dead.
         r3 = client.post("/auth/refresh", json={"refresh_token": new_refresh})
         assert r3.status_code == 401
 
@@ -154,7 +148,6 @@ class TestRefresh:
         ).json()["access_token"]
         assert client.get("/me", headers={"Authorization": f"Bearer {rotated_access}"}).status_code == 200
 
-        # Replay the revoked token — reuse detection fires.
         client.post("/auth/refresh", json={"refresh_token": registered_user["tokens"]["refresh_token"]})
 
         # Revoking the family has to reach access tokens too, otherwise the stolen
@@ -181,8 +174,6 @@ class TestLogout:
         assert r.status_code == 204
 
     def test_other_devices_are_left_alone(self, client, registered_user):
-        """Signing out of one device must not sign the person out everywhere —
-        that's what /auth/logout-all is for."""
         other = client.post("/auth/login", json={
             "email": registered_user["email"], "password": registered_user["password"],
         }).json()
@@ -227,7 +218,6 @@ class TestChangePassword:
         old_access = registered_user["tokens"]["access_token"]
         r = self._change(client, old_access, registered_user["password"], self.NEW)
         assert r.status_code == 200
-        # Old access token should now 401 on /me (tv bumped, doesn't match DB)
         r2 = client.get("/me", headers={"Authorization": f"Bearer {old_access}"})
         assert r2.status_code == 401
         assert "revoked" in r2.json()["detail"].lower()
@@ -258,17 +248,14 @@ class TestLogoutAll:
     def test_kills_every_session(self, client, registered_user):
         tokens = registered_user["tokens"]
         auth = {"Authorization": f"Bearer {tokens['access_token']}"}
-        # A second session for the same user (a "different device").
         other = client.post("/auth/login", json={
             "email": registered_user["email"], "password": registered_user["password"],
         }).json()
 
         assert client.post("/auth/logout-all", headers=auth).status_code == 204
 
-        # Both access tokens are dead (token_version bumped)...
         assert client.get("/me", headers=auth).status_code == 401
         assert client.get("/me", headers={"Authorization": f"Bearer {other['access_token']}"}).status_code == 401
-        # ...and neither refresh token can resurrect a session.
         assert client.post("/auth/refresh", json={"refresh_token": tokens["refresh_token"]}).status_code == 401
         assert client.post("/auth/refresh", json={"refresh_token": other["refresh_token"]}).status_code == 401
 

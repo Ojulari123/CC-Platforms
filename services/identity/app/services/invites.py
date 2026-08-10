@@ -1,6 +1,5 @@
-"""Invite flow — how anyone after the founder joins a department. Only the hash of
-the emailed token is stored; presenting it proves control of the address, which is
-why accepting sets email_verified."""
+"""Only the hash of the emailed token is stored; presenting it proves control of
+the address, which is why accepting sets email_verified."""
 import hashlib, secrets
 from datetime import datetime, timedelta, timezone
 from fastapi import HTTPException
@@ -37,7 +36,6 @@ def create_invite(db: Session, dept_id: int, inviter: User, payload: InviteCreat
         if not team:
             raise HTTPException(status_code=400, detail="Team does not belong to this department")
 
-    # One live invite per (department, email) — replace any pending one.
     for old in db.scalars(select(Invite).where(Invite.dept_id == dept_id, Invite.email == invited_email, Invite.accepted_at.is_(None))):
         db.delete(old)
 
@@ -73,15 +71,13 @@ def create_invite(db: Session, dept_id: int, inviter: User, payload: InviteCreat
     return invite
 
 def list_pending_invites(db: Session, dept_id: int) -> list[Invite]:
-    """Invites that haven't been accepted yet. Expired ones are included on
-    purpose — an admin needs to see a dead invite to know why someone never
-    got in."""
+    """Expired invites are included on purpose — an admin needs to see a dead invite
+    to know why someone never got in."""
     return list(db.scalars(
         select(Invite).where(Invite.dept_id == dept_id, Invite.accepted_at.is_(None)).order_by(Invite.created_at.desc())
     ))
 
 def revoke_invite(db: Session, dept_id: int, invite_id: int) -> None:
-    """Cancel a pending invite — the emailed link stops working immediately."""
     invite = db.scalar(select(Invite).where(Invite.id == invite_id, Invite.dept_id == dept_id))
     if not invite:
         raise HTTPException(status_code=404, detail="Invite not found in this department")
@@ -102,8 +98,6 @@ def _load_valid_invite(db: Session, raw_token: str) -> Invite:
     return invite
 
 def preview_invite(db: Session, raw_token: str) -> InvitePreview:
-    """Public: lets the accept page say 'Join Engineering as engineer' and decide
-    whether to ask for a password, before anything is committed."""
     invite = _load_valid_invite(db, raw_token)
     department = db.get(Department, invite.dept_id)
     team = db.get(Team, invite.team_id) if invite.team_id else None

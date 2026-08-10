@@ -1,10 +1,8 @@
 import { useQuery } from "@tanstack/vue-query";
 import type { MemberListResponse, MemberResponse, UserMeResponse } from "~/types/api";
 
-// People the caller could plausibly look at. Pulse holds no user directory of its
-// own, so this comes from identity: the members of every department the caller
-// belongs to. Someone with no department gets an empty list, which is why the
-// picker says so instead of showing an empty dropdown.
+// Pulse holds no user directory of its own, so this comes from identity: the members
+// of every department the caller belongs to.
 export function useTeammates() {
   const auth = useAuth();
   const identity = useIdentityApi();

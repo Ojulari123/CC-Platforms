@@ -14,15 +14,13 @@ MANAGER_NOLEAD = dict(user_id=21, memberships=[{"dept_id": DEPT, "team_id": None
 DEPT_ADMIN = dict(user_id=30, memberships=[{"dept_id": DEPT, "team_id": None, "role": "admin"}])
 OUTSIDER = dict(user_id=40, memberships=[{"dept_id": 2, "team_id": None, "role": "engineer"}])
 PLATFORM = dict(user_id=99, memberships=[], is_platform_admin=True)
-MEMBER_NO_ACTIVITY = dict(user_id=12, memberships=[{"dept_id": DEPT, "team_id": None, "role": "engineer"}]) # A department member with NO synced activity in the repo — can't report on it.
+MEMBER_NO_ACTIVITY = dict(user_id=12, memberships=[{"dept_id": DEPT, "team_id": None, "role": "engineer"}])
 
 def _this_monday() -> date:
     t = date.today()
     return t - timedelta(days=t.weekday())
 
 def _seed_repo(db, gh_id, name, dept_id=DEPT, lead=LEAD_ID, deputy=DEPUTY_ID, contributors=(10, 11)):
-    """A repo led by 20 / deputy 25, with a synced commit for each contributor so
-    they pass the 'report only on repos you've worked in' check."""
     repo = Repository(
         github_repo_id=gh_id, full_name=f"org/{name}", owner="org", name=name,
         dept_id=dept_id, lead_user_id=lead, deputy_user_id=deputy,
@@ -38,18 +36,14 @@ def _seed_repo(db, gh_id, name, dept_id=DEPT, lead=LEAD_ID, deputy=DEPUTY_ID, co
 
 @pytest.fixture
 def repo(db):
-    """A repo in department 1, led by user 20 with deputy 25."""
     return _seed_repo(db, gh_id=1, name="alpha")
 
 def _create(client, repo_id, **body):
     body["repo_id"] = repo_id
-    # A report needs content to be submittable, so give drafts a summary by default;
-    # tests that care about the empty case pass summary_manager="" to override.
     body.setdefault("summary_manager", "did the work")
     return client.post("/reports", json=body)
 
 def _open_submitted(client, act_as, repo_id):
-    """An engineer opens a report for the repo and submits it. Returns its id."""
     act_as(**ENGINEER)
     rid = _create(client, repo_id).json()["id"]
     client.post(f"/reports/{rid}/submit")
@@ -64,7 +58,7 @@ class TestCreate:
         assert body["status"] == "draft"
         assert body["author_user_id"] == 10
         assert body["repo_id"] == repo
-        assert body["dept_id"] == DEPT  # taken from the repo
+        assert body["dept_id"] == DEPT
         assert body["week_start"] == _this_monday().isoformat()
 
     def test_non_member_of_the_repos_department_cannot_create(self, client, act_as, repo):
@@ -72,8 +66,6 @@ class TestCreate:
         assert _create(client, repo).status_code == 403
 
     def test_cannot_report_on_a_repo_you_havent_contributed_to(self, client, act_as, repo):
-        # A department member with no synced activity in the repo is refused —
-        # reports are for repos you've worked in (membership derived from activity).
         act_as(**MEMBER_NO_ACTIVITY)
         assert _create(client, repo).status_code == 403
 
@@ -83,8 +75,6 @@ class TestCreate:
         assert _create(client, repo).status_code == 409
 
     def test_same_engineer_two_repos_same_week(self, client, act_as, db):
-        # The key of the whole restructure: one report per (engineer, repo, week),
-        # so working in two repos in one week means two reports.
         repo_a = _seed_repo(db, gh_id=1, name="alpha")
         repo_b = _seed_repo(db, gh_id=2, name="beta")
         act_as(**ENGINEER)
@@ -188,9 +178,9 @@ class TestList:
         assert client.get(f"/reports?repo_id={repo}").json()["total"] == 0
 
     def test_filter_by_status(self, client, act_as, repo):
-        _open_submitted(client, act_as, repo)          # engineer 10: submitted
+        _open_submitted(client, act_as, repo)
         act_as(**ENGINEER_2)
-        _create(client, repo, week_start="2026-07-20")  # engineer 11: draft
+        _create(client, repo, week_start="2026-07-20")
         act_as(**LEAD)
         submitted = client.get(f"/reports?repo_id={repo}&status=submitted").json()
         assert submitted["total"] == 1
@@ -215,7 +205,6 @@ class TestWorkflow:
         assert [h["action"] for h in history] == ["submitted"]
 
     def test_cannot_submit_an_empty_report(self, client, act_as, repo):
-        # An all-empty draft has nothing to review — it must not reach an approver.
         act_as(**ENGINEER)
         rid = _create(client, repo, summary_manager="", summary_exec="", next_week_goals="").json()["id"]
         r = client.post(f"/reports/{rid}/submit")
@@ -247,7 +236,6 @@ class TestWorkflow:
         assert [h["action"] for h in client.get(f"/reports/{rid}/approvals").json()["items"]] == ["submitted", "approved"]
 
     def test_repo_deputy_also_approves(self, client, act_as, repo):
-        # Both approvers hold standing power — the deputy isn't "cover only".
         rid = _open_submitted(client, act_as, repo)
         act_as(**DEPUTY)
         assert client.post(f"/reports/{rid}/approve").status_code == 200
@@ -264,7 +252,7 @@ class TestWorkflow:
 
     def test_cannot_approve_a_report_that_was_never_submitted(self, client, act_as, repo):
         act_as(**ENGINEER)
-        rid = _create(client, repo).json()["id"]  # still a draft
+        rid = _create(client, repo).json()["id"]
         act_as(**LEAD)
         assert client.post(f"/reports/{rid}/approve").status_code == 409
 
@@ -287,8 +275,6 @@ class TestWorkflow:
         assert actions == ["submitted", "changes_requested", "submitted"]
 
 class TestNoSelfApproval:
-    """Nobody decides their own report, whatever role they hold — a review step an
-    author can complete alone isn't a review."""
 
     def _submit_as(self, client, act_as, who, repo_id):
         act_as(**who)
@@ -441,7 +427,7 @@ class TestCommentEditDelete:
     def test_comment_must_belong_to_the_report_in_the_path(self, client, act_as, repo):
         rid, cid = self._make_comment(client, act_as, repo)
         act_as(**ENGINEER)
-        other = _create(client, repo, week_start="2026-06-01").json()["id"]  # different report
+        other = _create(client, repo, week_start="2026-06-01").json()["id"]
         assert client.patch(f"/reports/{other}/comments/{cid}", json={"body": "x"}).status_code == 404
 
 class TestListsArePaginated:
@@ -456,11 +442,11 @@ class TestListsArePaginated:
         assert page["limit"] == 2
 
     def test_approvals_paginate(self, client, act_as, repo):
-        rid = _open_submitted(client, act_as, repo)          # approval 1: submitted
+        rid = _open_submitted(client, act_as, repo)
         act_as(**LEAD)
-        client.post(f"/reports/{rid}/request-changes")        # approval 2
+        client.post(f"/reports/{rid}/request-changes")
         act_as(**ENGINEER)
-        client.post(f"/reports/{rid}/submit")                 # approval 3
+        client.post(f"/reports/{rid}/submit")
         page = client.get(f"/reports/{rid}/approvals?limit=2").json()
         assert page["total"] == 3
         assert len(page["items"]) == 2
@@ -475,22 +461,16 @@ class TestStatusFilterValidation:
         assert client.get(f"/reports?repo_id={repo}&status=draft").status_code == 200
 
 class TestDepartmentBackfill:
-    """Decision 7 lets an engineer report on a repo before it's filed under a
-    department. When the repo is later assigned, its existing reports must move
-    with it — otherwise the department admin never sees them (the report's
-    denormalised dept_id would stay null forever)."""
 
     def test_assigning_a_department_backfills_existing_reports(self, client, act_as, db):
         repo_id = _seed_repo(db, gh_id=7, name="unassigned", dept_id=None, lead=None, deputy=None)
-        act_as(**ENGINEER)  # engineer 10 has a synced commit, so may report on it
+        act_as(**ENGINEER)
         rid = _create(client, repo_id).json()["id"]
         assert client.get(f"/reports/{rid}").json()["dept_id"] is None
 
-        # Before assignment the department admin can't reach it.
         act_as(**DEPT_ADMIN)
         assert client.get(f"/reports/{rid}").status_code == 403
 
-        # File the repo under department 1; the existing report follows.
         act_as(**PLATFORM)
         assert client.put(f"/github/repositories/{repo_id}/department/{DEPT}").status_code == 200
 
@@ -499,29 +479,40 @@ class TestDepartmentBackfill:
         assert got.status_code == 200 and got.json()["dept_id"] == DEPT
         assert client.get(f"/reports?dept_id={DEPT}").json()["total"] == 1
 
+    def test_filing_an_unfiled_repo_makes_its_report_approvable_by_the_dept_admin(self, client, act_as, db):
+        repo_id = _seed_repo(db, gh_id=9, name="from-sync", dept_id=None, lead=None, deputy=None)
+        rid = _open_submitted(client, act_as, repo_id)
+
+        act_as(**DEPT_ADMIN)
+        assert client.post(f"/reports/{rid}/approve").status_code == 403
+
+        act_as(**PLATFORM)
+        backlog = client.get("/github/repositories/unfiled").json()
+        assert [r["id"] for r in backlog["items"]] == [repo_id]
+        assert client.put(f"/github/repositories/department/{DEPT}", json={"repo_ids": [repo_id]}).status_code == 200
+
+        act_as(**DEPT_ADMIN)
+        approved = client.post(f"/reports/{rid}/approve")
+        assert approved.status_code == 200 and approved.json()["status"] == "approved"
+
     def test_refiling_moves_reports_to_the_new_department(self, client, act_as, db):
         repo_id = _seed_repo(db, gh_id=8, name="movable", dept_id=DEPT)
         act_as(**ENGINEER)
         _create(client, repo_id)
-        # A platform admin moves the repo to department 2; the old dept admin loses
-        # it, dept 2 gains it. (Only a platform admin can move a repo across depts
-        # they don't both admin.)
         act_as(**PLATFORM)
         assert client.put(f"/github/repositories/{repo_id}/department/2").status_code == 200
         assert client.get("/reports?dept_id=2").json()["total"] == 1
-        act_as(**DEPT_ADMIN)  # admin of dept 1
+        act_as(**DEPT_ADMIN)
         assert client.get(f"/reports?dept_id={DEPT}").json()["total"] == 0
 
 class TestReviewQueue:
-    """GET /reports/review-queue — the approver's cross-repo inbox of reports
-    awaiting a decision."""
 
     def test_lead_sees_submitted_reports_across_all_their_repos(self, client, act_as, db):
-        repo_a = _seed_repo(db, gh_id=1, name="alpha")   # both led by 20 / deputy 25
+        repo_a = _seed_repo(db, gh_id=1, name="alpha")
         repo_b = _seed_repo(db, gh_id=2, name="beta")
         _open_submitted(client, act_as, repo_a)
         _open_submitted(client, act_as, repo_b)
-        act_as(**ENGINEER_2)                              # a draft — not awaiting a decision
+        act_as(**ENGINEER_2)
         _create(client, repo_a, week_start="2026-06-01")
         act_as(**LEAD)
         body = client.get("/reports/review-queue").json()
@@ -536,7 +527,7 @@ class TestReviewQueue:
 
     def test_author_engineer_queue_is_empty(self, client, act_as, repo):
         _open_submitted(client, act_as, repo)
-        act_as(**ENGINEER)  # the author, not an approver
+        act_as(**ENGINEER)
         assert client.get("/reports/review-queue").json()["total"] == 0
 
     def test_manager_who_leads_nothing_sees_empty_queue(self, client, act_as, repo):

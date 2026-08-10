@@ -7,7 +7,7 @@ from app.security import get_current_user, require_dept_role, require_team_manag
 from app.services import teams as team_service
 
 router = APIRouter(prefix="/departments/{dept_id}/teams", tags=["teams"])
-flat_router = APIRouter(prefix="/teams", tags=["teams"]) # A flat "all teams I can see" view, with no department in the path. Mounted at /teams.
+flat_router = APIRouter(prefix="/teams", tags=["teams"])
 
 dept_admin = require_dept_role("admin")
 dept_member = require_dept_role()
@@ -34,13 +34,10 @@ def delete_team(dept_id: int, team_id: int, _: User = Depends(dept_admin), db: S
 
 @router.put("/{team_id}/manager/{manager_user_id}", response_model=TeamResponse)
 def set_team_manager(dept_id: int, team_id: int, manager_user_id: int, _: User = Depends(dept_admin), db: Session = Depends(get_db)) -> TeamResponse:
-    """Appoint the team's lead — the person who approves its weekly reports. A title
-    change only: it does not put them on the team or take them off another."""
     return team_service.set_manager(db, dept_id, team_id, manager_user_id)
 
 @router.delete("/{team_id}/manager", response_model=TeamResponse)
 def clear_team_manager(dept_id: int, team_id: int, _: User = Depends(dept_admin), db: Session = Depends(get_db)) -> TeamResponse:
-    """Leave the team without a lead. They stay on the team as a member."""
     return team_service.set_manager(db, dept_id, team_id, None)
 
 @router.get("/{team_id}/members", response_model=list[MemberResponse])
@@ -49,8 +46,6 @@ def list_team_members(dept_id: int, team_id: int, _: User = Depends(dept_member)
 
 @router.put("/{team_id}/members/{member_user_id}", response_model=MemberResponse)
 def add_team_member(dept_id: int, team_id: int, member_user_id: int, _: User = Depends(require_team_manager), db: Session = Depends(get_db)) -> MemberResponse:
-    """PUT, not POST — assigning someone to a team is idempotent, so repeating
-    the call lands in the same state instead of erroring."""
     return team_service.add_team_member(db, dept_id, team_id, member_user_id)
 
 @router.delete("/{team_id}/members/{member_user_id}", status_code=status.HTTP_204_NO_CONTENT)
@@ -59,6 +54,4 @@ def remove_team_member(dept_id: int, team_id: int, member_user_id: int, _: User 
 
 @flat_router.get("", response_model=list[TeamListItem])
 def list_all_teams(user: User = Depends(get_current_user), db: Session = Depends(get_db)) -> list[TeamListItem]:
-    """Every team you can see, across departments — platform admins get the whole
-    company, everyone else gets the departments they belong to."""
     return team_service.list_all_teams(db, user)

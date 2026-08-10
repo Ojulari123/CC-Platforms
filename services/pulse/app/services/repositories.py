@@ -1,12 +1,6 @@
-"""
-Pulse owns this; people are referenced by identity `user_id`. 
-Pulse can't see identity's role table, so it does NOT verify that an
-assigned lead/deputy actually holds manager/admin — the assigning admin is
-trusted for that (a future check could call identity's API). 
-
-Pulse only enforces a platform admin, or an admin of the repo's department
-
-Note: A repo's lead and deputy must be different people.
+"""Pulse can't see identity's role table, so it does NOT verify that an assigned
+lead/deputy actually holds manager/admin — the assigning admin is trusted for that (a
+future check could call identity's API).
 """
 from fastapi import HTTPException
 from sqlalchemy import func, or_, select, update
@@ -22,25 +16,16 @@ def _get_repo(db: Session, repo_id: int) -> Repository:
     return repo
 
 def _require_can_admin_repo(user: TokenClaims, repo: Repository) -> None:
-    """Who may change a repo's lead/deputy: a platform admin, or an admin of the
-    repo's current department. A repo with no department yet can only be
-    administered by a platform admin (there's no dept admin to defer to)."""
     if user.is_platform_admin:
         return
     if repo.dept_id is not None and user.role_in(repo.dept_id) == "admin":
         return
     raise HTTPException(status_code=403, detail="Requires a platform admin or an admin of this repo's department")
 
-def _can_see_repo(db: Session, user: TokenClaims, repo: Repository) -> bool:
-    """Who may see a repo exists at all: a platform admin, its lead or deputy, anyone
-    in its department, or anyone who has actually worked in it. Same vocabulary as
-    _require_can_admin_repo, one step looser — belonging to the department is enough
-    to look, administering it is what you need to change anything.
+def _can_file_repos(user: TokenClaims) -> bool:
+    return user.is_platform_admin or any(m.role == "admin" for m in user.memberships)
 
-    Worked-in matters because a freshly synced repo has no department yet: without it,
-    syncing a repo would look like it did nothing until an admin filed it. "Worked in"
-    is activity's definition (commit/PR/issue author, or PR reviewer), reused rather
-    than restated."""
+def _can_see_repo(db: Session, user: TokenClaims, repo: Repository) -> bool:
     if user.is_platform_admin:
         return True
     if user.user_id in (repo.lead_user_id, repo.deputy_user_id):
@@ -50,9 +35,7 @@ def _can_see_repo(db: Session, user: TokenClaims, repo: Repository) -> bool:
     return repo.id in repo_ids_worked_in(db, user.user_id)
 
 def visible_repo_scope(user: TokenClaims) -> list:
-    """_can_see_repo expressed as SQL, for any list that must be limited to repos the
-    caller can see — change this and _can_see_repo together. Meaningless for a platform
-    admin, who needs no filter; callers check that first."""
+    """_can_see_repo expressed as SQL — change this and _can_see_repo together."""
     scope = [
         Repository.lead_user_id == user.user_id,
         Repository.deputy_user_id == user.user_id,
@@ -63,14 +46,23 @@ def visible_repo_scope(user: TokenClaims) -> list:
     return scope
 
 def list_repositories(db: Session, user: TokenClaims, tracked_only: bool = False, limit: int = 50, offset: int = 0) -> tuple[list[Repository], int]:
-    """Repos the caller can see, paged in SQL. Private repo names and the lead/deputy
-    ids are not public within the company, so this filters rather than returning
-    everything to every valid token."""
     q = select(Repository)
     if tracked_only:
         q = q.where(Repository.is_tracked.is_(True))
     if not user.is_platform_admin:
         q = q.where(or_(*visible_repo_scope(user)))
+    total = db.scalar(select(func.count()).select_from(q.subquery())) or 0
+    rows = db.scalars(q.order_by(Repository.full_name).limit(limit).offset(offset))
+    return list(rows), total
+
+def unfiled_repositories(db: Session, user: TokenClaims, limit: int = 50, offset: int = 0) -> tuple[list[Repository], int]:
+    """Deliberately NOT filtered by visible_repo_scope: an unfiled repo is invisible to
+    a dept admin who never committed to it, and that is precisely the person who should
+    file it. Only admins reach this, and set_department already lets any dept admin file
+    any unfiled repo by id — so this adds discovery, not power."""
+    if not _can_file_repos(user):
+        raise HTTPException(status_code=403, detail="Requires a platform admin or a department admin")
+    q = select(Repository).where(Repository.dept_id.is_(None))
     total = db.scalar(select(func.count()).select_from(q.subquery())) or 0
     rows = db.scalars(q.order_by(Repository.full_name).limit(limit).offset(offset))
     return list(rows), total
@@ -83,35 +75,38 @@ def get_repository(db: Session, user: TokenClaims, repo_id: int) -> Repository:
         raise HTTPException(status_code=404, detail="Repository not found")
     return repo
 
-def set_department(db: Session, user: TokenClaims, repo_id: int, dept_id: int) -> Repository:
-    """File the repo under a department. An unfiled repo may be filed by an admin of
-    the target department (no owner to take it from); an already-filed repo can only
-    be moved by someone who admins BOTH its current and the target department, which
-    stops a dept admin capturing another department's repo. A platform admin can put
-    it anywhere.
-
-    Reports carry a denormalised `dept_id`. Engineers open reports on a repo before it has a department,
-    so those reports would be stranded with a null dept_id and stay invisible to the department admin. 
-    
-    Re-stamp every report on this repo so the snapshot follows the repo into (or between) departments."""
-    repo = _get_repo(db, repo_id)
+def _apply_department(db: Session, user: TokenClaims, repo: Repository, dept_id: int) -> None:
     if repo.dept_id is not None:
         _require_can_admin_repo(user, repo)
     if not user.is_platform_admin and user.role_in(dept_id) != "admin":
         raise HTTPException(status_code=403, detail="Requires a platform admin or an admin of that department")
     repo.dept_id = dept_id
     db.execute(update(Report).where(Report.repo_id == repo.id).values(dept_id=dept_id))
+
+def set_department(db: Session, user: TokenClaims, repo_id: int, dept_id: int) -> Repository:
+    """Reports carry a denormalised `dept_id`, and engineers open them before a repo is
+    filed, so every report on the repo is re-stamped here — otherwise they stay stranded
+    with a null dept_id, invisible to the department admin who should approve them."""
+    repo = _get_repo(db, repo_id)
+    _apply_department(db, user, repo, dept_id)
     db.commit()
     db.refresh(repo)
     return repo
 
-def set_tracked(db: Session, user: TokenClaims, repo_id: int, tracked: bool) -> Repository:
-    """Turn syncing for a repo on or off. Same admin rule as lead/deputy — deciding
-    whether a repo's activity is pulled at all is an admin call, not an engineer's.
+def set_departments(db: Session, user: TokenClaims, repo_ids: list[int], dept_id: int) -> list[Repository]:
+    repos = [_get_repo(db, rid) for rid in dict.fromkeys(repo_ids)]
+    try:
+        for repo in repos:
+            _apply_department(db, user, repo, dept_id)
+    except HTTPException:
+        db.rollback()
+        raise
+    db.commit()
+    for repo in repos:
+        db.refresh(repo)
+    return repos
 
-    Untracking hides nothing: the repo, its history and its reports stay readable
-    (see _can_see_repo). It only stops the next sync pass from spending API quota on
-    it. Hiding it would strand existing reports and leave no way to turn it back on."""
+def set_tracked(db: Session, user: TokenClaims, repo_id: int, tracked: bool) -> Repository:
     repo = _get_repo(db, repo_id)
     _require_can_admin_repo(user, repo)
     repo.is_tracked = tracked

@@ -25,8 +25,6 @@ const deptFilter = ref<number | null>(null);
 const authorFilter = ref<number | null>(null);
 const offset = ref(0);
 
-// Any signed-in employee may list departments, so this filter works even for
-// someone who only belongs to one of them.
 const { data: departments } = useQuery({
   queryKey: ["departments"],
   queryFn: () => identity.request<DepartmentResponse[]>("/departments"),

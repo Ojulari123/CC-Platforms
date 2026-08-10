@@ -19,7 +19,6 @@ def _seed_repo(db, gh_id=1, name="alpha", lead=None, dept=1):
     return repo
 
 def _seed_activity(db, user_id=10, lead=None):
-    """For user 10 in repo alpha: 2 commits (7-20, 7-10), 1 PR, 1 review, 1 issue."""
     repo = _seed_repo(db, lead=lead)
     db.add(Commit(repo_id=repo.id, sha="a1", author_user_id=user_id, message="newer", committed_at=_dt(2026, 7, 20)))
     db.add(Commit(repo_id=repo.id, sha="a2", author_user_id=user_id, message="older", committed_at=_dt(2026, 7, 10)))
@@ -39,7 +38,7 @@ class TestOwnActivity:
         act_as(**ENGINEER)
         body = client.get("/activity/me").json()
         assert body["counts"] == {"commits": 2, "pull_requests": 1, "reviews": 1, "issues": 1}
-        assert body["recent_commits"][0]["sha"] == "a1"  # most recent first
+        assert body["recent_commits"][0]["sha"] == "a1"
 
     def test_view_own_by_id(self, client, act_as, db):
         _seed_activity(db)
@@ -50,7 +49,7 @@ class TestOwnActivity:
         _seed_activity(db)
         act_as(**ENGINEER)
         body = client.get("/activity/me?since=2026-07-15").json()
-        assert body["counts"]["commits"] == 1  # only the 7-20 commit
+        assert body["counts"]["commits"] == 1
 
     def test_repo_filter(self, client, act_as, db):
         repo1 = _seed_activity(db)
@@ -65,16 +64,12 @@ class TestOwnActivity:
         assert client.get("/activity/me").status_code == 401
 
 def _assert_empty(body):
-    """What a caller with nothing to see gets: a 200 that reveals neither whether the
-    person exists nor whether they did anything."""
     assert body["counts"] == {"commits": 0, "pull_requests": 0, "reviews": 0, "issues": 0}
     assert body["recent_commits"] == [] and body["recent_pull_requests"] == []
     assert body["recent_reviews"] == [] and body["recent_issues"] == []
 
 class TestViewingOthers:
     def test_other_engineer_sees_an_empty_response(self, client, act_as, db):
-        # Was a 403. A peer oversees none of user 10's repos, so the honest answer is
-        # "here is everything you're entitled to see" — which is nothing.
         _seed_activity(db)
         act_as(**ENGINEER_2)
         r = client.get("/activity/10")
@@ -82,7 +77,6 @@ class TestViewingOthers:
         _assert_empty(r.json())
 
     def test_a_user_who_does_not_exist_is_indistinguishable_from_one_out_of_scope(self, client, act_as, db):
-        # The point of the empty 200: no probing for who exists.
         _seed_activity(db)
         act_as(**ENGINEER_2)
         real, unknown = client.get("/activity/10"), client.get("/activity/12345")
@@ -101,17 +95,13 @@ class TestViewingOthers:
         assert client.get("/activity/10").status_code == 200
 
     def test_department_admin_of_another_department_sees_nothing(self, client, act_as, db):
-        # Was a 403; still no data, but now a 200 that says nothing about user 10.
-        _seed_activity(db)  # repo alpha sits in dept 1; this admin only runs dept 2
+        _seed_activity(db)
         act_as(**OTHER_DEPT_ADMIN)
         r = client.get("/activity/10")
         assert r.status_code == 200
         _assert_empty(r.json())
 
     def test_department_admin_sees_no_activity_from_an_unfiled_repo(self, client, act_as, db):
-        # Was a 403. A repo with no department belongs to no admin's patch, so there
-        # is nothing a department admin can legitimately claim to oversee here — the
-        # counts must stay zero even though the response is now a 200.
         repo = _seed_repo(db, gh_id=5, name="unfiled", dept=None)
         db.add(Commit(repo_id=repo.id, sha="u1", author_user_id=10, message="c", committed_at=_dt(2026, 7, 20)))
         db.commit()
@@ -121,14 +111,12 @@ class TestViewingOthers:
         _assert_empty(r.json())
 
     def test_a_repo_lead_can_view(self, client, act_as, db):
-        # User 20 leads the very repo user 10 works in, so they may look.
         _seed_activity(db, lead=20)
         act_as(**LEAD)
         assert client.get("/activity/10").status_code == 200
 
     def test_a_lead_of_an_unrelated_repo_sees_nothing(self, client, act_as, db):
-        # Was a 403; the overlap between what 20 leads and where 10 works is empty.
-        _seed_activity(db)  # user 10's activity is all in alpha, which 20 does not lead
+        _seed_activity(db)
         _seed_repo(db, gh_id=9, name="led-by-20", lead=20, dept=None)
         act_as(**LEAD)
         r = client.get("/activity/10")
@@ -136,7 +124,7 @@ class TestViewingOthers:
         _assert_empty(r.json())
 
     def test_a_lead_only_sees_activity_from_the_repos_they_lead(self, client, act_as, db):
-        _seed_activity(db)  # 2 commits in alpha, which 20 does not lead
+        _seed_activity(db)
         beta = _seed_repo(db, gh_id=2, name="beta", lead=20, dept=None)
         db.add(Commit(repo_id=beta.id, sha="b1", author_user_id=10, message="beta", committed_at=_dt(2026, 7, 21)))
         db.commit()
@@ -155,10 +143,7 @@ class TestViewingOthers:
         assert r.status_code == 200 and r.json()["counts"]["commits"] == 1
 
     def test_repo_filter_outside_the_callers_scope_returns_nothing(self, client, act_as, db):
-        # Was a 403. The filter is intersected with the scope, so asking about a repo
-        # you have no standing over yields an empty 200 — same answer you'd get for a
-        # repo id that doesn't exist, so it can't be used to probe for private repos.
-        alpha = _seed_activity(db)  # in dept 1, not led by 20
+        alpha = _seed_activity(db)
         _seed_repo(db, gh_id=2, name="beta", lead=20, dept=None)
         db.add(Commit(repo_id=_seed_repo(db, gh_id=3, name="gamma", lead=20, dept=None).id, sha="g1",
                       author_user_id=10, message="g", committed_at=_dt(2026, 7, 21)))

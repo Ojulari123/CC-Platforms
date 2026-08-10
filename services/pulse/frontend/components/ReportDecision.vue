@@ -31,8 +31,7 @@ const decide = useMutation({
   },
 });
 
-// The API accepts a decision with no note. Sending someone's report back without
-// saying why is what we're stopping here, not the API.
+// The API accepts a decision with no note; the requirement is ours, not its.
 function submit(decision: Decision) {
   errorMessage.value = null;
   if (decision !== "approve" && !note.value.trim()) {

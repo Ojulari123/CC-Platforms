@@ -1,22 +1,11 @@
 """
-For each repo in the allowlist, pull its commits, pull requests,
-reviews and issues from GitHub and upsert them by GitHub's own ids (so re-runs
-update rather than duplicate). Pulls are incremental. Activity is attributed to an identity user
-when its GitHub login matches a connected account; otherwise just the login is
-kept. Every repo gets a `sync_runs` row as a paper trail, including one saying it was
-skipped for being untracked — "nothing happened" and "nothing was meant to happen"
-have to be tellable apart.
-
-A pass also starts by dropping the stored GitHub credentials of anyone identity now
-reports as inactive (app/services/leavers.py) — the daily job is the natural place to
-notice a leaver, and it means no pass ever calls GitHub with a departed employee's
-token.
-
-The Celery task in app/tasks.py calls `run_full_sync`. The GitHub calls go
-through a `GitHubClient`, injected via `make_client`, so tests drive a fake.
+Rows are upserted by GitHub's own ids, so a re-run — including the overlap window
+_commit_window re-requests — updates rather than duplicates. Every repo gets a
+`sync_runs` row either way: "nothing happened" and "nothing was meant to happen" have
+to be tellable apart.
 """
 import logging
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Callable
 import httpx
 from sqlalchemy import func, or_, select
@@ -36,8 +25,14 @@ def _dt(value: str | None) -> datetime | None:
         return None
     return datetime.fromisoformat(value.replace("Z", "+00:00"))
 
+def _as_utc(value: datetime | None) -> datetime | None:
+    """Cursors are always written in UTC, but not every driver reads them back with a
+    tzinfo. Without this a stored cursor can't be compared to a GitHub timestamp."""
+    if value is None or value.tzinfo is not None:
+        return value
+    return value.replace(tzinfo=timezone.utc)
+
 def _login_map(db: Session) -> dict[str, int]:
-    """github login (lowercased) → identity user_id, for attributing activity."""
     return {a.github_login.lower(): a.user_id for a in db.scalars(select(GitHubAccount))}
 
 def _attribute(login_map: dict[str, int], login: str | None, existing: int | None = None) -> int | None:
@@ -61,9 +56,9 @@ def _upsert_repository(db: Session, data: dict) -> Repository:
     repo.default_branch = data.get("default_branch")
     return repo
 
-def _sync_commits(db: Session, client, repo: Repository, login_map: dict[str, int], since: str | None) -> int:
+def _sync_commits(db: Session, client, repo: Repository, login_map: dict[str, int], since: str | None, sha: str | None = None) -> int:
     n = 0
-    for c in client.list_commits(repo.full_name, since=since):
+    for c in client.list_commits(repo.full_name, since=since, sha=sha):
         info = c.get("commit") or {}
         stamp = (info.get("committer") or info.get("author") or {}).get("date")
         login = (c.get("author") or {}).get("login")
@@ -110,7 +105,7 @@ def _sync_pull_requests(db: Session, client, repo: Repository, login_map: dict[s
         pr.url = p.get("html_url")
         if existing is None:
             db.add(pr)
-        db.flush()  # need pr.id to attach its reviews
+        db.flush()
         _sync_reviews(db, client, repo.full_name, pr, login_map)
         n += 1
     return n
@@ -136,17 +131,60 @@ def _sync_issues(db: Session, client, repo: Repository, login_map: dict[str, int
         n += 1
     return n
 
+def _commit_window(cursor: datetime | None) -> datetime | None:
+    """Commits are asked for from the cursor MINUS an overlap, because GitHub's `since`
+    filters on commit date, not push time: an engineer who commits offline for a week
+    and pushes today produces commits dated behind the cursor, which a window starting
+    at the cursor would never return — and never would on any later run either. Re-asking
+    for a window we mostly hold already is cheap: the rows upsert by (repo, sha)."""
+    if cursor is None:
+        return None
+    return cursor - timedelta(minutes=settings.GITHUB_SYNC_OVERLAP_MINUTES)
+
+def _pushed_since(data: dict, window_start: datetime | None) -> bool:
+    pushed = _dt(data.get("pushed_at"))
+    return window_start is None or pushed is None or pushed > window_start
+
+def _sync_branches(db: Session, client, repo: Repository, login_map: dict[str, int], since: str | None) -> tuple[int, int]:
+    n = scanned = 0
+    for b in client.list_branches(repo.full_name):
+        name, head = b.get("name"), (b.get("commit") or {}).get("sha")
+        if not name or name == repo.default_branch:
+            continue
+        if head and db.scalar(select(Commit.id).where(Commit.repo_id == repo.id, Commit.sha == head)):
+            continue
+        n += _sync_commits(db, client, repo, login_map, since, sha=name)
+        db.flush()
+        scanned += 1
+        if scanned >= settings.GITHUB_SYNC_MAX_BRANCHES:
+            break
+    return n, scanned
+
 def _sync_one_repo(db: Session, client, data: dict, login_map: dict[str, int]) -> tuple[Repository, dict]:
     repo = _upsert_repository(db, data)
-    db.flush()  # need repo.id for the child rows
-    since_str = repo.last_synced_at.isoformat() if repo.last_synced_at else None
-    since_dt = repo.last_synced_at
+    db.flush()
+    # Stamped before the fetch, not after, so anything landing mid-pass falls inside the
+    # next run's window instead of into the gap between the fetch and the stamp.
+    started = datetime.now(timezone.utc)
+    cursor = _as_utc(repo.last_synced_at)
+    window = _commit_window(cursor)
+    since_str = window.isoformat() if window else None
+    commits = branches = 0
+    if _pushed_since(data, window):
+        commits = _sync_commits(db, client, repo, login_map, since_str)
+        db.flush()
+        if settings.GITHUB_SYNC_BRANCHES:
+            extra, branches = _sync_branches(db, client, repo, login_map, since_str)
+            commits += extra
+    # Pull requests and issues key off `updated_at`, which GitHub moves whenever the item
+    # is touched, so the plain cursor is a sound filter for them and needs no overlap.
     counts = {
-        "commits": _sync_commits(db, client, repo, login_map, since_str),
-        "pull_requests": _sync_pull_requests(db, client, repo, login_map, since_dt),
-        "issues": _sync_issues(db, client, repo, login_map, since_str),
+        "commits": commits,
+        "branches": branches,
+        "pull_requests": _sync_pull_requests(db, client, repo, login_map, cursor),
+        "issues": _sync_issues(db, client, repo, login_map, cursor.isoformat() if cursor else None),
     }
-    repo.last_synced_at = datetime.now(timezone.utc)
+    repo.last_synced_at = started
     return repo, counts
 
 def _close(client) -> None:
@@ -155,9 +193,6 @@ def _close(client) -> None:
         close()
 
 def _client_and_repo(make_client: Callable[[str], object], tokens: list[str], full_name: str):
-    """Return a (client, repo_data) pair using the first connected account whose
-    token can actually see the repo. Lets a private repo sync as long as *some*
-    connected engineer has access, instead of failing on the first token."""
     last_exc: Exception | None = None
     for token in tokens:
         client = make_client(token)
@@ -166,26 +201,20 @@ def _client_and_repo(make_client: Callable[[str], object], tokens: list[str], fu
         except httpx.HTTPStatusError as exc:
             _close(client)
             if exc.response.status_code in (401, 403, 404):
-                last_exc = exc  # this account can't see it — try the next
+                last_exc = exc
                 continue
             raise
         except Exception:
-            # e.g. rate limited: no other token helps, so don't leak the http client.
             _close(client)
             raise
     raise last_exc or RuntimeError(f"no connected account can access {full_name}")
 
 def run_full_sync(db: Session, make_client: Callable[[str], object] | None = None) -> list[SyncRun]:
-    """One pass over the allowlist. Returns the SyncRun rows it wrote (one per
-    repo, or a single explanatory row when there's nothing to do)."""
     make_client = make_client or (lambda token: GitHubClient(token))
     runs: list[SyncRun] = []
 
-    # Leavers first, before any token is decrypted or sent to GitHub, so this pass
-    # can't call GitHub with a departed employee's credential. This is the daily job's
-    # to do because it already runs on a schedule, already lists the connected
-    # accounts, and is already a write — a GET resolving a name is not the place to
-    # delete rows.
+    # Leavers first, before any token is decrypted, so this pass can't call GitHub with
+    # a departed employee's credential.
     departed = revoke_departed_credentials(db)
     if departed:
         runs.append(_record(db, None, "success", "revoked stored GitHub credentials for departed user(s): " + ", ".join(str(u) for u in departed)))
@@ -201,8 +230,6 @@ def run_full_sync(db: Session, make_client: Callable[[str], object] | None = Non
     login_map = _login_map(db)
 
     for full_name in specs:
-        # Checked before any GitHub call, so an untracked repo costs no API quota. A
-        # repo we've never synced has no row yet and so can't have been switched off.
         known = db.scalar(select(Repository).where(Repository.full_name == full_name))
         if known is not None and not known.is_tracked:
             runs.append(_record(db, known.id, "skipped", f"{full_name}: not tracked"))
@@ -222,9 +249,6 @@ def run_full_sync(db: Session, make_client: Callable[[str], object] | None = Non
             run.finished_at = datetime.now(timezone.utc)
             db.commit()
         except GitHubRateLimited as exc:
-            # Not a failure of ours — GitHub's quota is spent. Record it as its own
-            # status with when it can resume, so "we were throttled" never reads as
-            # "the sync is broken". The next scheduled pass picks the repo up again.
             logger.warning("sync rate-limited for %s: %s", full_name, exc)
             db.rollback()
             run = db.get(SyncRun, run_id)
@@ -232,7 +256,7 @@ def run_full_sync(db: Session, make_client: Callable[[str], object] | None = Non
             run.detail = f"{full_name}: {exc}"[:1000]
             run.finished_at = datetime.now(timezone.utc)
             db.commit()
-        except Exception as exc:  # one bad repo mustn't sink the whole run
+        except Exception as exc:
             logger.exception("sync failed for %s", full_name)
             db.rollback()
             run = db.get(SyncRun, run_id)
@@ -247,21 +271,12 @@ def run_full_sync(db: Session, make_client: Callable[[str], object] | None = Non
     return runs
 
 def list_sync_runs(db: Session, user: TokenClaims, repo_id: int | None = None, limit: int = 50, offset: int = 0) -> tuple[list[SyncRun], int]:
-    """Sync history for repos the caller can see, newest first — the answer to "why is
-    my data stale?".
-
-    Scoped with the same predicate as the repository list, via an inner join, so a run
-    is visible exactly when its repo is. That join also drops the repo-less rows (the
-    "no repos configured" / "no connected account" ones), which are platform-level
-    config problems rather than anything a department can act on; a platform admin
-    isn't filtered and still sees them."""
     q = select(SyncRun)
     if repo_id is not None:
         q = q.where(SyncRun.repo_id == repo_id)
     if not user.is_platform_admin:
         q = q.join(Repository, Repository.id == SyncRun.repo_id).where(or_(*visible_repo_scope(user)))
     total = db.scalar(select(func.count()).select_from(q.subquery())) or 0
-    # started_at is second-resolution, so id breaks the tie within one pass.
     q = q.options(joinedload(SyncRun.repository)).order_by(SyncRun.started_at.desc(), SyncRun.id.desc())
     return list(db.scalars(q.limit(limit).offset(offset))), total
 

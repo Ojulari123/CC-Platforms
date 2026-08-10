@@ -16,9 +16,6 @@ from app.services.llm import LLMError
 router = APIRouter(prefix="/reports", tags=["reports"])
 
 def _named(model, rows, *pairs: tuple[str, str]) -> list:
-    """Validate rows into response models and fill their UserRef fields in one
-    identity call. Names are decoration — if identity can't answer they come back
-    null and the response is otherwise unchanged."""
     items = [model.model_validate(r) for r in rows]
     people.attach_names(items, *pairs)
     return items
@@ -29,20 +26,11 @@ def _named_report(report) -> ReportResponse:
 @router.post("", response_model=ReportResponse, status_code=status.HTTP_201_CREATED)
 @limiter.limit("30/minute", key_func=user_or_address_key)
 def create_report(request: Request, payload: ReportCreate, user: TokenClaims = Depends(current_user), db: Session = Depends(get_db)) -> ReportResponse:
-    """Write a report by hand. No LLM, so this only costs a row — the limit is a loose
-    guard against a runaway client, not a throttle on real use."""
     return _named_report(reports_service.create_report(db, user, payload))
 
 @router.post("/generate", response_model=ReportResponse, status_code=status.HTTP_201_CREATED)
 @limiter.limit("10/hour", key_func=user_or_address_key)
 def generate_report(request: Request, payload: GenerateRequest, user: TokenClaims = Depends(current_user), db: Session = Depends(get_db)) -> ReportResponse:
-    """AI-draft the caller's weekly report for a repo from their synced activity.
-    Additive to POST /reports (manual). Typed generation errors map to clean codes:
-    empty week -> 422, already-decided report -> 409, LLM failure -> 502.
-
-    This is the one endpoint that spends money: every call is an OpenAI call. Reporting
-    is a weekly habit, so 10 an hour is far more than anyone needs (a regenerate or two
-    across a few repos) while capping what a loop can run up."""
     try:
         return _named_report(generation_service.generate_report(db, user, payload.repo_id, payload.week_start))
     except NoActivityError as exc:
@@ -73,8 +61,6 @@ def get_report(report_id: int, user: TokenClaims = Depends(current_user), db: Se
 
 @router.get("/{report_id}/pdf")
 def report_pdf(report_id: int, user: TokenClaims = Depends(current_user), db: Session = Depends(get_db)) -> Response:
-    """Download the report as a PDF. Gated behind the same read permission as viewing
-    it — get_report raises 404/403 if you can't see it — then rendered with reportlab."""
     report = reports_service.get_report(db, user, report_id)
     body = pdf_service.render_report_pdf(db, report)
     filename = f"report-{report.id}-week-{report.week_start.isoformat()}.pdf"

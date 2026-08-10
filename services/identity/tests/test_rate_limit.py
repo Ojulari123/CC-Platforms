@@ -2,6 +2,7 @@ import time
 import pytest
 from fastapi import FastAPI, Request
 from fastapi.testclient import TestClient
+from limits.storage import memory as limits_memory
 from slowapi import _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 from pydantic import ValidationError
@@ -9,6 +10,29 @@ from app import rate_limit
 from app.config import Settings, settings
 from app.rate_limit import limiter, user_or_address_key
 from tests.conftest import auth
+
+class _FrozenClock:
+    """Stands in for the `time` module inside the limiter's in-memory storage."""
+
+    def __init__(self, now):
+        self._now = now
+
+    def time(self):
+        return self._now
+
+@pytest.fixture(autouse=True)
+def _deterministic_limiter(monkeypatch):
+    # A window opens on a key's first hit and closes a minute of real time later, so on
+    # a slow enough run the allowance a test just spent expires before the request that
+    # is meant to be refused. Frozen, only requests can spend a window.
+    monkeypatch.setattr(limits_memory, "time", _FrozenClock(time.time()))
+    # The flip side: a window now never expires on its own. A test that wants to watch
+    # one lapse has to move the _FrozenClock forward itself — waiting will never work.
+    # slowapi keeps counters on one limiter for the whole process; clear them either
+    # side so what a test sees never depends on which tests ran before it.
+    limiter.reset()
+    yield
+    limiter.reset()
 
 @pytest.fixture
 def rate_limited():
@@ -36,9 +60,6 @@ def _register(client, i):
     })
 
 def test_register_returns_429_after_5_attempts(client, rate_limited):
-    """The limiter counts ATTEMPTS, not successes. Registration is bootstrap-only
-    now, so only the first call succeeds — but the remaining rejected ones still
-    burn quota, which is exactly what stops someone hammering the endpoint."""
     assert _register(client, 0).status_code == 201  # bootstrap
     for i in range(1, 5):
         assert _register(client, i).status_code == 403  # closed, but still counted
@@ -46,7 +67,6 @@ def test_register_returns_429_after_5_attempts(client, rate_limited):
 
 
 def test_limits_do_not_leak_into_other_tests(client):
-    # limiter.enabled is False again here — 11 logins, no 429.
     payload = {"email": "ghost@example.com", "password": "Wrong123!pass"}
     for _ in range(11):
         r = client.post("/auth/login", json=payload)
@@ -62,8 +82,6 @@ def _bad_change(client, tokens):
 
 class TestAuthenticatedRoutesAreKeyedByUser:
     def test_two_users_from_one_address_get_separate_buckets(self, client, registered_user, engineer_user, rate_limited):
-        """Same TestClient, so identical client address. Alice burning the
-        change-password limit must not throttle the engineer."""
         limiter.reset()  # the fixtures above already spent quota on /auth/*
 
         for _ in range(5):
@@ -90,13 +108,9 @@ def _build_probe_app():
 _probe = _build_probe_app()
 
 def _probe_from(address):
-    """Another caller of the same probe app, at a different address. Same app on
-    purpose — a second app would register the limit twice."""
     return TestClient(_probe.app, client=(address, 40000))
 
 def _rogue_token(sub):
-    """A well-formed access token signed with a key that isn't identity's, down to
-    borrowing identity's kid. Only a signature check tells it apart from a real one."""
     from cryptography.hazmat.primitives import serialization
     from cryptography.hazmat.primitives.asymmetric import rsa
     from jose import jwt
@@ -119,8 +133,6 @@ def _rogue_token(sub):
 
 class TestUnverifiableTokensFallBackToTheAddress:
     def test_forged_bearer_tokens_share_one_bucket(self, rate_limited):
-        """A made-up token must not mint a fresh bucket per value — every one of
-        these falls back to the caller's address."""
         for i in range(3):
             assert _probe.get("/probe", headers={"Authorization": f"Bearer forged-{i}"}).status_code == 200
         assert _probe.get("/probe", headers={"Authorization": "Bearer forged-99"}).status_code == 429
@@ -132,8 +144,6 @@ class TestUnverifiableTokensFallBackToTheAddress:
         assert _probe.get("/probe").status_code == 429
 
     def test_a_real_token_is_not_dragged_into_the_fallback_bucket(self, client, registered_user, rate_limited):
-        """The fallback must be the address, not a key everyone shares — an
-        exhausted address bucket must leave a genuine caller alone."""
         limiter.reset()
         for _ in range(3):
             assert _probe.get("/probe", headers={"Authorization": "Bearer forged"}).status_code == 200
@@ -142,9 +152,6 @@ class TestUnverifiableTokensFallBackToTheAddress:
         assert _probe.get("/probe", headers=auth(registered_user["tokens"])).status_code == 200
 
     def test_the_fallback_is_the_address_and_not_one_shared_key(self, rate_limited):
-        """Two callers with unusable tokens must still be told apart. A constant
-        fallback key would pass the tests above and quietly let one stranger
-        throttle every other."""
         for _ in range(3):
             assert _probe_from("198.51.100.1").get("/probe", headers={"Authorization": "Bearer forged"}).status_code == 200
         assert _probe_from("198.51.100.1").get("/probe", headers={"Authorization": "Bearer forged"}).status_code == 429
@@ -152,8 +159,6 @@ class TestUnverifiableTokensFallBackToTheAddress:
         assert _probe_from("198.51.100.2").get("/probe", headers={"Authorization": "Bearer forged"}).status_code == 200
 
     def test_a_token_signed_by_someone_else_cannot_claim_a_users_bucket(self, client, registered_user, rate_limited):
-        """The reason the key function verifies rather than just reads `sub`:
-        otherwise anyone could mint sub=<victim> and spend their quota."""
         limiter.reset()
         user_id = registered_user["tokens"]["user"]["id"]
         for _ in range(3):
@@ -171,8 +176,6 @@ def _login(client, xff):
 
 class TestForwardedForIsOnlyReadWhenTrusted:
     def test_untrusted_forwarded_header_buys_nothing(self, client, rate_limited, monkeypatch):
-        """The default. A new X-Forwarded-For per request must not reset the
-        count, or the header becomes a bypass for every address limit."""
         monkeypatch.setattr(settings, "TRUST_PROXY_HEADERS", False)
         for i in range(10):
             assert _login(client, f"10.0.0.{i}").status_code == 401
@@ -188,9 +191,6 @@ class TestForwardedForIsOnlyReadWhenTrusted:
         assert _login(client, "203.0.113.2").status_code == 401
 
     def test_only_the_entry_the_trusted_proxy_wrote_counts(self, client, rate_limited, monkeypatch):
-        """With one proxy in front, the rightmost entry is the one it appended.
-        Entries to the left came from the caller, so varying them must not shake
-        the limit off."""
         monkeypatch.setattr(settings, "TRUST_PROXY_HEADERS", True)
         monkeypatch.setattr(settings, "TRUSTED_PROXY_COUNT", 1)
         for i in range(10):
@@ -198,8 +198,6 @@ class TestForwardedForIsOnlyReadWhenTrusted:
         assert _login(client, "9.9.9.9, 203.0.113.9").status_code == 429
 
     def test_a_second_hop_is_skipped_when_two_proxies_are_declared(self, client, rate_limited, monkeypatch):
-        """Two proxies: the rightmost entry is our own inner proxy, so the caller
-        is one further left."""
         monkeypatch.setattr(settings, "TRUST_PROXY_HEADERS", True)
         monkeypatch.setattr(settings, "TRUSTED_PROXY_COUNT", 2)
         for _ in range(10):
@@ -238,8 +236,6 @@ class TestAHeaderShorterThanTheProxyCountIsNotTrusted:
         assert _probe.get("/probe", headers={"X-Forwarded-For": "9.9.9.9, 203.0.113.9"}).status_code == 429
 
     def test_the_misconfiguration_is_warned_about_once_not_per_request(self, monkeypatch, caplog):
-        """A caller chooses when this fires, so a warning per request would be a
-        log-flooding lever. One per process is enough to spot a real misconfiguration."""
         monkeypatch.setattr(settings, "TRUSTED_PROXY_COUNT", 4)
         with caplog.at_level("WARNING"):
             for _ in range(5):
@@ -265,3 +261,38 @@ class TestTrustedProxyCountRefusesToDropBelowOne:
         with pytest.raises(ValidationError):
             settings.TRUSTED_PROXY_COUNT = 0
         assert settings.TRUSTED_PROXY_COUNT >= 1
+
+class _FakeStorage:
+    def __init__(self, reachable: bool):
+        self._reachable = reachable
+
+    def check(self) -> bool:
+        return self._reachable
+
+class TestRedisBackedCountersDegradeToMemory:
+    def test_storage_uri_used_when_redis_answers(self, monkeypatch):
+        monkeypatch.setattr(rate_limit.settings, "REDIS_URL", "redis://redis:6379/0")
+        monkeypatch.setattr(rate_limit, "storage_from_string", lambda uri, **kw: _FakeStorage(True))
+        assert rate_limit._resolve_storage_uri() == "redis://redis:6379/0"
+
+    def test_falls_back_to_memory_when_redis_is_unreachable(self, monkeypatch, caplog):
+        monkeypatch.setattr(rate_limit.settings, "REDIS_URL", "redis://redis:6379/0")
+        monkeypatch.setattr(rate_limit, "storage_from_string", lambda uri, **kw: _FakeStorage(False))
+        with caplog.at_level("WARNING"):
+            assert rate_limit._resolve_storage_uri() is None
+        assert "unreachable" in caplog.text
+
+    def test_falls_back_to_memory_when_the_probe_raises(self, monkeypatch, caplog):
+        monkeypatch.setattr(rate_limit.settings, "REDIS_URL", "redis://redis:6379/0")
+
+        def _boom(uri, **kw):
+            raise ValueError("no driver")
+
+        monkeypatch.setattr(rate_limit, "storage_from_string", _boom)
+        with caplog.at_level("WARNING"):
+            assert rate_limit._resolve_storage_uri() is None
+        assert "unusable" in caplog.text
+
+    def test_blank_redis_url_means_in_memory(self, monkeypatch):
+        monkeypatch.setattr(rate_limit.settings, "REDIS_URL", "")
+        assert rate_limit._resolve_storage_uri() is None

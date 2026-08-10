@@ -128,7 +128,9 @@ whoever calls the callback can't aim the browser somewhere else.
 | Method | Path | Who | Purpose |
 |---|---|---|---|
 | GET | `/github/repositories` · `/{id}` | scoped | List / view repos **you can see** (paginated) — see "Who sees a repo" below. A repo outside your scope reads as **404**, not 403 |
+| GET | `/github/repositories/unfiled` | dept/platform admin | Repos with no department yet — the backlog blocking department approvals. Not limited by "who sees a repo": a dept admin who never committed to a repo is exactly the person who should file it |
 | PUT | `/github/repositories/{id}/department/{dept_id}` | dept/platform admin | File the repo under a department |
+| PUT | `/github/repositories/department/{dept_id}` | dept/platform admin | File a batch (`{"repo_ids": [...]}`) under one department. All or nothing |
 | PUT | `/github/repositories/{id}/lead/{user_id}` · `deputy/{user_id}` | dept/platform admin | Set the repo's lead / deputy |
 | DELETE | `/github/repositories/{id}/lead` · `deputy` | dept/platform admin | Clear the repo's lead / deputy (no `user_id` in the path) |
 | PUT / DELETE | `/github/repositories/{id}/tracked` | dept/platform admin | Resume / stop syncing this repo. Not a visibility rule — history and reports stay readable |
@@ -139,6 +141,13 @@ commit, PR or issue there, or reviewed a PR there. That last rule is what makes 
 freshly synced repo visible before an admin has filed it under a department.
 Visibility is not permission: working in a repo never lets you set its department,
 lead or deputy.
+
+**Filing the backlog.** Nothing files a repo automatically — a department can't be
+guessed from who committed, because it decides who may *approve* the repo's reports,
+and two contributors from different departments would answer differently. So filing
+stays a human decision, and `GET /github/repositories/unfiled` is how the humans who
+can make it find the work. Filing a repo re-stamps every report already written about
+it, so reports written before the repo had a department become reviewable immediately.
 
 **Activity view**
 
@@ -241,9 +250,13 @@ in Swagger's **Authorize** box.
 Celery + Redis run the sync. A daily **beat** schedule fires
 `app.tasks.sync_all_repos` (hour set by `SYNC_HOUR_UTC`); a worker consumes it and
 pulls each allowlisted repo (`GITHUB_REPOS`, a comma-separated list of `owner/name`)
-**incrementally** — only what changed since the repo's `last_synced_at` — with GitHub
-pagination and rate-limit handling. `POST /github/sync?wait=true` runs one pass inline
-for demos.
+**incrementally** — from the repo's `last_synced_at`, minus an overlap
+(`GITHUB_SYNC_OVERLAP_MINUTES`, 7 days) because GitHub's `since` filters on commit date
+rather than push time, so work committed offline and pushed later sits behind the cursor.
+Branches other than the default one are pulled too (`GITHUB_SYNC_BRANCHES`), and a repo
+with no push since the window starts skips the commit and branch calls entirely. All of
+it goes through GitHub pagination and rate-limit handling. `POST /github/sync?wait=true`
+runs one pass inline for demos.
 
 Each repo's pass is recorded as a `SyncRun` with a status of **`running` ·
 `success` · `error` · `rate_limited` · `skipped`**. `rate_limited` is its own status on

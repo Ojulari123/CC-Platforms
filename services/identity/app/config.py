@@ -12,17 +12,15 @@ class Settings(BaseSettings):
     DATABASE_URL: str
     JWT_PRIVATE_KEY_PATH: str = "./keys/private.pem"
     JWT_PUBLIC_KEY_PATH: str = "./keys/public.pem"
-    # Public keys of superseded signing keys. Still verified, never signed with.
     JWT_RETIRED_PUBLIC_KEYS_DIR: str = "./keys/retired"
     JWT_ALGORITHM: str = "RS256"
     JWT_ISSUER: str = "cyphercrescent-identity"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 15
     SERVICE_TOKEN_EXPIRE_MINUTES: int = 10
     REFRESH_TOKEN_EXPIRE_DAYS: int = 7
-    # Both product frontends in dev: Forge on 3000, Pulse on 3001. They have to be
-    # different ports so both can run at once — identity is shared by both.
     CORS_ORIGINS: str = "http://localhost:3000,http://localhost:3001"
     RATE_LIMIT_ENABLED: bool = True
+    REDIS_URL: str = "redis://redis:6379/0"
     # Only turn on when identity really is behind proxies we control — see .env.example.
     TRUST_PROXY_HEADERS: bool = False
     TRUSTED_PROXY_COUNT: int = 1

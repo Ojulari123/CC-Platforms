@@ -15,8 +15,8 @@ PULSE_SCOPES = "users:read:email users:read:profile tokens:verify"
 FORGE_SCOPES = "tokens:verify"
 
 def seed_service_client(db: Session, *, client_id: str, secret: str, scopes: str) -> ServiceClient:
-    """Idempotent upsert, safe on every boot. Rotates the hashed secret and scopes but
-    never touches is_active — otherwise a re-seed would undo a manual revocation."""
+    """Rotates the hashed secret and scopes but never touches is_active — otherwise a
+    re-seed on every boot would undo a manual revocation."""
     client = db.scalar(select(ServiceClient).where(ServiceClient.client_id == client_id))
     if client is None:
         client = ServiceClient(client_id=client_id, is_active=True)
@@ -28,8 +28,6 @@ def seed_service_client(db: Session, *, client_id: str, secret: str, scopes: str
     return client
 
 def issue_client_credentials_token(db: Session, *, client_id: str, client_secret: str) -> tuple[str, int]:
-    """Returns (token, expires_in_seconds). Every failure — unknown client, wrong
-    secret, deactivated — 401s with the same message, so none is distinguishable."""
     client = db.scalar(select(ServiceClient).where(ServiceClient.client_id == client_id))
     if client is None:
         verify_password(client_secret, _DUMMY_SECRET_HASH)  # burn equal time, no enumeration
@@ -43,8 +41,6 @@ def issue_client_credentials_token(db: Session, *, client_id: str, client_secret
     return token, settings.SERVICE_TOKEN_EXPIRE_MINUTES * 60
 
 def _seed_if_configured(db: Session, *, client_id: str, secret: str, scopes: str) -> ServiceClient | None:
-    """Shared startup path for every product client. No-op unless a secret is
-    configured, so an unconfigured environment (import check, fresh boot) never crashes."""
     if not secret:
         return None
     return seed_service_client(db, client_id=client_id, secret=secret, scopes=scopes)

@@ -1,13 +1,3 @@
-"""Report-ready notification.
-
-Covers the whole notify path WITHOUT touching the network: the submit trigger fires,
-a broken notifier can never break submit (log-and-continue), send() enforces config and
-speaks the Brevo contract, and the real notify path resolves the repo's lead/deputy to
-emails and actually attempts a send per approver.
-
-Email resolution goes through identity; here it's mocked (resolve_emails) so no network
-is touched. These tests pin the real-send-attempt behaviour, not the old log-only stub.
-"""
 import logging
 from datetime import datetime, timezone
 from types import SimpleNamespace
@@ -30,7 +20,6 @@ ENGINEER = dict(user_id=10, memberships=[{"dept_id": DEPT, "team_id": None, "rol
 
 
 def _seed_repo(db, lead=LEAD_ID, deputy=DEPUTY_ID):
-    """A repo engineer 10 has a commit in, so they may open + submit a report on it."""
     repo = Repository(
         github_repo_id=1, full_name="org/alpha", owner="org", name="alpha",
         dept_id=DEPT, lead_user_id=lead, deputy_user_id=deputy,
@@ -54,7 +43,6 @@ class TestSubmitTrigger:
     def test_submit_fires_notify_exactly_once(self, client, act_as, db, monkeypatch):
         repo_id = _seed_repo(db)
         calls = []
-        # Patch the name bound in reports.py (imported there), not the source module.
         monkeypatch.setattr("app.services.reports.notify_report_ready",
                             lambda report: calls.append(report.id))
         r = _open_submitted(client, act_as, repo_id)
@@ -63,9 +51,6 @@ class TestSubmitTrigger:
         assert len(calls) == 1
 
     def test_a_broken_notifier_never_breaks_submit(self, client, act_as, db, monkeypatch):
-        # Make the REAL notifier blow up in an UNEXPECTED way (resolve_emails raises a bare
-        # RuntimeError, not a typed error). The catch-all inside notify_report_ready must
-        # swallow it and the submit must still succeed.
         repo_id = _seed_repo(db)
 
         def _boom(*a, **k):
@@ -121,8 +106,6 @@ def _report(lead=LEAD_ID, deputy=DEPUTY_ID, rid=7, dept_id=DEPT, author=10):
 
 
 class TestNotifyRealSend:
-    """notify_report_ready now resolves approver ids to emails and actually attempts a
-    send per approver — best-effort, never raising."""
 
     def test_two_approvers_each_get_a_send(self, monkeypatch):
         sends = []
@@ -136,12 +119,10 @@ class TestNotifyRealSend:
 
         assert {s[0] for s in sends} == {"lead@x.com", "deputy@x.com"}
         assert len(sends) == 2
-        # subject + link are what the approver actually sees.
         assert all(s[1] == "A report is ready for your review" for s in sends)
         assert all("http://front/reports/7" in s[2] for s in sends)
 
     def test_only_resolved_ids_are_emailed(self, monkeypatch):
-        # deputy id resolves to nothing (unknown id omitted by identity) → one send only.
         sends = []
         monkeypatch.setattr(email_mod, "resolve_emails", lambda ids: {20: "lead@x.com"})
         monkeypatch.setattr(email_mod, "send",
@@ -159,13 +140,11 @@ class TestNotifyRealSend:
         monkeypatch.setattr(email_mod, "send",
                             lambda *, to, subject, html: sends.append(to))
         with caplog.at_level(logging.WARNING, logger="app.services.email"):
-            notify_report_ready(_report())  # must NOT raise
+            notify_report_ready(_report())
         assert sends == []
         assert "skipped" in caplog.text
 
     def test_one_bad_address_still_notifies_the_other_approver(self, monkeypatch, caplog):
-        # Brevo rejects the FIRST approver's address. The second must still be attempted:
-        # one bad recipient can't cancel the whole notification.
         sends = []
 
         def _send(*, to, subject, html):
@@ -180,11 +159,9 @@ class TestNotifyRealSend:
             notify_report_ready(_report())
 
         assert sends == ["deputy@x.com"]
-        assert "lead@x.com" in caplog.text  # the failure names the recipient it happened to
+        assert "lead@x.com" in caplog.text
 
     def test_an_unexpected_send_failure_also_only_skips_that_recipient(self, monkeypatch, caplog):
-        # Not a typed email error — anything the send path can throw must stay contained
-        # to the recipient it happened on.
         sends = []
 
         def _send(*, to, subject, html):
@@ -207,10 +184,9 @@ class TestNotifyRealSend:
 
         monkeypatch.setattr(email_mod, "resolve_emails", lambda ids: {20: "lead@x.com"})
         monkeypatch.setattr(email_mod, "send", _boom)
-        notify_report_ready(_report())  # swallowed, no raise
+        notify_report_ready(_report())
 
     def test_unconfigured_secret_skips_cleanly(self, monkeypatch, caplog):
-        # Real resolve_emails with no client secret raises immediately → log-and-skip.
         sends = []
         monkeypatch.setattr(settings, "PULSE_SERVICE_CLIENT_SECRET", "")
         monkeypatch.setattr(email_mod, "send",
@@ -221,8 +197,6 @@ class TestNotifyRealSend:
         assert "skipped" in caplog.text
 
     def test_approvers_but_none_resolve_logs_and_returns(self, monkeypatch, caplog):
-        # Identity succeeds but knows none of the ids (all unknown/omitted) → empty dict,
-        # so there's nothing to send.
         sends = []
         monkeypatch.setattr(email_mod, "resolve_emails", lambda ids: {})
         monkeypatch.setattr(email_mod, "send",
@@ -233,8 +207,6 @@ class TestNotifyRealSend:
         assert "no approver emails resolved" in caplog.text
 
     def test_no_approvers_but_a_department_logs_and_returns(self, monkeypatch, caplog):
-        # A filed repo still has an approver route (its dept admins), they just can't be
-        # resolved to addresses from here.
         sends = []
         monkeypatch.setattr(email_mod, "send",
                             lambda *, to, subject, html: sends.append(to))
@@ -245,9 +217,6 @@ class TestNotifyRealSend:
 
 
 class TestNoApproverWarning:
-    """No lead, no deputy, and the repo was never filed under a department: nobody is
-    named to review the report. The author is told what admin action unblocks it,
-    instead of the submit going quiet."""
 
     def test_the_author_is_warned_and_told_what_to_ask_for(self, monkeypatch, caplog):
         sends = []
@@ -282,10 +251,9 @@ class TestNoApproverWarning:
 
         monkeypatch.setattr(email_mod, "resolve_emails", lambda ids: {10: "author@x.com"})
         monkeypatch.setattr(email_mod, "send", _boom)
-        notify_report_ready(_report(lead=None, deputy=None, dept_id=None))  # swallowed
+        notify_report_ready(_report(lead=None, deputy=None, dept_id=None))
 
     def test_submitting_onto_an_unfiled_repo_warns_the_author(self, client, act_as, db, monkeypatch):
-        # End to end through the API: repo with no department, no lead, no deputy.
         repo = Repository(github_repo_id=2, full_name="org/unfiled", owner="org", name="unfiled",
                           dept_id=None, lead_user_id=None, deputy_user_id=None)
         db.add(repo)

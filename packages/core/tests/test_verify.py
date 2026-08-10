@@ -25,7 +25,6 @@ def test_expired_token_rejected(jwks_client, sign_token):
         verify_access_token(token, jwks_client, issuer=ISSUER)
 
 def test_refresh_token_type_rejected(jwks_client, sign_token):
-    # A token that looks otherwise valid but isn't an access token.
     token = sign_token(token_type="refresh")
     with pytest.raises(InvalidToken, match="Wrong token type"):
         verify_access_token(token, jwks_client, issuer=ISSUER)
@@ -43,7 +42,6 @@ def test_missing_kid_rejected(jwks_client, rsa_keypair):
         verify_access_token(token, jwks_client, issuer=ISSUER)
 
 def test_unknown_kid_rejected(jwks_client, sign_token, rsa_keypair):
-    # Sign with a different key, present a kid the JWKS doesn't have.
     from cryptography.hazmat.primitives.asymmetric import rsa as rsa_lib
     from cryptography.hazmat.primitives import serialization
     from jose import jwt as jose_jwt

@@ -28,9 +28,6 @@ async def _read_capped(file: UploadFile) -> bytes:
 @router.post("", response_model=DatasetResponse, status_code=status.HTTP_201_CREATED)
 @limiter.limit("10/minute")
 async def upload_dataset(request: Request, file: UploadFile = File(...), name: str | None = Form(default=None), user: TokenClaims = Depends(current_user), db: Session = Depends(get_db)) -> DatasetResponse:
-    """Upload a CSV as a new dataset owned by the caller. `name` defaults to the
-    uploaded filename when omitted. Tightest limit in the service: each call
-    buffers up to MAX_UPLOAD_MB and writes every row to Postgres."""
     raw = await _read_capped(file)
     dataset = dataset_service.create_dataset(
         db,
@@ -71,6 +68,4 @@ def preview_dataset(request: Request, dataset_id: int, rows: int = Query(default
 @router.delete("/{dataset_id}", status_code=status.HTTP_204_NO_CONTENT)
 @limiter.limit("30/minute")
 def delete_dataset(request: Request, dataset_id: int, user: TokenClaims = Depends(current_user), db: Session = Depends(get_db)) -> None:
-    # 30/min, same as preview: a write, so tighter than the 60/min reads, but it
-    # only drops one row — nothing like an upload's parse-and-insert, so not 10.
     dataset_service.delete_dataset(db, dataset_id, user.user_id)

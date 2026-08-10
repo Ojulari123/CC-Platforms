@@ -36,8 +36,6 @@ class TestCreateInvite:
         assert listed.json() == []
 
     def test_invite_to_unknown_department_404(self, client, registered_user, sent_emails):
-        """A platform admin skips the membership check, so a bogus dept_id gets
-        all the way to the email with no department behind it."""
         r = _invite(client, registered_user["tokens"], 999999)
         assert r.status_code == 404
         assert r.json()["detail"] == "Department not found"
@@ -53,7 +51,6 @@ class TestCreateInvite:
         assert "already a member" in r.json()["detail"]
 
     def test_can_invite_someone_who_is_in_another_department(self, client, registered_user, second_dept, invite_user, sent_emails):
-        """Being in Data must not block an invite into Engineering."""
         invite_user(registered_user["tokens"], second_dept, "bob@example.com", "engineer")
         r = _invite(client, registered_user["tokens"], registered_user["dept_id"], email="bob@example.com")
         assert r.status_code == 201
@@ -162,7 +159,6 @@ class TestListRevokeInvites:
     def test_invites_are_scoped_to_their_department(self, client, registered_user, second_dept, sent_emails):
         tokens, eng_dept = registered_user["tokens"], registered_user["dept_id"]
         invite_id = _invite(client, tokens, eng_dept).json()["id"]
-        # Same invite id, wrong department in the path.
         r = client.delete(f"/departments/{second_dept}/invites/{invite_id}", headers=auth(tokens))
         assert r.status_code == 404
 
@@ -187,9 +183,6 @@ class TestInvitePreview:
         assert client.get("/invites/preview?token=nonsense").status_code == 400
 
 class TestInviteStraightOntoATeam:
-    """You can hire someone into a team, not just a department — the invite
-    carries an optional team_id and the invitee lands on it already assigned."""
-
     def test_email_and_preview_name_the_team(self, client, registered_user, sent_emails):
         tokens, dept_id = registered_user["tokens"], registered_user["dept_id"]
         team_id = client.post(f"/departments/{dept_id}/teams", json={"name": "Platform"}, headers=auth(tokens)).json()["id"]
@@ -217,7 +210,6 @@ class TestInviteStraightOntoATeam:
         assert [m["email"] for m in roster] == ["dami@example.com"]
 
     def test_unassigned_invitee_can_be_added_to_a_team_afterwards(self, client, registered_user, sent_emails):
-        """The other path: join the department first, get a team later."""
         tokens, dept_id = registered_user["tokens"], registered_user["dept_id"]
         _invite(client, tokens, dept_id)
         accepted = _accept(client, sent_emails[0]["raw_token"]).json()

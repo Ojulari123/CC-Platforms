@@ -52,7 +52,6 @@ async function onSubmit() {
     if (status === 400 && detail && /password/i.test(detail)) {
       errorMessage.value = detail;
     } else if (status === 400) {
-      // Invalid, already-used or expired link — identity words each one itself.
       linkDead.value = true;
       errorMessage.value = detail ?? "This reset link is no longer valid.";
     } else if (status === 422) {

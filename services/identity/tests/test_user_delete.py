@@ -48,8 +48,6 @@ class TestDeleteCleansUp:
         assert db_session.scalar(select(func.count()).select_from(RefreshToken).where(RefreshToken.user_id == stray_id)) == 0
 
     def test_password_reset_tokens_go(self, client, registered_user, db_session):
-        """Requesting a reset doesn't touch token_version, so an account with a
-        pending link is still deletable — and the link must not outlive it."""
         stray = _signup(client)
         stray_id = _id_of(client, stray)
         db_session.add(PasswordResetToken(
@@ -63,8 +61,6 @@ class TestDeleteCleansUp:
         assert db_session.scalar(select(func.count()).select_from(PasswordResetToken).where(PasswordResetToken.user_id == stray_id)) == 0
 
     def test_an_invite_they_sent_survives_without_an_inviter(self, client, registered_user, db_session):
-        """invites.invited_by is ON DELETE SET NULL, not CASCADE: someone else is
-        waiting on that link, so it outlives the account that sent it."""
         stray = _signup(client)
         stray_id = _id_of(client, stray)
         db_session.add(Invite(
@@ -97,9 +93,6 @@ class TestDeleteIsRefused:
         assert "Deactivate it instead" in detail
 
     def test_an_ex_member_is_still_refused_after_removal(self, client, registered_user, invite_user, db_session):
-        """The catastrophic case: remove_member deletes the membership row, so a
-        live-membership count alone would happily delete someone who worked here
-        for years. onboarded_at is stamped when they joined and never cleared."""
         dept = registered_user["dept_id"]
         leaver = invite_user(registered_user["tokens"], dept, "leaver@example.com", "engineer")
         leaver_id = _id_of(client, leaver)
@@ -113,8 +106,6 @@ class TestDeleteIsRefused:
         assert "Deactivate it instead" in r.json()["detail"]
 
     def test_an_ex_member_stays_refused_even_with_no_other_trace(self, client, registered_user, invite_user, db_session):
-        """Strips every older signal — token_version, email_verified, the accepted
-        invite row — so only onboarded_at is left holding the line."""
         dept = registered_user["dept_id"]
         leaver = invite_user(registered_user["tokens"], dept, "leaver@example.com", "engineer")
         leaver_id = _id_of(client, leaver)
@@ -131,8 +122,6 @@ class TestDeleteIsRefused:
         assert "they have been part of a department" in r.json()["detail"]
 
     def test_an_invite_accepter_is_refused(self, client, registered_user, db_session):
-        """email_verified is only ever set by accepting an emailed invite, and it
-        survives everything afterwards."""
         stray = _signup(client)
         stray_id = _id_of(client, stray)
         db_session.get(User, stray_id).email_verified = True
@@ -143,8 +132,6 @@ class TestDeleteIsRefused:
         assert "accepting an emailed invite" in r.json()["detail"]
 
     def test_an_accepted_invite_row_refuses_it(self, client, registered_user, db_session):
-        """The invite row outlives the membership it created, so it still says
-        this address was once placed in a department."""
         stray = _signup(client)
         stray_id = _id_of(client, stray)
         db_session.add(Invite(
@@ -160,8 +147,6 @@ class TestDeleteIsRefused:
         assert "accepted a department invite before" in r.json()["detail"]
 
     def test_a_team_lead_is_refused(self, client, registered_user, db_session):
-        """Team.manager_user_id is SET NULL, so without this the delete would
-        quietly leave the team with nobody in charge."""
         dept = registered_user["dept_id"]
         team_id = client.post(f"/departments/{dept}/teams", json={"name": "Platform"}, headers=auth(registered_user["tokens"])).json()["id"]
         stray = _signup(client)
@@ -185,8 +170,6 @@ class TestDeleteIsRefused:
         assert "still heads Engineering" in r.json()["detail"]
 
     def test_a_platform_admin_is_refused(self, client, registered_user, db_session):
-        """Which also makes the last platform admin undeletable: you have to
-        demote first, and revoke_platform_admin refuses to demote the only one."""
         stray = _signup(client)
         stray_id = _id_of(client, stray)
         db_session.get(User, stray_id).is_platform_admin = True
@@ -220,9 +203,6 @@ class TestDeleteIsRefused:
         assert r.json()["detail"] == "User not found"
 
 class TestOnboardedAtIsStampedEverywhere:
-    """Every path that creates a Membership must stamp it, or that account
-    silently becomes deletable once the membership row is removed."""
-
     def test_the_bootstrap_registration_stamps_it(self, client, registered_user, db_session):
         assert db_session.get(User, _id_of(client, registered_user["tokens"])).onboarded_at is not None
 
@@ -245,8 +225,6 @@ class TestOnboardedAtIsStampedEverywhere:
         assert db_session.get(User, stray_id).onboarded_at is not None
 
     def test_a_second_membership_does_not_move_the_stamp(self, client, registered_user, second_dept, invite_user, db_session):
-        """It records when they were first onboarded — later placements must not
-        rewrite it, or "never onboarded" stops being a stable question."""
         joiner = invite_user(registered_user["tokens"], registered_user["dept_id"], "joiner@example.com", "engineer")
         joiner_id = _id_of(client, joiner)
         db_session.expire_all()
@@ -261,8 +239,6 @@ class TestOnboardedAtIsStampedEverywhere:
 
 class TestDeleteIsAllowedForNeverOnboardedAccounts:
     def test_changing_a_password_no_longer_blocks_deletion(self, client, registered_user):
-        """The false positive the old token_version rule created: a typo'd signup
-        that reset its own password became permanently undeletable."""
         stray = _signup(client)
         stray_id = _id_of(client, stray)
         r = client.post("/auth/change-password", headers=auth(stray), json={

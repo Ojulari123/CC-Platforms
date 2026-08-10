@@ -86,7 +86,6 @@ async function onAccept() {
     });
     token.value = "";
     password.value = "";
-    // Accepting returns a full token pair, so the invitee lands signed in.
     await auth.adoptSession(pair);
     // replace, not push: the entry holding the token leaves the history too.
     await router.replace("/");

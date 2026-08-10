@@ -45,10 +45,13 @@ services:
     # (Neon) URL instead.
     environment:
       DATABASE_URL: postgresql+psycopg://${CC_POSTGRES_USER:-crescent}:${CC_POSTGRES_PASSWORD:-crescent}@postgres:5432/identity
+      REDIS_URL: redis://redis:6379/0
     ports:
       - "8001:8000"
     depends_on:
       postgres:
+        condition: service_healthy
+      redis:
         condition: service_healthy
     volumes:
       - ./services/identity:/app

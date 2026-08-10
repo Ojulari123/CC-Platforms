@@ -1,5 +1,5 @@
 import os
-from cryptography.fernet import Fernet as _Fernet # fixed dummy id/secret and a fresh Fernet key so the connect flow works without real credentials.
+from cryptography.fernet import Fernet as _Fernet
 import httpx
 import pytest
 from fastapi import HTTPException, status
@@ -9,9 +9,6 @@ from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 from crescent_core import TokenClaims
 
-# Every setting app/config.py declares is pinned here, assigned not setdefault, so .env
-# and exported shell vars can't change a test result. Credentials stay blank on purpose:
-# a test that wants the identity or email path stubs it, as the existing ones do.
 _ambient_db_url = os.environ.get("DATABASE_URL")
 os.environ["DATABASE_URL"] = "sqlite:///:memory:"
 os.environ["IDENTITY_JWKS_URL"] = "http://identity-not-called/.well-known/jwks.json"
@@ -22,10 +19,12 @@ os.environ["JWT_ISSUER"] = "cyphercrescent-identity"
 os.environ["JWKS_TTL_SECONDS"] = "3600"
 os.environ["TOKEN_VERSION_TTL_SECONDS"] = "60"
 os.environ["CORS_ORIGINS"] = "http://localhost:3000,http://localhost:3001"
-os.environ["RATE_LIMIT_ENABLED"] = "false"  # don't throttle the test client
+os.environ["RATE_LIMIT_ENABLED"] = "false"
 os.environ["TRUST_PROXY_HEADERS"] = "false"
 os.environ["TRUSTED_PROXY_COUNT"] = "1"
-os.environ["REDIS_URL"] = "redis://redis-not-called:6379/0"
+# Blank, not a dummy host: app.rate_limit probes this store at import time, and a URL
+# with a hostname makes that a real DNS lookup and connect attempt from the test run.
+os.environ["REDIS_URL"] = ""
 os.environ["SYNC_HOUR_UTC"] = "2"
 os.environ["GITHUB_CLIENT_ID"] = "test-client-id"
 os.environ["GITHUB_CLIENT_SECRET"] = "test-client-secret"
@@ -35,7 +34,9 @@ os.environ["GITHUB_OAUTH_BASE"] = "https://github.com"
 os.environ["GITHUB_API_URL"] = "https://api.github-not-called.test"
 os.environ["GITHUB_TOKEN_ENC_KEY"] = _Fernet.generate_key().decode()
 os.environ["GITHUB_REPOS"] = ""
-# OPENAI_API_KEY too: config.py accepts either name for the one LLM_API_KEY setting.
+os.environ["GITHUB_SYNC_OVERLAP_MINUTES"] = "10080"
+os.environ["GITHUB_SYNC_BRANCHES"] = "true"
+os.environ["GITHUB_SYNC_MAX_BRANCHES"] = "25"
 os.environ["LLM_API_KEY"] = ""
 os.environ["OPENAI_API_KEY"] = ""
 os.environ["LLM_MODEL"] = "gpt-4o-mini"
@@ -50,9 +51,6 @@ if _ambient_db_url and _ambient_db_url != "sqlite:///:memory:":
     def pytest_report_header():
         return "conftest: exported DATABASE_URL ignored; tests always use in-memory SQLite"
 
-# Blank credentials make an outbound call useless; this makes it impossible. Only the
-# socket-backed transports are replaced, so TestClient and MockTransport still work.
-# Attempts are recorded too, since the notify path swallows every exception.
 BLOCKED_REQUESTS: list[str] = []
 
 def _block(request) -> None:
@@ -109,7 +107,6 @@ def _fresh_db():
     Base.metadata.drop_all(_engine)
     identity_client.clear_profile_cache()
     _active["claims"] = None
-    # Fails the test that tried, even if its own code swallowed the error.
     assert not BLOCKED_REQUESTS, f"test attempted outbound HTTP: {BLOCKED_REQUESTS}"
 
 @pytest.fixture

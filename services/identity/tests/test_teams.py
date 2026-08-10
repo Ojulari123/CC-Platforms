@@ -47,8 +47,6 @@ class TestTeamCrud:
         assert r.json()["slug"] == "core"
 
     def test_create_team_in_unknown_department_404(self, client, admin):
-        """A platform admin skips the membership check, so nothing else stops a
-        bogus dept_id reaching the insert."""
         r = client.post("/departments/999999/teams", json={"name": "Ghost"}, headers=admin)
         assert r.status_code == 404
         assert r.json()["detail"] == "Department not found"
@@ -95,7 +93,6 @@ class TestTeamMembers:
         assert len(client.get(f"/departments/{dept}/teams/{team_id}/members", headers=admin).json()) == 1
 
     def test_moving_to_another_team_leaves_the_first(self, client, dept, admin, engineer_user):
-        """One team per person: joining the second removes them from the first."""
         a = _team(client, dept, admin, "Alpha")
         b = _team(client, dept, admin, "Beta")
         eng_id = client.get("/me", headers=auth(engineer_user)).json()["id"]
@@ -113,7 +110,6 @@ class TestTeamMembers:
 
         assert client.delete(f"/departments/{dept}/teams/{team_id}/members/{eng_id}", headers=admin).status_code == 204
         assert client.get(f"/departments/{dept}/teams/{team_id}/members", headers=admin).json() == []
-        # Still in the department, just unassigned.
         members = client.get(f"/departments/{dept}/members", headers=admin).json()
         assert next(m for m in members["items"] if m["user_id"] == eng_id)["team_id"] is None
 
@@ -158,11 +154,7 @@ class TestTeamMembers:
         assert membership["team_name"] == "Platform"
 
 class TestTeamLeadRoster:
-    """The named lead owns who's on THEIR team; they approve its reports in
-    Puls, but nothing beyond it."""
-
     def _lead_of(self, client, dept, admin, team_id, registered_user, invite_user, email="mgr@example.com"):
-        """Invite a manager and appoint them the team's lead."""
         mgr = invite_user(registered_user["tokens"], dept, email, "manager")
         mgr_id = client.get("/me", headers=auth(mgr)).json()["id"]
         r = client.put(f"/departments/{dept}/teams/{team_id}/manager/{mgr_id}", headers=admin)
@@ -197,7 +189,6 @@ class TestTeamLeadRoster:
         assert "lead of this team" in r.json()["detail"]
 
     def test_manager_who_is_not_the_lead_cannot_manage(self, client, dept, admin, registered_user, invite_user, engineer_user):
-        """Holding the manager role isn't enough — you have to be THE lead."""
         team_id = _team(client, dept, admin, "Platform")
         other = invite_user(registered_user["tokens"], dept, "loose@example.com", "manager")
         eng_id = client.get("/me", headers=auth(engineer_user)).json()["id"]
@@ -225,8 +216,6 @@ class TestTeamLeadRoster:
         assert client.put(f"/departments/{dept}/teams/{team_id}/members/{eng_id}", headers=auth(engineer_user)).status_code == 403
 
 class TestFlatTeamList:
-    """GET /teams — look at teams without knowing a department id first."""
-
     def test_platform_admin_sees_every_team(self, client, dept, admin, second_dept):
         _team(client, dept, admin, "Platform")
         _team(client, second_dept, admin, "Data Infra")
@@ -257,9 +246,6 @@ class TestFlatTeamList:
         assert client.get("/teams").status_code == 401
 
 class TestTeamLead:
-    """Team.manager_user_id — the single named answer to 'who runs this team',
-    and the same one Pulse will use to route report approvals."""
-
     def _manager(self, client, dept, registered_user, invite_user, email="mgr@example.com"):
         mgr = invite_user(registered_user["tokens"], dept, email, "manager")
         return mgr, client.get("/me", headers=auth(mgr)).json()["id"]
@@ -279,8 +265,6 @@ class TestTeamLead:
         assert r.json()["manager_name"] == "Mgr Tester"
 
     def test_appointing_a_lead_moves_nobody(self, client, dept, admin, registered_user, invite_user):
-        """Leading a team and being on it are separate facts. Appointment is a
-        title change only — it must not quietly reassign anyone."""
         alpha = _team(client, dept, admin, "Alpha")
         beta = _team(client, dept, admin, "Beta")
         _, mgr_id = self._manager(client, dept, registered_user, invite_user)
@@ -288,7 +272,6 @@ class TestTeamLead:
 
         client.put(f"/departments/{dept}/teams/{beta}/manager/{mgr_id}", headers=admin)
 
-        # Still rostered on Alpha, now leads Beta without being on it.
         assert [m["user_id"] for m in client.get(f"/departments/{dept}/teams/{alpha}/members", headers=admin).json()] == [mgr_id]
         assert client.get(f"/departments/{dept}/teams/{beta}", headers=admin).json()["manager_user_id"] == mgr_id
         assert client.get(f"/departments/{dept}/teams/{beta}/members", headers=admin).json() == []
@@ -316,7 +299,6 @@ class TestTeamLead:
         assert r.json()["manager_user_id"] is None
 
     def test_renaming_does_not_disturb_the_lead(self, client, dept, admin, registered_user, invite_user):
-        """Renaming and appointing are separate operations now."""
         team_id = _team(client, dept, admin, "Platform")
         _, mgr_id = self._manager(client, dept, registered_user, invite_user)
         client.put(f"/departments/{dept}/teams/{team_id}/manager/{mgr_id}", headers=admin)
@@ -325,7 +307,6 @@ class TestTeamLead:
         assert r.json()["manager_user_id"] == mgr_id
 
     def test_taking_the_lead_off_the_roster_keeps_them_leading(self, client, dept, admin, registered_user, invite_user):
-        """Rostering is independent of leading, so this is not a demotion."""
         team_id = _team(client, dept, admin, "Platform")
         _, mgr_id = self._manager(client, dept, registered_user, invite_user)
         client.put(f"/departments/{dept}/teams/{team_id}/manager/{mgr_id}", headers=admin)
@@ -335,7 +316,6 @@ class TestTeamLead:
         assert client.get(f"/departments/{dept}/teams/{team_id}", headers=admin).json()["manager_user_id"] == mgr_id
 
     def test_removing_the_lead_from_the_department_is_refused(self, client, dept, admin, registered_user, invite_user):
-        """The one gap decoupling can't prevent: they're leaving entirely."""
         team_id = _team(client, dept, admin, "Platform")
         _, mgr_id = self._manager(client, dept, registered_user, invite_user)
         client.put(f"/departments/{dept}/teams/{team_id}/manager/{mgr_id}", headers=admin)
@@ -343,7 +323,6 @@ class TestTeamLead:
         r = client.delete(f"/departments/{dept}/members/{mgr_id}", headers=admin)
         assert r.status_code == 409
         assert "leads Platform" in r.json()["detail"]
-        # Nothing happened — still a member, still the lead.
         assert client.get(f"/departments/{dept}/teams/{team_id}", headers=admin).json()["manager_user_id"] == mgr_id
 
     def test_lead_appears_in_the_flat_team_list(self, client, dept, admin, registered_user, invite_user):
@@ -361,9 +340,6 @@ class TestTeamLead:
         assert r.status_code == 403
 
 class TestOneLeadManyTeams:
-    """Leading is decoupled from membership, so the schema already supports one
-    person leading several teams. Which is the contingency if that's ever wanted."""
-
     def _manager(self, client, dept, registered_user, invite_user, email="mgr@example.com"):
         mgr = invite_user(registered_user["tokens"], dept, email, "manager")
         return mgr, client.get("/me", headers=auth(mgr)).json()["id"]

@@ -4,9 +4,9 @@ from typing import Callable
 import httpx
 
 class JWKSClient:
-    """Caches identity's JWKS by kid; TTL refresh picks up rotations without a restart.
-    An unknown kid refreshes too, floored by min_refresh_interval_seconds: auth runs before
-    the rate limiter, so made-up kids could otherwise hammer identity once per request."""
+    """An unknown kid triggers a refresh, floored by min_refresh_interval_seconds: auth
+    runs before the rate limiter, so made-up kids could otherwise hammer identity once
+    per request."""
 
     def __init__(self, jwks_url: str, ttl_seconds: int = 3600, timeout_seconds: float = 5.0, fetcher: Callable[[], dict] | None = None, min_refresh_interval_seconds: float = 30.0):
         self._jwks_url = jwks_url
@@ -28,8 +28,6 @@ class JWKSClient:
         return resp.json()
 
     def get_key(self, kid: str | None) -> dict | None:
-        """Return the JWK for kid, refreshing at most once per call — and at most
-        once per min_refresh_interval_seconds however many unknown kids arrive."""
         now = time.time()
         if now >= self._cache_expires_at or (kid and kid not in self._cache):
             self._maybe_refresh(now)
@@ -62,8 +60,5 @@ class JWKSClient:
         self._last_error = None
 
     def invalidate(self) -> None:
-        """Force the next get_key() to re-fetch. Useful if the caller knows a
-        rotation just happened. Clears the interval floor too — this is a local,
-        trusted signal, not something a caller's token can trigger."""
         self._cache_expires_at = 0.0
         self._last_attempt_at = 0.0

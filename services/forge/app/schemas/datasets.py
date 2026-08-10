@@ -22,9 +22,6 @@ class DatasetResponse(BaseModel):
         return v
 
 class DatasetSummary(BaseModel):
-    """Everything the dashboard needs in one call. The paginated list's `total`
-    blends owned datasets and shared samples, so counting them apart used to mean
-    walking every page."""
     owned_count: int
     sample_count: int
     recent: list[DatasetResponse]

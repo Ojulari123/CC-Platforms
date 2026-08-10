@@ -1,6 +1,3 @@
-"""Tokens are minted by identity and verified locally against its published public keys, via
-`crescent_core` so Pulse and Forge stay in step. The one call Forge makes is the revocation
-check — a locally-valid token says nothing about a session killed a minute ago."""
 from crescent_core import JWKSClient, RevocationChecker, ServiceTokenClient, current_user_dep
 from app.config import settings
 

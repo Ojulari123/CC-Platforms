@@ -12,7 +12,6 @@ const repoId = ref<number | null>(null);
 const weekStart = ref(mondayOf(new Date()));
 const errorMessage = ref<string | null>(null);
 
-// The API keys a report by the Monday of its week, so snap whatever day was picked.
 const canonicalWeek = computed(() => mondayOf(new Date(`${weekStart.value}T00:00:00`)));
 
 const create = useMutation({
@@ -28,6 +27,12 @@ const create = useMutation({
   onError: (err) => {
     errorMessage.value = apiMessage(err, "Could not create the report.");
   },
+});
+
+const unreviewable = computed(() => {
+  const repo = repositories.value.find((r) => r.id === repoId.value);
+  if (!repo) return false;
+  return repo.dept_id === null && repo.lead_user_id === null && repo.deputy_user_id === null;
 });
 
 function start(mode: "blank" | "generate") {
@@ -105,6 +110,17 @@ function start(mode: "blank" | "generate") {
         </button>
       </div>
     </div>
+
+    <p
+      v-if="open && unreviewable"
+      class="mt-4 rounded-md border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900"
+    >
+      This repository has no department and no named lead or deputy, so nobody can
+      approve a report about it yet. You can still write one — ask an admin to file it
+      under a department on the
+      <NuxtLink to="/repositories" class="underline">Repositories</NuxtLink> page and it
+      becomes reviewable.
+    </p>
 
     <p v-if="errorMessage" class="mt-3 text-sm text-red-600">{{ errorMessage }}</p>
   </div>

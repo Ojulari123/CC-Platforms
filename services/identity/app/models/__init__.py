@@ -3,8 +3,8 @@ from sqlalchemy.orm import relationship
 from app.db import Base
 
 class User(Base):
-    """Identity fields only — name, email, password, avatar. No product-specific data lives here.
-    Products keep their own view of a user keyed by user_id."""
+    """Identity fields only. No product-specific data lives here — products keep
+    their own view of a user keyed by user_id."""
     __tablename__ = "users"
 
     id = Column(Integer, primary_key=True)
@@ -57,9 +57,6 @@ class Team(Base):
     __table_args__ = (UniqueConstraint("dept_id", "slug", name="uq_team_dept_slug"),)
 
 class Membership(Base):
-    """A user belongs to a department (and optionally a team within it) with a role.
-    Multi-department-ready: schema allows multiple active memberships per user. For now we
-    only ever issue one until the supervisor confirms multi-department."""
     __tablename__ = "memberships"
 
     id = Column(Integer, primary_key=True)
@@ -77,8 +74,6 @@ class Membership(Base):
     __table_args__ = (UniqueConstraint("user_id", "dept_id", name="uq_membership_user_dept"),)
 
 class RefreshToken(Base):
-    """Stored as a SHA-256 hash, never the raw value. family_id groups every token
-    descended from one login; reusing a revoked one nukes the whole family."""
     __tablename__ = "refresh_tokens"
 
     id = Column(Integer, primary_key=True)
@@ -109,9 +104,6 @@ class Invite(Base):
     department = relationship("Department")
 
 class ServiceClient(Base):
-    """A non-human caller authenticating as itself via OAuth2 client-credentials.
-    Secret stored bcrypt-hashed, same as a user password; is_active makes a client
-    revocable without deleting the row."""
     __tablename__ = "service_clients"
 
     id = Column(Integer, primary_key=True)
@@ -123,8 +115,6 @@ class ServiceClient(Base):
     updated_at = Column(TIMESTAMP(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
 
 class PasswordResetToken(Base):
-    """Hashed like RefreshToken and Invite; the raw value lives only in the emailed
-    link. Single-use, and requesting a new one invalidates any earlier unused one."""
     __tablename__ = "password_reset_tokens"
 
     id = Column(Integer, primary_key=True)

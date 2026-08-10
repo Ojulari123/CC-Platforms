@@ -1,14 +1,3 @@
-"""The 'connect your GitHub account' flow (OAuth App web flow).
-
-connect  → build the GitHub authorize URL, carrying a signed `state` that
-           remembers which identity user is connecting.
-callback → verify state, swap the `code` for a GitHub access token, look up the
-           GitHub user, and upsert a GitHubAccount with the token stored ENCRYPTED.
-
-The two outbound HTTP calls (token exchange, user lookup) are module-level
-functions so tests monkeypatch them (the suite never touches real GitHub).
-"""
-
 import secrets
 from urllib.parse import urlencode
 import httpx
@@ -20,8 +9,6 @@ from app import crypto
 from app.config import settings
 from app.models import GitHubAccount
 
-# The browser round-trip (redirect to GitHub, user clicks Authorize, redirect
-# back) must complete within this window, or the state is rejected.
 STATE_MAX_AGE_SECONDS = 600
 
 def _require_oauth_configured() -> None:
@@ -32,8 +19,6 @@ def _require_oauth_configured() -> None:
         )
 
 def build_authorize_url(user_id: int) -> str:
-    """The URL to send the browser to. `state` carries the identity user id,
-    signed and time-limited, so the callback knows who's coming back."""
     _require_oauth_configured()
     state = crypto.sign_state({"uid": user_id, "nonce": secrets.token_urlsafe(8)})
     params = {

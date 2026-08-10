@@ -1,10 +1,3 @@
-"""Dropping a departed user's stored GitHub credentials.
-
-Identity is driven through the real client here (httpx.post monkeypatched to a
-URL-dispatching handler, no network), so the outage cases go through
-resolve_profiles_answer's own error handling rather than a stubbed return value —
-how a failure is reported is precisely the behaviour the guard has to survive.
-"""
 from datetime import datetime, timezone
 import httpx
 import pytest
@@ -34,9 +27,6 @@ def _wired_to_identity(monkeypatch):
 
 
 def _identity_says(monkeypatch, profiles_response, unknown=()):
-    """Route identity_client's httpx.post through a handler. profiles_response is
-    either a callable (url, kwargs) -> httpx.Response, or a list of user rows;
-    `unknown` are ids identity reports it has no user for (hard-deleted)."""
     def _post(url, **kwargs):
         if url == TOKEN_URL:
             return httpx.Response(200, json={"access_token": "svc-tok", "expires_in": 600})
@@ -79,8 +69,6 @@ def test_everyone_active_changes_nothing(db, monkeypatch):
 
 
 def test_a_hard_deleted_users_credentials_are_dropped(db, monkeypatch):
-    """A deleted user has no row to carry is_active=False, so identity names them in
-    unknown_user_ids instead. Same verdict: the credential belongs to nobody now."""
     _connect(db, 10, "ada", 991)
     _connect(db, 11, "bob", 992)
     _identity_says(monkeypatch, [_profile(11, True)], unknown=[10])
@@ -100,10 +88,6 @@ def test_deactivated_and_deleted_go_in_the_same_pass(db, monkeypatch):
 
 
 class TestIdentityBeingUnreachableDeletesNothing:
-    """The most dangerous failure in this feature. A failure tells Pulse nothing, so
-    the ids involved come back neither resolved nor unknown — "no information", never
-    "they all left". Otherwise one identity outage wipes every GitHub connection on
-    the platform and every engineer has to reconnect."""
 
     def test_connection_refused(self, db, monkeypatch):
         _connect(db, 10, "ada", 991)
@@ -124,7 +108,6 @@ class TestIdentityBeingUnreachableDeletesNothing:
         assert _user_ids_with_credentials(db) == [10]
 
     def test_scope_not_granted_yet(self, db, monkeypatch):
-        # The rollout window: identity hasn't restarted with users:read:profile granted.
         _connect(db, 10, "ada", 991)
         _identity_says(monkeypatch, lambda url, kwargs: httpx.Response(403, json={"detail": "scope"}))
 
@@ -143,8 +126,6 @@ class TestIdentityBeingUnreachableDeletesNothing:
         assert _user_ids_with_credentials(db) == [10]
 
     def test_the_skip_is_logged_so_it_is_not_silent(self, db, monkeypatch, caplog):
-        """A leaver check that quietly does nothing for weeks is its own problem —
-        the operator gets told the pass had nothing to go on."""
         _connect(db, 10, "ada", 991)
 
         def _post(url, **kwargs):
@@ -156,8 +137,6 @@ class TestIdentityBeingUnreachableDeletesNothing:
         assert "leaver check skipped" in caplog.text
 
     def test_identity_answers_about_someone_else_only(self, db, monkeypatch):
-        """A non-empty answer that omits a user without listing them as unknown says
-        nothing about that user either — absence on its own is still not a verdict."""
         _connect(db, 10, "ada", 991)
         _connect(db, 11, "bob", 992)
         _identity_says(monkeypatch, [_profile(11, True)])
@@ -166,11 +145,6 @@ class TestIdentityBeingUnreachableDeletesNothing:
         assert _user_ids_with_credentials(db) == [10, 11]
 
     def test_a_chunk_identity_failed_on_is_not_read_as_deleted(self, db, monkeypatch):
-        """The partial outage, and the reason "deleted" can't be inferred from absence.
-        Over 200 connected accounts the lookup is split into chunks; here the first
-        chunk answers and the second 500s. The 50 users in the failed chunk are missing
-        from the answer for a completely different reason than a deleted user is, and
-        conflating the two costs 50 people their GitHub connection."""
         for uid in range(1, 251):
             _connect(db, uid, f"u{uid}", 900 + uid)
         calls = {"n": 0}
@@ -189,8 +163,6 @@ class TestIdentityBeingUnreachableDeletesNothing:
         assert _user_ids_with_credentials(db) == list(range(1, 251))
 
     def test_a_failed_chunk_does_not_bury_the_leaver_in_the_chunk_that_answered(self, db, monkeypatch):
-        """The other half of the same case: a partial outage narrows what Pulse acts
-        on, it doesn't stop the pass. The user identity did name as deleted still goes."""
         for uid in range(1, 251):
             _connect(db, uid, f"u{uid}", 900 + uid)
         calls = {"n": 0}
@@ -247,8 +219,6 @@ def _attributed(db, user_id):
 
 
 def test_history_survives_the_credential_being_dropped(db, monkeypatch):
-    """Only the live credential goes. A report covering last week has to keep adding
-    up after its author leaves, so their work stays, still attributed to them."""
     _connect(db, 10, "ada", 991)
     _history_for(db, 10)
     _identity_says(monkeypatch, [_profile(10, False)])
@@ -263,8 +233,6 @@ def test_history_survives_the_credential_being_dropped(db, monkeypatch):
 
 
 def test_history_survives_a_hard_deleted_user_too(db, monkeypatch):
-    """Same promise on the unknown path: identity no longer has the user at all, and
-    their work is still there, still attributed to the id that did it."""
     _connect(db, 10, "ada", 991)
     _history_for(db, 10)
     _identity_says(monkeypatch, [], unknown=[10])
@@ -281,8 +249,6 @@ def test_history_survives_a_hard_deleted_user_too(db, monkeypatch):
 
 class TestTheSyncPassIsWhereItHappens:
     def test_a_departed_users_token_is_gone_before_github_is_called(self, db, monkeypatch):
-        """Ordering matters: the revocation runs before any token is decrypted, so a
-        pass can't reach GitHub with a departed employee's credential."""
         monkeypatch.setattr(settings, "GITHUB_REPOS", "org/alpha")
         _connect(db, 10, "ada", 991)
         _connect(db, 11, "bob", 992)
@@ -311,7 +277,7 @@ class TestTheSyncPassIsWhereItHappens:
         assert used == ["gho_bob"]
         assert _user_ids_with_credentials(db) == [11]
         assert "departed user(s): 10" in runs[0].detail
-        assert runs[0].repo_id is None  # platform-level, not about a repo
+        assert runs[0].repo_id is None
 
     def test_nothing_is_recorded_when_nobody_left(self, db, monkeypatch):
         monkeypatch.setattr(settings, "GITHUB_REPOS", "")
@@ -324,10 +290,6 @@ class TestTheSyncPassIsWhereItHappens:
         assert db.scalar(select(SyncRun).where(SyncRun.detail.like("%departed%"))) is None
 
     def test_a_later_sync_does_not_erase_the_leavers_attribution(self, db, monkeypatch):
-        """GitHub re-lists an old PR whenever it's touched (a comment, a label). With
-        the leaver's account gone their login no longer maps, and a naive re-upsert
-        would blank author_user_id — losing exactly the history this feature promised
-        to keep."""
         monkeypatch.setattr(settings, "GITHUB_REPOS", "org/alpha")
         _connect(db, 10, "ada", 991)
         _connect(db, 11, "bob", 992)

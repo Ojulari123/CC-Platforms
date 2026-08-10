@@ -1,8 +1,5 @@
-"""Prompt text and the output contract for weekly report generation.
-
-Kept in its own module so prompts are versionable and reviewable apart from the
-LLM plumbing. PROMPT_VERSION bumps whenever the wording or schema below changes,
-so we can tell which prompt produced a given draft.
+"""PROMPT_VERSION bumps whenever the wording or schema below changes — it's stamped on
+every draft, so it's the only way to tell which prompt produced one.
 """
 import json
 
@@ -17,7 +14,6 @@ SYSTEM_PROMPT = (
     "Return your answer using the required JSON schema with three separate fields."
 )
 
-# Per-field guidance, folded into the user message so the model knows what each field is for.
 _FIELD_GUIDANCE = (
     "Produce three fields:\n"
     "- summary_manager: manager-facing. Specific and concrete — what was built, changed, "
@@ -30,7 +26,6 @@ _FIELD_GUIDANCE = (
 )
 
 def build_system_prompt() -> str:
-    """The system prompt — stable across calls for a given PROMPT_VERSION."""
     return SYSTEM_PROMPT
 
 def build_user_prompt(activity_payload: dict) -> str:
@@ -40,7 +35,6 @@ def build_user_prompt(activity_payload: dict) -> str:
         f"{json.dumps(activity_payload, default=str)}"
     )
 
-# OpenAI structured-output schema: forces the three fields back as separate strings.
 SUMMARY_SCHEMA = {
     "name": "weekly_report_summaries",
     "strict": True,

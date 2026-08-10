@@ -17,7 +17,6 @@ MONTHLY_SALES_CSV = """month,revenue,units
 2025-06,14300,389
 """
 
-# (name, original_filename, content) for each bundled sample.
 SAMPLE_DATASETS = [
     ("Iris (sample)", "iris.csv", IRIS_CSV),
     ("Monthly Sales (sample)", "monthly_sales.csv", MONTHLY_SALES_CSV),

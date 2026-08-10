@@ -3,7 +3,6 @@ import pytest
 from crescent_core.identity_client import MAX_LOOKUP_IDS, IdentityUnavailable, ServiceTokenClient
 
 class Poster:
-    """Replays queued httpx.Response objects and records what was sent."""
 
     def __init__(self, *responses):
         self.responses = list(responses)

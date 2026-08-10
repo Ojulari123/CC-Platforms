@@ -54,8 +54,6 @@ class MemberResponse(BaseModel):
     last_name: str
     role: str
     team_id: int | None
-    # The account's status, not a membership flag — a roster has to show who can
-    # no longer log in.
     is_active: bool
 
 class MemberListResponse(BaseModel):
@@ -92,11 +90,10 @@ class InvitePreview(BaseModel):
     dept_name: str
     team_name: str | None = None
     role: str
-    needs_account: bool  # False when the invitee already has an account
+    needs_account: bool
 
 class InviteAccept(BaseModel):
     token: str
-    # Required only when the invitee doesn't have an account yet.
     first_name: str | None = Field(default=None, max_length=100)
     last_name: str | None = Field(default=None, max_length=100)
     password: str | None = Field(default=None, max_length=72)

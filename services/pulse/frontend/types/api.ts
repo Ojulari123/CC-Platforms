@@ -1,9 +1,5 @@
-// Pulse's API contract, mirrored from services/pulse/app/schemas.
-// Identity's contract and the pagination envelope come from the shared layer.
 export type { MembershipResponse, Page, UserMeResponse, UserResponse } from "@crescent/ui/types/api";
 
-// pulse: UserRef — a person as Pulse is allowed to know them. Always sits alongside
-// the user_id it describes, and is null when identity couldn't be reached.
 export interface UserRef {
   user_id: number;
   first_name: string;
@@ -12,7 +8,6 @@ export interface UserRef {
   is_active: boolean;
 }
 
-// pulse: ReportStatus
 export type ReportStatus =
   | "draft"
   | "submitted"
@@ -20,7 +15,6 @@ export type ReportStatus =
   | "approved"
   | "rejected";
 
-// pulse: ReportResponse
 export interface ReportResponse {
   id: number;
   author_user_id: number;
@@ -38,7 +32,6 @@ export interface ReportResponse {
   updated_at: string;
 }
 
-// pulse: ApprovalResponse
 export interface ApprovalResponse {
   id: number;
   report_id: number;
@@ -49,7 +42,6 @@ export interface ApprovalResponse {
   created_at: string;
 }
 
-// pulse: CommentResponse
 export interface CommentResponse {
   id: number;
   report_id: number;
@@ -60,7 +52,6 @@ export interface CommentResponse {
   edited_at: string | null;
 }
 
-// pulse: RepositoryResponse
 export interface RepositoryResponse {
   id: number;
   github_repo_id: number;
@@ -78,7 +69,6 @@ export interface RepositoryResponse {
   last_synced_at: string | null;
 }
 
-// pulse: ActivityResponse and its item types
 export interface ActivityCounts {
   commits: number;
   pull_requests: number;
@@ -131,7 +121,6 @@ export interface ActivityResponse {
   recent_issues: IssueItem[];
 }
 
-// pulse: GitHubAccountResponse
 export interface GitHubAccountResponse {
   user_id: number;
   github_user_id: number;
@@ -140,7 +129,6 @@ export interface GitHubAccountResponse {
   connected_at: string;
 }
 
-// pulse: SyncRunResponse
 export interface SyncRunResponse {
   id: number;
   repo_id: number | null;
@@ -151,7 +139,6 @@ export interface SyncRunResponse {
   finished_at: string | null;
 }
 
-// identity: DepartmentResponse (GET /departments)
 export interface DepartmentResponse {
   id: number;
   name: string;
@@ -160,7 +147,6 @@ export interface DepartmentResponse {
   head_name: string | null;
 }
 
-// identity: MemberResponse / MemberListResponse (GET /departments/{id}/members)
 export interface MemberResponse {
   user_id: number;
   email: string;

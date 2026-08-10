@@ -23,7 +23,6 @@ class _FakeUsage:
     total_tokens = 321
 
 class _FakeResponse:
-    """Shaped like the OpenAI chat-completion object generate_summaries reads."""
     model = "gpt-4o-mini"
     usage = _FakeUsage()
 
@@ -32,7 +31,7 @@ class _FakeResponse:
 
 class _FakeCompletions:
     def __init__(self, behaviours):
-        self._behaviours = list(behaviours)  # each: callable that returns or raises
+        self._behaviours = list(behaviours)
         self.calls = 0
 
     def create(self, **kwargs):
@@ -51,7 +50,6 @@ def _fail():
 
 @pytest.fixture
 def no_sleep(monkeypatch):
-    """Record backoff calls without ever sleeping, so the suite stays fast."""
     slept = []
     monkeypatch.setattr(llm.time, "sleep", lambda s: slept.append(s))
     return slept
@@ -69,12 +67,12 @@ class TestRetry:
         assert result.summary_manager == "Shipped the auth refactor."
         assert result.next_week_goals == "Finish token rotation."
         assert result.token_count == 321
-        assert fake.chat.completions.calls == 2       # attempted twice
-        assert no_sleep == [llm._RETRY_BACKOFF_SECONDS]  # backed off once, didn't sleep
+        assert fake.chat.completions.calls == 2
+        assert no_sleep == [llm._RETRY_BACKOFF_SECONDS]
 
     def test_fails_on_both_attempts_raises_llmerror(self, monkeypatch, no_sleep):
         fake = _install_client(monkeypatch, [_fail, _fail])
         with pytest.raises(LLMError):
             llm.generate_summaries(PAYLOAD)
-        assert fake.chat.completions.calls == 2       # exactly two attempts, no third
+        assert fake.chat.completions.calls == 2
         assert no_sleep == [llm._RETRY_BACKOFF_SECONDS]

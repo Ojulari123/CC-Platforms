@@ -26,9 +26,6 @@ def _run_backfill(db):
 
 class TestBackfill:
     def test_an_ex_member_is_stamped_even_with_no_membership_row(self, db_session):
-        """The one that matters. remove_member hard-deletes the membership, so a
-        membership-only backfill would leave a two-year employee NULL and hand
-        the delete endpoint permission to erase them."""
         leaver = _user(db_session, "leaver@example.com", token_version=3)
         db_session.commit()
         assert db_session.scalar(text("SELECT COUNT(*) FROM memberships WHERE user_id = :i"), {"i": leaver.id}) == 0
@@ -48,8 +45,6 @@ class TestBackfill:
         assert member.onboarded_at is not None
 
     def test_a_verified_account_is_stamped(self, db_session):
-        """email_verified is only ever set by accepting an invite, and the old
-        rule refused on it — so it must not become deletable here either."""
         verified = _user(db_session, "verified@example.com", email_verified=True)
         db_session.commit()
 
@@ -75,9 +70,6 @@ class TestBackfill:
         assert db_session.get(User, alice_id).onboarded_at == before
 
 class TestBackfillDecidesDeletability:
-    """Same rows, run through the real endpoint afterwards — the backfill is only
-    correct if it produces the same refusals the old rule gave."""
-
     def test_the_ex_member_still_cannot_be_deleted(self, client, db_session, registered_user):
         leaver = _user(db_session, "leaver@example.com", token_version=3)
         db_session.commit()

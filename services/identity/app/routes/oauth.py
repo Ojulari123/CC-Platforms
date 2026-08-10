@@ -10,9 +10,6 @@ router = APIRouter(prefix="/oauth", tags=["oauth"])
 @router.post("/token", response_model=ServiceTokenResponse)
 @limiter.limit("10/minute")
 def token(request: Request, payload: ClientCredentialsRequest, db: Session = Depends(get_db)) -> ServiceTokenResponse:
-    """OAuth2 client-credentials grant: a service authenticates as itself and gets
-    a short-lived, scoped service token. Only client_credentials is supported —
-    there's no user, password, or refresh flow here."""
     if payload.grant_type != "client_credentials":
         raise HTTPException(status_code=400, detail="Unsupported grant_type; expected 'client_credentials'")
 

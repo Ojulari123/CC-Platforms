@@ -24,14 +24,10 @@ def _key_id_for(public_pem: str) -> str:
 
 @lru_cache(maxsize=1)
 def get_key_id() -> str:
-    """Stable kid derived from the public key so it survives restarts.
-    Same input = same kid; only changes when the key rotates."""
     return _key_id_for(get_public_key_pem())
 
 @lru_cache(maxsize=1)
 def get_retired_public_key_pems() -> tuple[str, ...]:
-    """Public halves of previous signing keys. Retiring one is dropping its .pem in
-    JWT_RETIRED_PUBLIC_KEYS_DIR; a missing directory means none."""
     directory = Path(settings.JWT_RETIRED_PUBLIC_KEYS_DIR)
     if not directory.is_dir():
         return ()
@@ -61,14 +57,10 @@ def _jwk_from_pem(public_pem: str) -> dict:
 
 @lru_cache(maxsize=1)
 def get_public_jwk() -> dict:
-    """The ACTIVE public key as a JWK — the only key identity signs with."""
     return _jwk_from_pem(get_public_key_pem())
 
 @lru_cache(maxsize=1)
 def get_public_jwks() -> tuple[dict, ...]:
-    """Everything published at /.well-known/jwks.json: active key first, then retired
-    ones. Retired keys verify but never sign — that is what makes a rotation a
-    handover rather than a cutover."""
     jwks = [get_public_jwk()]
     seen = {jwks[0]["kid"]}
     for pem in get_retired_public_key_pems():
@@ -86,9 +78,8 @@ def _verification_keys_by_kid() -> dict[str, str]:
     return keys
 
 def get_verification_key_pem(kid: str | None) -> str:
-    """PEM to verify a token with, picked by its `kid` header so identity accepts
-    its own pre-rotation tokens. An unknown or absent kid falls back to the active
-    key: the signature check, not this lookup, is what rejects a forged token."""
+    """An unknown or absent kid falls back to the active key: the signature check,
+    not this lookup, is what rejects a forged token."""
     if kid:
         pem = _verification_keys_by_kid().get(kid)
         if pem is not None:
@@ -96,9 +87,8 @@ def get_verification_key_pem(kid: str | None) -> str:
     return get_public_key_pem()
 
 def validate_retired_public_keys() -> tuple[str, ...]:
-    """Raise on the first unusable retired .pem, naming it — at startup, so a bad file
-    refuses the boot rather than 500ing /.well-known/jwks.json later. Also warms the
-    cache. Returns their kids. See README "Signing keys and rotation"."""
+    """Runs at startup so a bad retired .pem refuses the boot rather than 500ing
+    /.well-known/jwks.json later. See README "Signing keys and rotation"."""
     directory = Path(settings.JWT_RETIRED_PUBLIC_KEYS_DIR)
     if not directory.is_dir():
         return ()
@@ -117,7 +107,6 @@ def validate_retired_public_keys() -> tuple[str, ...]:
     return tuple(kids)
 
 def reset_key_cache() -> None:
-    """Clear cached keys — used by tests when swapping keypairs between runs."""
     get_private_key_pem.cache_clear()
     get_public_key_pem.cache_clear()
     get_key_id.cache_clear()

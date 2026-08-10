@@ -8,6 +8,23 @@ something's still open. **Updated per session, not per commit.**
 
 ## Next up
 
+- **Department admins are never emailed when a repo has no lead or deputy — taking
+  this on 2026-08-11.** `notify_report_ready`
+  (`services/pulse/app/services/email.py:92`) emails only the repo's named lead and
+  deputy. A repo with a department but neither named takes the `else` branch, logs
+  "no approvers to notify" (`email.py:99`) and mails **nobody** — even though
+  `_can_approve` (`app/services/reports.py:49`) and the list scope (`reports.py:172`)
+  both put that report in every dept admin's review queue. It can sit unreviewed
+  indefinitely with no one prompted. Closing it means Pulse asking identity who
+  administers a department. Identity does have
+  `GET /departments/{dept_id}/members?role=admin`
+  (`app/routes/departments.py:43`), but it's gated by `require_dept_role()` — a
+  **user** token with membership in that department, which a service can't present —
+  and Pulse's service client holds only
+  `users:read:email users:read:profile tokens:verify`
+  (`identity/app/services/service_clients.py:13`). So it needs a new scope, a new
+  scope-gated endpoint alongside the three in `app/routes/internal.py`, the Pulse-side
+  client call, and the notification branch that uses it.
 - **Forge — Week 6: visual ML workflows.** Build on the Week-5 dataset backend
   + frontend foundation. No-code workflow builder (pick a dataset → configure a
   classification/regression/time-series/LLM step → run). Not started.
@@ -300,6 +317,12 @@ is confirmed sending for real.
   carrying no token). Forwarded-for headers are **not** trusted by default in any of the
   three (`TRUST_PROXY_HEADERS: bool = False` in each `config.py`), so a client can't spoof
   its way into someone else's bucket; turn it on only behind a proxy you control.
+- **Rate-limit tests run on a frozen clock.** The `_deterministic_limiter` autouse
+  fixture in each service's `tests/test_rate_limit.py` patches the clock inside the
+  limiter's in-memory storage, which is what makes those tests immune to machine load
+  — but it also means a limit window never expires on its own. A future test that wants
+  to watch one lapse has to advance the `_FrozenClock`; waiting will never work. Noted
+  in Forge's fixture; the same line still needs applying to identity's and Pulse's.
 - ~~**`GITHUB_ORG` is declared in Pulse's config and referenced nowhere.**~~ —
   **RESOLVED.** The declaration is gone from `services/pulse/app/config.py`; the
   only mentions left in the repo are this line and the session-05 log. Repo

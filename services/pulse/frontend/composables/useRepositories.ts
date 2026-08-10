@@ -1,8 +1,6 @@
 import { useQuery } from "@tanstack/vue-query";
 import type { Page, RepositoryResponse } from "~/types/api";
 
-// The repos the caller can see. Small list (one row per synced repo), shared by the
-// activity filter, the report filters and the "which repo is this report about?" label.
 export function useRepositories() {
   const api = useApi();
 

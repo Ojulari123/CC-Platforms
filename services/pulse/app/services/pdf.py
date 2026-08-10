@@ -13,11 +13,11 @@ from app.services.generation import _collect_week_activity
 from app.services.identity_client import resolve_profiles_safe
 
 _STATUS_COLORS = {
-    STATUS_DRAFT: colors.HexColor("#6b7280"),             # grey
-    STATUS_SUBMITTED: colors.HexColor("#2563eb"),         # blue
-    STATUS_APPROVED: colors.HexColor("#16a34a"),          # green
-    STATUS_REJECTED: colors.HexColor("#dc2626"),          # red
-    STATUS_CHANGES_REQUESTED: colors.HexColor("#d97706"), # amber
+    STATUS_DRAFT: colors.HexColor("#6b7280"),
+    STATUS_SUBMITTED: colors.HexColor("#2563eb"),
+    STATUS_APPROVED: colors.HexColor("#16a34a"),
+    STATUS_REJECTED: colors.HexColor("#dc2626"),
+    STATUS_CHANGES_REQUESTED: colors.HexColor("#d97706"),
 }
 _EMPTY = "— not generated —"
 
@@ -69,10 +69,6 @@ def _activity_table(counts: dict, s: dict) -> Table:
     return tbl
 
 def _author_label(report: Report) -> str:
-    """Name plus id, the id kept because an export gets forwarded to people who can't
-    tell two Ada Lovelaces apart. Falls back to the id-only line the PDF printed before
-    names existed — resolve_profiles_safe swallows, so a lookup failure costs
-    readability, never the export."""
     profile = resolve_profiles_safe([report.author_user_id]).get(report.author_user_id)
     if profile is None:
         return f"Engineer #{report.author_user_id}"
@@ -80,7 +76,6 @@ def _author_label(report: Report) -> str:
     return escape(f"{profile['first_name']} {profile['last_name']}") + f" (#{report.author_user_id})"
 
 def render_report_pdf(db: Session, report: Report) -> bytes:
-    """Render one report to PDF bytes. Read-only: the caller gates access first."""
     s = _styles()
     repo = report.repository
     repo_name = repo.full_name if repo is not None else f"repo #{report.repo_id}"

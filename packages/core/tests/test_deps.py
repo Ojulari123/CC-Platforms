@@ -59,7 +59,6 @@ def test_role_gate_allows_matching_role(jwks_client, sign_token):
     assert r.json() == {"user_id": 42, "role": "manager"}
 
 def test_role_is_scoped_to_the_department_in_the_url(jwks_client, sign_token):
-    """The whole point of the memberships list: manager in 1, engineer in 2."""
     client = TestClient(_app(jwks_client))
     token = sign_token(memberships=[
         {"dept_id": 1, "team_id": None, "role": "manager"},
@@ -82,7 +81,6 @@ def test_platform_admin_passes_every_department_gate(jwks_client, sign_token):
     assert client.get("/departments/99/any-member", headers=_bearer(token)).status_code == 200
 
 def test_role_gate_requires_auth(jwks_client):
-    # Chained: no token → 401 from current_user, not a bare 403
     client = TestClient(_app(jwks_client))
     r = client.get("/departments/1/manager-area")
     assert r.status_code == 401
@@ -128,7 +126,6 @@ def test_deleted_user_is_rejected(jwks_client, sign_token):
     assert r.status_code == 401
 
 def test_identity_outage_does_not_reject(jwks_client, sign_token):
-    """Fail-open on purpose: an identity blip must not take every product down."""
     r = TestClient(_revocation_app(jwks_client, _StubChecker(Verdict.UNAVAILABLE))).get("/me", headers=_bearer(sign_token()))
     assert r.status_code == 200
 
@@ -137,6 +134,5 @@ def test_revocation_applies_to_role_gated_routes_too(jwks_client, sign_token):
     assert client.get("/departments/1/any-member", headers=_bearer(sign_token())).status_code == 401
 
 def test_no_checker_keeps_the_previous_behaviour(jwks_client, sign_token):
-    """Pulse builds the dep without a checker today; that path must stay untouched."""
     client = TestClient(_app(jwks_client))
     assert client.get("/me", headers=_bearer(sign_token(tv=99))).status_code == 200

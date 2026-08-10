@@ -37,7 +37,6 @@ def _seed_repo(db, gh_id=1, name="alpha", dept_id=DEPT, lead=LEAD_ID, deputy=DEP
     return repo
 
 def _seed_week_activity(db, repo_id, user_id=10, commits=2, prs=1):
-    """A couple of commits + a PR inside the WEEK window (2026-07-20 .. 07-27)."""
     for i in range(commits):
         db.add(Commit(repo_id=repo_id, sha=f"w{i}", author_user_id=user_id,
                       message=f"commit {i}", committed_at=_dt(2026, 7, 21 + i)))
@@ -48,7 +47,6 @@ def _seed_week_activity(db, repo_id, user_id=10, commits=2, prs=1):
 
 @pytest.fixture
 def mock_llm(monkeypatch):
-    """Replace the provider call with a recorder returning FAKE. `.calls` counts hits."""
     rec = {"calls": 0, "last_payload": None}
 
     def _fake(activity_payload):
@@ -79,8 +77,6 @@ class TestGenerateHappyPath:
         assert mock_llm["calls"] == 1
 
     def test_generation_stamps_the_prompt_version(self, client, act_as, db, mock_llm):
-        """Without this the version constant was declared and stored nowhere, so
-        "which prompt wrote this draft?" had no answer."""
         repo = _seed_repo(db)
         _seed_week_activity(db, repo.id)
         act_as(**ENGINEER)
@@ -100,8 +96,6 @@ class TestGenerateHappyPath:
         assert again["prompt_version"] == "2099-01-01.9"
 
     def test_a_hand_written_report_has_no_prompt_version(self, client, act_as, db):
-        """Reports created before this column existed read back null, and so do
-        hand-written ones — neither may break the response."""
         repo = _seed_repo(db)
         _seed_week_activity(db, repo.id)
         act_as(**ENGINEER)
@@ -123,8 +117,6 @@ class TestGenerateHappyPath:
         assert usage[0].tokens == 321
 
     def test_report_and_usage_land_in_one_commit(self, client, act_as, db, mock_llm, monkeypatch):
-        """The usage row is written in the SAME transaction as the report, so a broken
-        ledger write can't leave a saved report the caller was told failed."""
         repo = _seed_repo(db)
         _seed_week_activity(db, repo.id)
 
@@ -136,13 +128,12 @@ class TestGenerateHappyPath:
         with pytest.raises(RuntimeError):
             client.post("/reports/generate", json={"repo_id": repo.id, "week_start": WEEK})
 
-        # All or nothing: no orphan report, no orphan usage row.
         assert db.query(Report).count() == 0
         assert db.query(LlmUsage).count() == 0
 
     def test_sparse_activity_still_generates(self, client, act_as, db, mock_llm):
         repo = _seed_repo(db)
-        _seed_week_activity(db, repo.id, commits=1, prs=0)  # just one commit
+        _seed_week_activity(db, repo.id, commits=1, prs=0)
         act_as(**ENGINEER)
         r = client.post("/reports/generate", json={"repo_id": repo.id, "week_start": WEEK})
         assert r.status_code == 201, r.text
@@ -155,17 +146,14 @@ class TestGenerateHappyPath:
         first = client.post("/reports/generate", json={"repo_id": repo.id, "week_start": WEEK}).json()
         second = client.post("/reports/generate", json={"repo_id": repo.id, "week_start": WEEK})
         assert second.status_code == 201, second.text
-        assert second.json()["id"] == first["id"]  # same report, regenerated in place
+        assert second.json()["id"] == first["id"]
         assert mock_llm["calls"] == 2
 
 class TestTruncation:
-    """Token budget: a busy week's item lists are capped at _MAX_ITEMS_PER_KIND
-    before hitting the prompt, counts stay exact, and the payload is flagged
-    truncated so the cap is observable."""
 
     def test_item_lists_are_capped_but_counts_stay_exact(self, client, act_as, db, mock_llm):
         repo = _seed_repo(db)
-        over = _MAX_ITEMS_PER_KIND + 5  # 55 commits, all inside the WEEK window
+        over = _MAX_ITEMS_PER_KIND + 5
         for i in range(over):
             db.add(Commit(repo_id=repo.id, sha=f"big{i}", author_user_id=10,
                           message=f"commit {i}", committed_at=_dt(2026, 7, 21)))
@@ -176,18 +164,17 @@ class TestTruncation:
         assert r.status_code == 201, r.text
 
         payload = mock_llm["last_payload"]
-        assert len(payload["commits"]) == _MAX_ITEMS_PER_KIND  # list truncated to the cap
-        assert payload["counts"]["commits"] == over             # count is still exact
-        assert payload["truncated"] is True                     # cap was flagged
+        assert len(payload["commits"]) == _MAX_ITEMS_PER_KIND
+        assert payload["counts"]["commits"] == over
+        assert payload["truncated"] is True
 
 class TestGenerateGuards:
     def test_empty_week_is_422_and_never_calls_the_llm(self, client, act_as, db, mock_llm):
-        repo = _seed_repo(db)  # no activity seeded at all
-        act_as(**LEAD)  # lead is eligible without personal commits
+        repo = _seed_repo(db)
+        act_as(**LEAD)
         r = client.post("/reports/generate", json={"repo_id": repo.id, "week_start": WEEK})
         assert r.status_code == 422, r.text
         assert mock_llm["calls"] == 0
-        # no report was created
         assert db.query(Report).count() == 0
 
     def test_llm_failure_returns_502_not_500(self, client, act_as, db, monkeypatch):
@@ -202,12 +189,12 @@ class TestGenerateGuards:
         r = client.post("/reports/generate", json={"repo_id": repo.id, "week_start": WEEK})
         assert r.status_code == 502, r.text
         assert "unavailable" in r.json()["detail"].lower()
-        assert db.query(Report).count() == 0  # nothing persisted on failure
+        assert db.query(Report).count() == 0
 
     def test_ineligible_user_is_403(self, client, act_as, db, mock_llm):
         repo = _seed_repo(db)
         _seed_week_activity(db, repo.id)
-        act_as(**OUTSIDER)  # different dept, no activity, not lead/deputy
+        act_as(**OUTSIDER)
         r = client.post("/reports/generate", json={"repo_id": repo.id, "week_start": WEEK})
         assert r.status_code == 403, r.text
         assert mock_llm["calls"] == 0
@@ -217,7 +204,7 @@ class TestGenerateGuards:
         _seed_week_activity(db, repo.id)
         act_as(**ENGINEER)
         rid = client.post("/reports/generate", json={"repo_id": repo.id, "week_start": WEEK}).json()["id"]
-        client.post(f"/reports/{rid}/submit")  # now submitted -> not editable
+        client.post(f"/reports/{rid}/submit")
         r = client.post("/reports/generate", json={"repo_id": repo.id, "week_start": WEEK})
         assert r.status_code == 409, r.text
 

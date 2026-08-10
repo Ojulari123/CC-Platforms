@@ -8,10 +8,8 @@ class TestPlatformUserList:
     def test_platform_admin_sees_every_user_regardless_of_department(
         self, client, registered_user, second_dept, invite_user, db_session
     ):
-        """The flat directory spans departments — not just the caller's own."""
         invite_user(registered_user["tokens"], registered_user["dept_id"], "eng@example.com", "engineer")
         invite_user(registered_user["tokens"], second_dept, "dana@example.com", "engineer")
-        # A user with no department at all still shows up — this list isn't a roster.
         db_session.add(User(
             email="loner@example.com", password_hash="x",
             first_name="Loner", last_name="Nobody",
@@ -61,6 +59,5 @@ class TestPlatformUserList:
         assert len(rest["items"]) == 1
         assert rest["total"] == 3
 
-        # Ordered by first_name, last_name — Alice, Dana, Eng — so paging is stable.
         seen = [u["email"] for u in page["items"]] + [u["email"] for u in rest["items"]]
         assert seen == ["alice@example.com", "dana@example.com", "eng@example.com"]

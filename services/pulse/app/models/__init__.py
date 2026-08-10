@@ -13,8 +13,6 @@ ACTION_REJECTED = "rejected"
 ACTION_CHANGES_REQUESTED = "changes_requested"
 
 class Report(Base):
-    """One engineer's weekly report, about a repo. Pulse never stores names/emails, and never reads identity's
-    database. The AI-drafted summary fields are plain editable text; services/generation.py writes them, and they stay hand-editable"""
     __tablename__ = "reports"
 
     id = Column(Integer, primary_key=True)
@@ -26,8 +24,8 @@ class Report(Base):
     summary_manager = Column(Text, nullable=True)
     summary_exec = Column(Text, nullable=True)
     next_week_goals = Column(Text, nullable=True)
-    generated_at = Column(TIMESTAMP(timezone=True), nullable=True)  # when the AI drafted the summaries; null if written by hand
-    prompt_version = Column(String(50), nullable=True)  # prompts.PROMPT_VERSION at draft time; null for hand-written or pre-0006 reports
+    generated_at = Column(TIMESTAMP(timezone=True), nullable=True)
+    prompt_version = Column(String(50), nullable=True)
     created_at = Column(TIMESTAMP(timezone=True), server_default=func.now(), nullable=False)
     updated_at = Column(TIMESTAMP(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
 
@@ -38,10 +36,8 @@ class Report(Base):
     __table_args__ = (UniqueConstraint("author_user_id", "repo_id", "week_start", name="uq_report_author_repo_week"),)
 
 class Approval(Base):
-    """Append-only history of what happened to a report. Who did what, when, and why. 
-    
-    Rows are never updated or deleted; Report.status is the denormalised
-    'current state' derived from the latest entry, kept for fast listing"""
+    """Append-only: rows are never updated or deleted. Report.status is the
+    denormalised current state, derived from the latest entry."""
     __tablename__ = "approvals"
 
     id = Column(Integer, primary_key=True)
@@ -54,7 +50,6 @@ class Approval(Base):
     report = relationship("Report", back_populates="approvals")
 
 class Comment(Base):
-    """A flat comment on a report. Authored by a user referenced by id"""
     __tablename__ = "comments"
 
     id = Column(Integer, primary_key=True)
@@ -67,25 +62,19 @@ class Comment(Base):
     report = relationship("Report", back_populates="comments")
 
 class LlmUsage(Base):
-    """One row per successful generation call, for the platform admin's consumption
-    view. Report viewers never see token counts; usage rolls up here so the admin knows
-    when to top up the account. report_id is nullable so a row survives report deletion.
-    Only one model is ever in use, so we don't store which one."""
     __tablename__ = "llm_usage"
 
     id = Column(Integer, primary_key=True)
     report_id = Column(Integer, nullable=True, index=True)
-    user_id = Column(Integer, nullable=False, index=True)  # who triggered the generation
+    user_id = Column(Integer, nullable=False, index=True)
     tokens = Column(Integer, nullable=False)
     created_at = Column(TIMESTAMP(timezone=True), server_default=func.now(), nullable=False)
 
 class GitHubAccount(Base):
-    """Links an identity user to their GitHub identity, and stores the OAuth access
-    token — encrypted at rest, never plaintext, never logged. One per user."""
     __tablename__ = "github_accounts"
 
     id = Column(Integer, primary_key=True)
-    user_id = Column(Integer, unique=True, index=True, nullable=False)  # identity user id
+    user_id = Column(Integer, unique=True, index=True, nullable=False)
     github_user_id = Column(BigInteger, unique=True, index=True, nullable=False)
     github_login = Column(String(255), index=True, nullable=False)
     access_token_encrypted = Column(Text, nullable=False)
@@ -95,14 +84,11 @@ class GitHubAccount(Base):
     updated_at = Column(TIMESTAMP(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
 
 class Repository(Base):
-    """A GitHub repo we track. We make use of an org/allowlist, so repos
-    are seeded from config, not per-user. is_tracked toggles a repo off without
-    losing its history; last_synced_at is the cursor for incremental pulls."""
     __tablename__ = "repositories"
 
     id = Column(Integer, primary_key=True)
     github_repo_id = Column(BigInteger, unique=True, index=True, nullable=False)
-    full_name = Column(String(400), index=True, nullable=False)  # owner/name
+    full_name = Column(String(400), index=True, nullable=False)
     owner = Column(String(255), nullable=False)
     name = Column(String(255), nullable=False)
     private = Column(Boolean, nullable=False, server_default="false", default=False)
@@ -121,8 +107,6 @@ class Repository(Base):
     reports = relationship("Report", back_populates="repository", cascade="all, delete-orphan")
 
 class Commit(Base):
-    """A commit on a tracked repo. Attributed to an engineer (author_user_id) when
-    the commit's GitHub login matches a connected account; otherwise just the login."""
     __tablename__ = "commits"
 
     id = Column(Integer, primary_key=True)
@@ -198,9 +182,6 @@ class Issue(Base):
     __table_args__ = (UniqueConstraint("repo_id", "number", name="uq_issue_repo_number"),)
 
 class SyncRun(Base):
-    """Audit log of sync jobs. When we pulled, for which repo, and how it went.
-    
-    Makes 'why is the data stale?' answerable and gives the scheduled job a trail."""
     __tablename__ = "sync_runs"
 
     id = Column(Integer, primary_key=True)

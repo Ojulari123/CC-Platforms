@@ -1,6 +1,5 @@
-"""Teams sit inside a department; a person's team is on their membership. One team
-per person, so a Pulse report has exactly one approving manager — splitting across
-teams means a join table (docs/decisions/2026-07-23-identity-structure.md)."""
+"""One team per person, so a Pulse report has exactly one approving manager; splitting
+across teams means a join table (docs/decisions/2026-07-23-identity-structure.md)."""
 import re
 from fastapi import HTTPException
 from sqlalchemy import func, select
@@ -31,9 +30,6 @@ def list_teams(db: Session, dept_id: int) -> list[TeamResponse]:
     return [_to_team_response(db, t) for t in teams]
 
 def list_all_teams(db: Session, user: User) -> list[TeamListItem]:
-    """Every team the caller is allowed to see, across departments — a platform
-    admin sees the whole company; anyone else sees the departments they're in.
-    Saves hunting for a dept_id just to look around."""
     member_count = (
         select(Membership.team_id, func.count().label("n"))
         .where(Membership.team_id.is_not(None))
@@ -82,9 +78,6 @@ def _to_team_response(db: Session, team: Team) -> TeamResponse:
     )
 
 def set_manager(db: Session, dept_id: int, team_id: int, manager_user_id: int | None) -> TeamResponse:
-    """Appoint (or clear) the team's lead. Must already hold manager or admin —
-    otherwise an engineer ends up approving their peers' reports by accident.
-    Leading and being rostered are separate, so this moves and vacates nothing."""
     team = get_team(db, dept_id, team_id)
 
     if manager_user_id is not None:
@@ -103,8 +96,6 @@ def set_manager(db: Session, dept_id: int, team_id: int, manager_user_id: int | 
     return _to_team_response(db, team)
 
 def update_team(db: Session, dept_id: int, team_id: int, payload: TeamUpdate) -> TeamResponse:
-    """Rename only. The lead has its own endpoint — a privilege change doesn't belong
-    hidden inside a rename."""
     team = get_team(db, dept_id, team_id)
     team.name = payload.name
     team.slug = _unique_team_slug(db, dept_id, _slugify(payload.name), exclude_id=team_id)
@@ -113,9 +104,6 @@ def update_team(db: Session, dept_id: int, team_id: int, payload: TeamUpdate) ->
     return _to_team_response(db, team)
 
 def delete_team(db: Session, dept_id: int, team_id: int) -> None:
-    """Delete a team. Its people stay in the department — their team_id just goes
-    null (the FK is ON DELETE SET NULL). Deleting a team must never quietly
-    delete people."""
     team = get_team(db, dept_id, team_id)
     db.delete(team)
     db.commit()
@@ -142,9 +130,6 @@ def _membership_in_dept(db: Session, dept_id: int, user_id: int) -> Membership:
     return membership
 
 def add_team_member(db: Session, dept_id: int, team_id: int, user_id: int) -> MemberResponse:
-    """Put someone on the team. They must already be in the department — teams
-    are a subdivision of a department, not a separate way in. Idempotent:
-    re-adding someone already on the team is a no-op rather than an error."""
     get_team(db, dept_id, team_id)
     membership = _membership_in_dept(db, dept_id, user_id)
     membership.team_id = team_id
@@ -157,8 +142,6 @@ def add_team_member(db: Session, dept_id: int, team_id: int, user_id: int) -> Me
     )
 
 def remove_team_member(db: Session, dept_id: int, team_id: int, user_id: int) -> None:
-    """Off the roster, still in the department — and still leading it if they did.
-    Use DELETE .../manager to step someone down."""
     get_team(db, dept_id, team_id)
     membership = _membership_in_dept(db, dept_id, user_id)
     if membership.team_id != team_id:
@@ -167,6 +150,4 @@ def remove_team_member(db: Session, dept_id: int, team_id: int, user_id: int) ->
     db.commit()
 
 def get_team_response(db: Session, dept_id: int, team_id: int) -> TeamResponse:
-    """get_team returns the ORM row (callers that need the object); this returns
-    the API shape, which carries the lead's name."""
     return _to_team_response(db, get_team(db, dept_id, team_id))

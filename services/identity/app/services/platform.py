@@ -1,5 +1,3 @@
-"""Platform administrators — they run the whole workspace. Distinct from the
-per-department "admin" role, which stops at one department."""
 from fastapi import HTTPException
 from app.schemas.departments import UserAccountResponse
 from sqlalchemy import func, or_, select
@@ -10,8 +8,6 @@ def list_platform_admins(db: Session) -> list[User]:
     return list(db.scalars(select(User).where(User.is_platform_admin.is_(True)).order_by(User.first_name, User.last_name)))
 
 def list_users(db: Session, q: str | None, is_active: bool | None, limit: int, offset: int) -> tuple[list[User], int]:
-    """The platform admin's flat directory — no department scoping. Mirrors the
-    department roster's paging and search; `total` reflects the filters."""
     base = select(User)
     if q:
         like = f"%{q.lower()}%"
@@ -34,9 +30,6 @@ def _get_user(db: Session, user_id: int) -> User:
     return user
 
 def deactivate_user(db: Session, user_id: int, acting_user: User) -> UserAccountResponse:
-    """Offboarding. The account survives so old work still names a real person; they
-    can't log in and every session dies now. Titles are deliberately NOT vacated —
-    this is reversible — but the response lists them so the gap isn't silent."""
     user = _get_user(db, user_id)
     # Also why the workspace can't be locked out: only a platform admin can
     # deactivate, so the only account that could take out the last one is its own.
@@ -51,8 +44,6 @@ def deactivate_user(db: Session, user_id: int, acting_user: User) -> UserAccount
     return _account_response(db, user)
 
 def reactivate_user(db: Session, user_id: int) -> UserAccountResponse:
-    """Undo a deactivation. Memberships and titles were never touched, so they
-    come back exactly as they were. They must log in again."""
     user = _get_user(db, user_id)
     user.is_active = True
     db.commit()
@@ -62,9 +53,8 @@ def reactivate_user(db: Session, user_id: int) -> UserAccountResponse:
 _DEACTIVATE_INSTEAD = "Deactivate it instead — that keeps their name on anything they've already done in other products."
 
 def _history_reason(db: Session, user: User) -> str | None:
-    """Durable evidence the account was really onboarded — remove_member deletes the
-    membership row, so a live count can't see an ex-member. The other two are kept as
-    backstops. README "Why users.onboarded_at exists" has the rest."""
+    """remove_member deletes the membership row, so a live count can't see an
+    ex-member. README "Why users.onboarded_at exists" has the rest."""
     if user.onboarded_at:
         return "they have been part of a department"
     if user.email_verified:
@@ -74,9 +64,8 @@ def _history_reason(db: Session, user: User) -> str | None:
     return None
 
 def delete_user(db: Session, user_id: int, acting_user: User) -> None:
-    """Only for an account created by mistake and never used; deactivation is the path
-    for real leavers. Identity can't ask Pulse whether this person authored anything,
-    so every guard below errs towards refusing."""
+    """Identity can't ask Pulse whether this person authored anything, so every guard
+    below errs towards refusing."""
     user = _get_user(db, user_id)
     if user.id == acting_user.id:
         raise HTTPException(status_code=400, detail="You cannot delete your own account")
@@ -116,8 +105,6 @@ def delete_user(db: Session, user_id: int, acting_user: User) -> None:
     db.commit()
 
 def _account_response(db: Session, user: User) -> UserAccountResponse:
-    """Surfaces anything the person still runs, so deactivating someone who
-    leads a team doesn't quietly leave it without a working lead."""
     led = db.execute(
         select(Team.name, Department.name)
         .join(Department, Department.id == Team.dept_id)

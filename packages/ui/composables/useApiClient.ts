@@ -1,5 +1,3 @@
-// Wrap this once per backend a product talks to. On a 401 it refreshes exactly once
-// and retries, so a product never writes its own token-refresh handling.
 
 export interface ApiOptions {
   method?: "GET" | "POST" | "PATCH" | "PUT" | "DELETE";

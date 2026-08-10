@@ -1,6 +1,3 @@
-"""Pulse-side wiring for the revocation check. The behaviour itself is covered in
-packages/core; what matters here is that Pulse actually enables it, on every
-authenticated route, pointed at the identity in its own settings."""
 import httpx
 from fastapi.routing import APIRoute
 from crescent_core.revocation import Verdict
@@ -8,7 +5,6 @@ from app import auth
 from app.config import settings
 from app.main import app
 
-# The only routes a signed-out browser is meant to reach.
 PUBLIC_PATHS = {"/", "/health", "/github/oauth/callback"}
 
 def _uses(dependant, fn) -> bool:
@@ -30,8 +26,6 @@ def test_checker_ttl_comes_from_settings():
     assert auth.revocation_checker._ttl == settings.TOKEN_VERSION_TTL_SECONDS
 
 def test_revocation_timeout_is_shorter_than_the_default():
-    """This call is on the request path; a black-holed identity must not hold a caller
-    for the full default timeout."""
     assert auth.identity_client._timeout == auth.REVOCATION_TIMEOUT_SECONDS < 10.0
 
 def test_checker_calls_identity_at_the_configured_url_with_pulses_client_id(monkeypatch):
@@ -77,7 +71,6 @@ def test_repeat_checks_inside_the_ttl_hit_identity_once(monkeypatch):
     assert len(lookups) == 1
 
 def test_unconfigured_secret_does_not_reject_callers():
-    """CI and any deploy without the secret must degrade to "unchecked", not "locked out"."""
     auth.revocation_checker.clear()
     try:
         assert auth.revocation_checker.check(5, 0) is Verdict.UNAVAILABLE

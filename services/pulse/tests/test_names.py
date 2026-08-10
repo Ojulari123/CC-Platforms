@@ -1,11 +1,3 @@
-"""Names on the wire: report/approval/comment/repository responses carry a UserRef
-alongside the user_id it describes, resolved from identity in one batched call.
-
-No network — identity_client's httpx.post is monkeypatched, same trick as
-test_identity_client.py. The point of these tests is the ENDPOINT contract: the id
-fields never move, the name fields are best-effort, and identity being unavailable
-degrades to null names rather than a 500.
-"""
 from datetime import date, datetime, timedelta, timezone
 import httpx
 import pytest
@@ -43,7 +35,6 @@ def _configured(monkeypatch):
 
 
 class FakeIdentity:
-    """Counts outbound calls per endpoint so tests can prove there's no N+1."""
 
     def __init__(self, monkeypatch, *, profile_status=200, reverse=False, transport_error=False, known=None):
         self.calls = {"token": 0, "profiles": 0}
@@ -55,8 +46,6 @@ class FakeIdentity:
         monkeypatch.setattr(identity_client.httpx, "post", self._post)
 
     def reset(self):
-        """Forget the calls made while seeding, and drop the profiles they cached, so
-        a test can count only the request it cares about."""
         self.calls["profiles"] = 0
         self.batches.clear()
         identity_client.clear_profile_cache()
@@ -77,7 +66,6 @@ class FakeIdentity:
              "avatar_url": None, "is_active": True}
             for uid in ids if uid in self._known
         ]
-        # Identity answers in database order, which is not request order.
         if self._reverse:
             rows.reverse()
         return httpx.Response(200, json={"users": rows})
@@ -114,7 +102,7 @@ class TestReportNames:
         rid = _draft(client, repo_id)
 
         body = client.get(f"/reports/{rid}").json()
-        assert body["author_user_id"] == 10  # the id is untouched — permissions and links still use it
+        assert body["author_user_id"] == 10
         assert body["author"] == {"user_id": 10, "first_name": "Ada", "last_name": "Lovelace",
                                   "avatar_url": None, "is_active": True}
 
@@ -130,12 +118,10 @@ class TestReportNames:
         act_as(**PLATFORM)
         items = client.get("/reports").json()["items"]
         assert {i["author_user_id"]: i["author"]["first_name"] for i in items} == {10: "Ada", 11: "Grace"}
-        assert fake.calls["profiles"] == 1  # two authors, one round trip
+        assert fake.calls["profiles"] == 1
         assert sorted(fake.batches[0]) == [10, 11]
 
     def test_names_land_by_user_id_when_identity_answers_out_of_order(self, client, act_as, db, monkeypatch):
-        # The silent-bug guard: identity's rows come back reversed, so anything that
-        # paired by position would give Ada's report Grace's name.
         fake = FakeIdentity(monkeypatch, reverse=True)
         repo_id = _seed_repo(db)
         act_as(**ENGINEER)
@@ -151,7 +137,6 @@ class TestReportNames:
         assert by_id[11]["last_name"] == "Hopper"
 
     def test_unknown_author_leaves_the_name_absent(self, client, act_as, db, monkeypatch):
-        # Identity doesn't know user 10 (omits it, no placeholder row).
         FakeIdentity(monkeypatch, known={11: NAMES[11]})
         repo_id = _seed_repo(db)
         act_as(**ENGINEER)
@@ -187,7 +172,7 @@ class TestActivityNames:
         act_as(**ENGINEER)
 
         body = client.get("/activity/me").json()
-        assert body["user_id"] == 10  # the id the dashboard links on is untouched
+        assert body["user_id"] == 10
         assert body["user"] == {"user_id": 10, "first_name": "Ada", "last_name": "Lovelace",
                                 "avatar_url": None, "is_active": True}
         assert fake.calls["profiles"] == 1
@@ -199,8 +184,6 @@ class TestActivityNames:
 
         body = client.get("/activity/11").json()
         assert body["user_id"] == 11 and body["user"]["last_name"] == "Hopper"
-        # The whole response describes exactly one person, so one round trip is the floor
-        # and the ceiling — recent commits/PRs/reviews/issues carry no user ids of their own.
         assert fake.calls["profiles"] == 1
         assert fake.batches[0] == [11]
 
@@ -248,7 +231,6 @@ class TestDegradation:
         assert fake.calls["profiles"] >= 1
 
     def test_identity_403_still_returns_the_list(self, client, act_as, db, monkeypatch):
-        # The rollout window: identity hasn't restarted with users:read:profile granted.
         FakeIdentity(monkeypatch, profile_status=403)
         repo_id = _seed_repo(db)
         act_as(**ENGINEER)
@@ -276,7 +258,7 @@ class TestDegradation:
         r = client.get("/activity/me")
         assert r.status_code == 200
         assert r.json()["user_id"] == 10 and r.json()["user"] is None
-        assert r.json()["counts"]["commits"] == 1  # the actual payload is unaffected
+        assert r.json()["counts"]["commits"] == 1
 
     def test_unconfigured_secret_never_calls_identity(self, client, act_as, db, monkeypatch):
         monkeypatch.setattr(settings, "PULSE_SERVICE_CLIENT_SECRET", "")

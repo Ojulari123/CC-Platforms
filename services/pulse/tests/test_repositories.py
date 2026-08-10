@@ -1,9 +1,5 @@
-"""filing a repo under a department and naming its lead +
-deputy. Assignment is done by a department admin (of the repo's dept) or a
-platform admin; a repo's lead and deputy must differ."""
-
-from datetime import datetime, timezone
-from app.models import Commit, PullRequest, Repository, Review
+from datetime import date, datetime, timezone
+from app.models import Commit, PullRequest, Report, Repository, Review
 
 DEPT = 1
 PLATFORM = dict(user_id=99, memberships=[], is_platform_admin=True)
@@ -25,6 +21,15 @@ def _seed_repo(db, dept_id=None, lead=None, deputy=None, gh_id=1, name="alpha"):
     db.commit()
     db.refresh(repo)
     return repo.id
+
+
+def _seed_report(db, repo_id, dept_id=None, author=10, week=date(2026, 7, 20)):
+    report = Report(author_user_id=author, repo_id=repo_id, dept_id=dept_id,
+                    week_start=week, status="draft", summary_manager="did the work")
+    db.add(report)
+    db.commit()
+    db.refresh(report)
+    return report.id
 
 
 def _seed_commit(db, repo_id, user_id=10, sha="c1"):
@@ -62,7 +67,6 @@ class TestListAndGet:
         assert [r["name"] for r in body["items"]] == ["alpha"]
 
     def test_get_a_repo_outside_the_callers_scope_is_404_not_403(self, client, act_as, db):
-        # 404 on purpose: a 403 would confirm that a private repo by that id exists.
         rid = _seed_repo(db, dept_id=2)
         act_as(**ENGINEER)
         assert client.get(f"/github/repositories/{rid}").status_code == 404
@@ -79,8 +83,6 @@ class TestListAndGet:
         assert client.get(f"/github/repositories/{rid}").status_code == 200
 
     def test_a_contributor_sees_an_unfiled_repo_they_worked_in(self, client, act_as, db):
-        # A freshly synced repo has no department yet; without this the sync looks
-        # like it did nothing until an admin files it.
         rid = _seed_repo(db, dept_id=None, gh_id=3, name="unfiled")
         _seed_commit(db, rid, user_id=10)
         act_as(**ENGINEER)
@@ -89,7 +91,6 @@ class TestListAndGet:
         assert body["total"] == 1 and [r["name"] for r in body["items"]] == ["unfiled"]
 
     def test_a_pr_reviewer_sees_the_unfiled_repo_they_reviewed_in(self, client, act_as, db):
-        # "Worked in" is activity's definition, so reviewing counts, not just committing.
         rid = _seed_repo(db, dept_id=None, gh_id=3, name="unfiled")
         pr = PullRequest(repo_id=rid, github_pr_id=1, number=7, title="pr", state="open", merged=False,
                          author_user_id=11, gh_created_at=datetime(2026, 7, 19, 12, 0, tzinfo=timezone.utc))
@@ -104,7 +105,6 @@ class TestListAndGet:
         assert client.get("/github/repositories").json()["total"] == 1
 
     def test_someone_elses_work_does_not_reveal_an_unfiled_repo(self, client, act_as, db):
-        # 404, not 403 — the existence of an unfiled private repo stays hidden.
         rid = _seed_repo(db, dept_id=None, gh_id=3, name="unfiled")
         _seed_commit(db, rid, user_id=11)
         act_as(**ENGINEER)
@@ -112,7 +112,6 @@ class TestListAndGet:
         assert client.get("/github/repositories").json()["total"] == 0
 
     def test_working_in_a_repo_does_not_let_you_administer_it(self, client, act_as, db):
-        # Visibility only: seeing the repo must not come with lead/department rights.
         rid = _seed_repo(db, dept_id=None, gh_id=3, name="unfiled")
         _seed_commit(db, rid, user_id=10)
         act_as(**ENGINEER)
@@ -157,13 +156,11 @@ class TestAssignDepartment:
         assert client.put(f"/github/repositories/{rid}/department/2").status_code == 200
 
     def test_admin_cannot_capture_repo_from_a_department_they_dont_admin(self, client, act_as, db):
-        # Admin of the target dept (1) but not the repo's current dept (2): rejected.
         rid = _seed_repo(db, dept_id=2)
         act_as(**DEPT_ADMIN)
         assert client.put(f"/github/repositories/{rid}/department/{DEPT}").status_code == 403
 
     def test_dept_admin_can_file_an_unfiled_repo(self, client, act_as, db):
-        # No current owner to take it from, so an admin of the target dept may file it.
         rid = _seed_repo(db, dept_id=None)
         act_as(**DEPT_ADMIN)
         assert client.put(f"/github/repositories/{rid}/department/{DEPT}").status_code == 200
@@ -177,6 +174,113 @@ class TestAssignDepartment:
         rid = _seed_repo(db, dept_id=None)
         act_as(**ENGINEER)
         assert client.put(f"/github/repositories/{rid}/department/{DEPT}").status_code == 403
+
+
+class TestUnfiledBacklog:
+
+    def test_requires_auth(self, client):
+        assert client.get("/github/repositories/unfiled").status_code == 401
+
+    def test_platform_admin_sees_only_the_unfiled_ones(self, client, act_as, db):
+        _seed_repo(db, dept_id=None, gh_id=1, name="alpha")
+        _seed_repo(db, dept_id=None, gh_id=2, name="beta")
+        _seed_repo(db, dept_id=DEPT, gh_id=3, name="filed")
+        act_as(**PLATFORM)
+        body = client.get("/github/repositories/unfiled").json()
+        assert body["total"] == 2
+        assert [r["name"] for r in body["items"]] == ["alpha", "beta"]
+
+    def test_a_dept_admin_sees_a_repo_they_never_worked_in(self, client, act_as, db):
+        _seed_repo(db, dept_id=None, gh_id=1, name="alpha")
+        act_as(**DEPT_ADMIN)
+        assert client.get("/github/repositories").json()["total"] == 0
+        assert client.get("/github/repositories/unfiled").json()["total"] == 1
+
+    def test_an_admin_of_any_department_may_look(self, client, act_as, db):
+        _seed_repo(db, dept_id=None, gh_id=1, name="alpha")
+        act_as(**OTHER_ADMIN)
+        assert client.get("/github/repositories/unfiled").json()["total"] == 1
+
+    def test_engineer_cannot(self, client, act_as, db):
+        _seed_repo(db, dept_id=None, gh_id=1, name="alpha")
+        act_as(**ENGINEER)
+        assert client.get("/github/repositories/unfiled").status_code == 403
+
+    def test_filing_clears_it_from_the_backlog(self, client, act_as, db):
+        rid = _seed_repo(db, dept_id=None, gh_id=1, name="alpha")
+        act_as(**PLATFORM)
+        assert client.get("/github/repositories/unfiled").json()["total"] == 1
+        client.put(f"/github/repositories/{rid}/department/{DEPT}")
+        assert client.get("/github/repositories/unfiled").json()["total"] == 0
+
+    def test_pages_in_sql(self, client, act_as, db):
+        for i, name in enumerate(("alpha", "beta", "gamma"), start=1):
+            _seed_repo(db, dept_id=None, gh_id=i, name=name)
+        act_as(**PLATFORM)
+        body = client.get("/github/repositories/unfiled?limit=2&offset=1").json()
+        assert body["total"] == 3
+        assert [r["name"] for r in body["items"]] == ["beta", "gamma"]
+
+
+class TestBulkAssignDepartment:
+
+    def test_requires_auth(self, client, db):
+        rid = _seed_repo(db, dept_id=None)
+        assert client.put(f"/github/repositories/department/{DEPT}", json={"repo_ids": [rid]}).status_code == 401
+
+    def test_platform_admin_files_several_at_once(self, client, act_as, db):
+        a = _seed_repo(db, dept_id=None, gh_id=1, name="alpha")
+        b = _seed_repo(db, dept_id=None, gh_id=2, name="beta")
+        act_as(**PLATFORM)
+        r = client.put(f"/github/repositories/department/{DEPT}", json={"repo_ids": [a, b]})
+        assert r.status_code == 200
+        assert [row["dept_id"] for row in r.json()] == [DEPT, DEPT]
+
+    def test_it_restamps_existing_reports(self, client, act_as, db):
+        rid = _seed_repo(db, dept_id=None)
+        report_id = _seed_report(db, rid)
+        act_as(**PLATFORM)
+        assert client.put(f"/github/repositories/department/{DEPT}", json={"repo_ids": [rid]}).status_code == 200
+        db.expire_all()
+        assert db.get(Report, report_id).dept_id == DEPT
+
+    def test_dept_admin_files_unfiled_repos_into_their_own_department(self, client, act_as, db):
+        a = _seed_repo(db, dept_id=None, gh_id=1, name="alpha")
+        b = _seed_repo(db, dept_id=None, gh_id=2, name="beta")
+        act_as(**DEPT_ADMIN)
+        assert client.put(f"/github/repositories/department/{DEPT}", json={"repo_ids": [a, b]}).status_code == 200
+
+    def test_one_repo_they_cannot_file_rolls_back_the_whole_batch(self, client, act_as, db):
+        ok = _seed_repo(db, dept_id=None, gh_id=1, name="alpha")
+        owned_elsewhere = _seed_repo(db, dept_id=2, gh_id=2, name="beta")
+        act_as(**DEPT_ADMIN)
+        r = client.put(f"/github/repositories/department/{DEPT}", json={"repo_ids": [ok, owned_elsewhere]})
+        assert r.status_code == 403
+        db.expire_all()
+        assert db.get(Repository, ok).dept_id is None
+        assert db.get(Repository, owned_elsewhere).dept_id == 2
+
+    def test_a_missing_repo_id_is_404_and_nothing_changes(self, client, act_as, db):
+        rid = _seed_repo(db, dept_id=None)
+        act_as(**PLATFORM)
+        assert client.put(f"/github/repositories/department/{DEPT}", json={"repo_ids": [rid, 9999]}).status_code == 404
+        db.expire_all()
+        assert db.get(Repository, rid).dept_id is None
+
+    def test_engineer_cannot(self, client, act_as, db):
+        rid = _seed_repo(db, dept_id=None)
+        act_as(**ENGINEER)
+        assert client.put(f"/github/repositories/department/{DEPT}", json={"repo_ids": [rid]}).status_code == 403
+
+    def test_an_empty_batch_is_rejected(self, client, act_as):
+        act_as(**PLATFORM)
+        assert client.put(f"/github/repositories/department/{DEPT}", json={"repo_ids": []}).status_code == 422
+
+    def test_repeated_ids_are_filed_once(self, client, act_as, db):
+        rid = _seed_repo(db, dept_id=None)
+        act_as(**PLATFORM)
+        r = client.put(f"/github/repositories/department/{DEPT}", json={"repo_ids": [rid, rid]})
+        assert r.status_code == 200 and len(r.json()) == 1
 
 
 class TestAssignLeadDeputy:
@@ -218,7 +322,6 @@ class TestAssignLeadDeputy:
 
 
 class TestTracking:
-    """Switching a repo's sync off and on. Same admin rule as lead/deputy."""
 
     def test_dept_admin_can_untrack_and_retrack(self, client, act_as, db):
         rid = _seed_repo(db, dept_id=DEPT)
@@ -247,9 +350,6 @@ class TestTracking:
         assert client.delete(f"/github/repositories/{rid}/tracked").status_code == 401
 
     def test_untracking_does_not_hide_the_repo(self, client, act_as, db):
-        """is_tracked is a sync switch, not a visibility rule — the history and the
-        reports on an untracked repo stay readable, and it's still listable so an
-        admin can turn it back on."""
         rid = _seed_repo(db, dept_id=DEPT)
         act_as(**DEPT_ADMIN)
         client.delete(f"/github/repositories/{rid}/tracked")

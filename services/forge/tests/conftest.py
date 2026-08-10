@@ -116,9 +116,6 @@ def db():
 
 @pytest.fixture
 def test_sessionmaker():
-    """The sessionmaker bound to the in-memory test engine. Hand this to
-    production code (e.g. the startup lifespan's SessionLocal) so it seeds into
-    the same DB a test then inspects."""
     return _TestSession
 
 @pytest.fixture

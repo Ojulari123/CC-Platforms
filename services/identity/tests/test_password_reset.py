@@ -1,6 +1,3 @@
-"""
-The response must not reveal whether an address has an account, and completing a reset must kill
-every existing session."""
 import pytest
 
 from tests.conftest import auth
@@ -8,8 +5,6 @@ from tests.conftest import auth
 
 @pytest.fixture
 def sent_resets(monkeypatch):
-    """Capture reset emails and pretend email is configured (test env has blank
-    Brevo creds). Each entry carries the raw token"""
     from app.services import email as email_service
 
     captured = []
@@ -69,9 +64,7 @@ class TestResetPassword:
         _forgot(client, registered_user["email"])
         assert _reset(client, sent_resets[-1]["raw_token"]).status_code == 204
 
-        # Old access token: rejected because token_version was bumped.
         assert client.get("/me", headers=auth(old_tokens)).status_code == 401
-        # Old refresh token: revoked.
         assert client.post("/auth/refresh", json={"refresh_token": old_tokens["refresh_token"]}).status_code == 401
 
     def test_a_used_token_cannot_be_reused(self, client, registered_user, sent_resets):

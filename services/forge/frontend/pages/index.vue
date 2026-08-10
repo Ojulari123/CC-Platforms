@@ -24,7 +24,6 @@ const ownedCount = computed(() => data.value?.owned_count ?? 0);
 const sampleCount = computed(() => data.value?.sample_count ?? 0);
 const recent = computed(() => data.value?.recent ?? []);
 
-// The first-run state: they have the seeded samples and nothing of their own.
 const isFirstRun = computed(() => !isPending.value && !isError.value && ownedCount.value === 0);
 const firstSample = computed(() => recent.value.find((ds) => ds.is_sample) ?? null);
 </script>

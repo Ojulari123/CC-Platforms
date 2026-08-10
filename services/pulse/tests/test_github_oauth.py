@@ -18,8 +18,6 @@ FRONTEND = "http://localhost:3000"
 
 @pytest.fixture
 def fake_github(monkeypatch):
-    """Stand in for GitHub: any code becomes a token, and the token maps to a
-    fixed GitHub user. Tests can override the user via `set_user`."""
     state = {"login": "ada-gh", "id": 123456}
 
     def set_user(login, gid):
@@ -34,13 +32,9 @@ def _callback(client, uid, code="abc", **extra_params):
     return _raw_callback(client, code=code, state=state, **extra_params)
 
 def _raw_callback(client, **params):
-    # The callback always answers with a redirect now, so never follow it: the point
-    # of every assertion below is where it points.
     return client.get("/github/oauth/callback", params=params, follow_redirects=False)
 
 def _outcome(response) -> str:
-    """The `github=` result code on the redirect back to the frontend, asserting on
-    the way that it really is a redirect to the configured frontend."""
     assert response.status_code == 303, response.text
     location = response.headers["location"]
     assert location.startswith(f"{FRONTEND}/?"), location
@@ -66,13 +60,12 @@ class TestCallback:
         account = db.query(GitHubAccount).one()
         assert account.user_id == 42
         assert account.github_login == "ada-gh"
-        # stored token is NOT plaintext, but decrypts back to the real one
         assert account.access_token_encrypted != "gho_token_for_abc"
         assert crypto.decrypt(account.access_token_encrypted) == "gho_token_for_abc"
 
     def test_reconnecting_updates_in_place(self, client, act_as, db, fake_github):
         _callback(client, uid=42)
-        _callback(client, uid=42)  # same user again
+        _callback(client, uid=42)
         assert db.query(GitHubAccount).count() == 1
 
     def test_bad_state_is_rejected(self, client, db, fake_github):
@@ -87,7 +80,6 @@ class TestCallback:
         assert db.query(GitHubAccount).count() == 0
 
     def test_an_expired_state_is_rejected(self, client, db, fake_github):
-        # A genuinely old state: signed with a timestamp past the round-trip window.
         signed_at = int(time.time()) - github_oauth.STATE_MAX_AGE_SECONDS - 60
         stale = Fernet(settings.GITHUB_TOKEN_ENC_KEY.encode()).encrypt_at_time(
             json.dumps({"uid": 42, "nonce": "n"}).encode(), signed_at
@@ -96,7 +88,6 @@ class TestCallback:
         assert db.query(GitHubAccount).count() == 0
 
     def test_declining_on_github_lands_back_in_pulse(self, client, db, fake_github):
-        # What GitHub sends when the user hits Cancel: an error, a state, no code.
         state = crypto.sign_state({"uid": 42, "nonce": "n"})
         r = _raw_callback(client, error="access_denied", error_description="The user has denied your application access.", state=state)
         assert _outcome(r) == "denied"
@@ -136,7 +127,6 @@ class TestCallback:
     def test_one_github_account_cannot_link_to_two_users(self, client, db, fake_github):
         fake_github("shared-gh", 555)
         assert _outcome(_callback(client, uid=42)) == "connected"
-        # same github id, different platform user
         assert _outcome(_callback(client, uid=99)) == "already_linked"
 
     def test_the_landing_page_comes_from_configuration(self, client, monkeypatch, fake_github):
@@ -145,9 +135,6 @@ class TestCallback:
         assert r.headers["location"] == "https://pulse.cyphercrescent.test/?github=connected"
 
 class TestCallbackRedirectCannotBeSteered:
-    """The callback is unauthenticated by design — anyone can hit it. If its redirect
-    target ever became request-controlled it would be an open redirect wearing
-    CypherCrescent's domain, so pin the target to configuration alone."""
 
     def _assert_lands_on_the_frontend(self, response):
         location = response.headers["location"]
@@ -167,8 +154,6 @@ class TestCallbackRedirectCannotBeSteered:
         assert self._assert_lands_on_the_frontend(r).endswith("?github=connected")
 
     def test_a_forged_state_does_not_redirect_anywhere_it_names(self, client, db, fake_github):
-        # Signed with an attacker's own key, so we can't read it — and even a payload
-        # asking to be sent elsewhere must not move the target.
         forged = Fernet(Fernet.generate_key()).encrypt(
             json.dumps({"uid": 42, "return_to": "https://evil.example"}).encode()
         ).decode()
@@ -192,8 +177,6 @@ class TestCallbackRedirectCannotBeSteered:
         self._assert_lands_on_the_frontend(r)
 
     def test_an_unlisted_result_code_cannot_reach_the_url(self):
-        # Guard on the helper itself, so a future caller handing it something that
-        # isn't one of the fixed codes can't smuggle anything into the target.
         r = github_routes._back_to_pulse("https://evil.example/?x=")
         assert r.headers["location"] == f"{FRONTEND}/?github=failed"
 

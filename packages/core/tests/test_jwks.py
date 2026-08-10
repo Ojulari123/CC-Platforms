@@ -2,7 +2,6 @@ import pytest
 from crescent_core import JWKSClient
 
 def _counting(doc_or_callable):
-    """Fetcher that counts calls. Pass a dict, or a callable returning one."""
     calls = {"n": 0}
 
     def fetcher():
@@ -22,8 +21,6 @@ def test_unknown_kid_never_fetches_twice_in_one_call(jwks_doc):
     fetcher, calls = _counting(jwks_doc)
     client = JWKSClient(jwks_url="http://ignored", fetcher=fetcher)
     assert client.get_key("not-in-doc") is None
-    # Cold cache + unknown kid used to hit the TTL branch and then the unknown-kid
-    # branch. One refresh per call, ever.
     assert calls["n"] == 1
 
 def test_repeated_unknown_kids_are_throttled_not_amplified(jwks_doc):
@@ -64,8 +61,6 @@ def test_a_failed_fetch_leaves_cached_keys_working(jwks_doc, rsa_keypair):
     boom = True
     client.invalidate()
     assert client.get_key(rsa_keypair["kid"])["kid"] == rsa_keypair["kid"]
-    # An unknown kid still refreshes and still fails, and that must not evict the
-    # good key either.
     assert client.get_key("not-in-doc") is None
     assert client.get_key(rsa_keypair["kid"])["kid"] == rsa_keypair["kid"]
 
@@ -86,7 +81,6 @@ def test_an_unreachable_identity_raises_while_nothing_is_cached(rsa_keypair):
     client = JWKSClient(jwks_url="http://ignored", fetcher=fetcher, min_refresh_interval_seconds=30.0)
     with pytest.raises(RuntimeError):
         client.get_key(rsa_keypair["kid"])
-    # Throttled callers get the same answer, not a misleading "unknown key".
     with pytest.raises(RuntimeError):
         client.get_key(rsa_keypair["kid"])
 

@@ -3,8 +3,7 @@ from crescent_core.claims import TokenClaims
 from crescent_core.jwks import JWKSClient
 
 class InvalidToken(Exception):
-    """Raised when an access token fails any part of verification.
-    Message is safe to surface to clients (no key material, no user data)."""
+    pass
 
 class _MissingKid(InvalidToken):
     pass

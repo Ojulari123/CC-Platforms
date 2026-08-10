@@ -1,6 +1,3 @@
-"""Thin email layer — ONE send() function so swapping providers later is a
-one-file change. Provider: Brevo transactional API (supervisor sign-off
-pending, user-confirmed to build now)."""
 import logging
 import httpx
 from app.config import settings
@@ -10,14 +7,13 @@ logger = logging.getLogger(__name__)
 BREVO_URL = "https://api.brevo.com/v3/smtp/email"
 
 class EmailNotConfigured(Exception):
-    """BREVO_API_KEY / EMAIL_FROM missing from the environment."""
+    pass
 
 class EmailSendError(Exception):
-    """Brevo rejected the request or was unreachable."""
+    pass
 
 def is_configured() -> bool:
-    """Whether outbound email can be sent at all. Checked up-front by flows that
-    must not leak, via their response, whether a given address has an account —
+    """Checked up-front by flows that must not leak whether an address has an account:
     a 503 for global misconfig has to fire the same way regardless of the user."""
     return bool(settings.BREVO_API_KEY and settings.EMAIL_FROM)
 

@@ -7,10 +7,9 @@ const links = [
   { to: "/", label: "Activity" },
   { to: "/reports", label: "Reports" },
   { to: "/review", label: "Review queue" },
+  { to: "/repositories", label: "Repositories" },
 ];
 
-// The header lives outside every page, so it's the one place that needs to make
-// sure /me is populated after a hard refresh.
 onMounted(async () => {
   auth.hydrate();
   if (auth.isAuthenticated.value && !auth.user.value) {
@@ -42,7 +41,6 @@ function onLogout() {
 <template>
   <div>
     <header class="border-b border-gray-200 bg-white">
-      <!-- Wraps rather than pushing Sign out off-screen once the nav runs out of room. -->
       <div class="mx-auto flex max-w-6xl flex-wrap items-center justify-between gap-4 px-4 py-3">
         <div class="flex flex-wrap items-center gap-6">
           <NuxtLink to="/" class="text-sm font-semibold">Pulse</NuxtLink>

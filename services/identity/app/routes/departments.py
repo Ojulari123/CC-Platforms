@@ -18,8 +18,6 @@ def create_department(payload: DepartmentCreate, _: User = Depends(require_platf
 
 @router.get("", response_model=list[DepartmentResponse])
 def list_departments(_: User = Depends(get_current_user), db: Session = Depends(get_db)) -> list[DepartmentResponse]:
-    """Any signed-in employee can see the list of departments — it's an internal
-    org chart, not a secret. Acting on one still needs membership."""
     return dept_service.list_departments(db)
 
 @router.get("/{dept_id}", response_model=DepartmentResponse)
@@ -40,7 +38,6 @@ def set_department_head(dept_id: int, head_user_id: int, _: User = Depends(requi
 
 @router.delete("/{dept_id}/head", response_model=DepartmentResponse)
 def clear_department_head(dept_id: int, _: User = Depends(require_platform_admin), db: Session = Depends(get_db)) -> DepartmentResponse:
-    """Leave the department without a named head. They keep their admin role."""
     return dept_service.set_head(db, dept_id, None)
 
 @router.get("/{dept_id}/members", response_model=MemberListResponse)
@@ -63,8 +60,6 @@ def add_member(dept_id: int, payload: MemberAdd, _: User = Depends(dept_admin), 
 @router.patch("/{dept_id}/members/{member_user_id}", response_model=MemberResponse)
 def update_member(dept_id: int, member_user_id: int, payload: MemberUpdate, replacement_user_id: int | None = Query(default=None, description="Hand any team(s)/headship the demotion costs them to this person"), 
                   allow_unled: bool = Query(default=False, description="Demote anyway, leaving those without anyone in charge"), _: User = Depends(dept_admin), db: Session = Depends(get_db)) -> MemberResponse:
-    """Demoting someone out of the role a title requires is refused with a 409
-    naming what they'd stop being able to run"""
     return dept_service.update_member(
         db, dept_id, member_user_id, payload,
         replacement_user_id=replacement_user_id,
@@ -73,9 +68,6 @@ def update_member(dept_id: int, member_user_id: int, payload: MemberUpdate, repl
 
 @router.delete("/{dept_id}/members/{member_user_id}", status_code=status.HTTP_204_NO_CONTENT)
 def remove_member(dept_id: int, member_user_id: int, replacement_user_id: int | None = Query(default=None, description="Hand their team(s)/headship to this person instead of leaving them empty"), allow_unled: bool = Query(default=False, description="Proceed even though teams or the department will be left without a lead"), _: User = Depends(dept_admin), db: Session = Depends(get_db)) -> None:
-    """Removing someone who leads a team or heads the department is refused with a 409
-    naming what would be left leaderless. Hand it over with replacement_user_id, or
-    accept the gap knowingly with allow_unled."""
     dept_service.remove_member(
         db, dept_id, member_user_id,
         replacement_user_id=replacement_user_id,

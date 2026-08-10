@@ -1,17 +1,3 @@
-"""Rate limits: how much each endpoint allows, and who the allowance belongs to.
-
-POST /reports/generate is the only endpoint that spends money (one OpenAI call per
-request), so it gets a strict limit. POST /reports is a plain DB write and gets a
-loose one, just so a runaway client can't hammer it.
-
-The second half covers the KEY the counting happens under. Authenticated routes are
-keyed by verified user id, so one engineer can't lock out everyone else sharing an
-office address, and nobody can spend someone else's OpenAI allowance by claiming to
-be them. The GitHub OAuth callback has no caller, so it stays on the address.
-
-conftest turns the limiter off for the rest of the suite (RATE_LIMIT_ENABLED=false);
-these tests switch it back on and reset its counters so they don't leak into other tests.
-"""
 import base64
 import time
 from datetime import datetime, timezone
@@ -21,6 +7,7 @@ from cryptography.hazmat.primitives.asymmetric import rsa
 from fastapi import FastAPI, Request
 from fastapi.testclient import TestClient
 from jose import jwt
+from limits.storage import memory as limits_memory
 from slowapi import _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 from crescent_core import JWKSClient
@@ -45,9 +32,33 @@ FAKE = LLMResult(
 )
 
 
+class _FrozenClock:
+    """Stands in for the `time` module inside the limiter's in-memory storage."""
+
+    def __init__(self, now):
+        self._now = now
+
+    def time(self):
+        return self._now
+
+
+@pytest.fixture(autouse=True)
+def _deterministic_limiter(monkeypatch):
+    # A window opens on a key's first hit and closes a minute of real time later, so on
+    # a slow enough run the allowance a test just spent expires before the request that
+    # is meant to be refused. Frozen, only requests can spend a window.
+    monkeypatch.setattr(limits_memory, "time", _FrozenClock(time.time()))
+    # The flip side: a window now never expires on its own. A test that wants to watch
+    # one lapse has to move the _FrozenClock forward itself — waiting will never work.
+    # slowapi keeps counters on one limiter for the whole process; clear them either
+    # side so what a test sees never depends on which tests ran before it.
+    limiter.reset()
+    yield
+    limiter.reset()
+
+
 @pytest.fixture
 def live_limiter():
-    """Turn the limiter on for one test, with a clean counter either side."""
     limiter.reset()
     limiter.enabled = True
     yield limiter
@@ -74,12 +85,11 @@ def test_generate_is_rate_limited(client, act_as, monkeypatch, live_limiter, rep
 
     codes = [client.post("/reports/generate", json=body).status_code for _ in range(11)]
 
-    assert codes[:10] == [201] * 10, codes  # the whole hourly allowance goes through
-    assert codes[10] == 429, codes          # the 11th is refused
+    assert codes[:10] == [201] * 10, codes
+    assert codes[10] == 429, codes
 
 
 def test_a_refused_generate_never_calls_the_llm(client, act_as, monkeypatch, live_limiter, repo_with_activity):
-    """The point of the limit: the request that's over the line costs nothing."""
     calls = {"n": 0}
 
     def _count(payload):
@@ -101,8 +111,6 @@ def test_manual_create_has_a_looser_limit(client, act_as, live_limiter, repo_wit
 
     codes = [client.post("/reports", json=body).status_code for _ in range(31)]
 
-    # Well past /generate's allowance and still accepted (409 = duplicate week, which
-    # still means the request was let through), then the 31st is refused.
     assert 429 not in codes[:30], codes
     assert codes[30] == 429, codes
 
@@ -111,7 +119,6 @@ def _b64u(n: int) -> str:
     return base64.urlsafe_b64encode(n.to_bytes((n.bit_length() + 7) // 8, "big")).rstrip(b"=").decode()
 
 def _keypair(kid: str) -> tuple[str, dict]:
-    """A private key PEM and the matching JWK, shaped the way identity publishes them."""
     key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
     pem = key.private_bytes(
         encoding=serialization.Encoding.PEM,
@@ -124,7 +131,6 @@ def _keypair(kid: str) -> tuple[str, dict]:
 
 KID = "test-kid"
 _REAL_PEM, _REAL_JWK = _keypair(KID)
-# Same kid, different key: only a signature check tells this apart from a real token.
 _ROGUE_PEM, _ = _keypair(KID)
 
 def _token(user_id: int, pem: str = _REAL_PEM, issuer: str | None = None) -> str:
@@ -142,18 +148,12 @@ def _bearer(user_id: int, **kw) -> dict:
 
 @pytest.fixture(autouse=True)
 def _identity_public_key(monkeypatch):
-    """Serve the test key wherever the key function looks up identity's JWKS. The
-    fetcher is injected, so nothing here touches the network."""
     monkeypatch.setattr(rate_limit, "jwks_client",
                         JWKSClient("http://identity-not-called/jwks", fetcher=lambda: {"keys": [_REAL_JWK]}))
 
 
 class TestAuthenticatedRoutesAreKeyedByUser:
     def test_two_users_from_one_address_get_separate_buckets(self, client, act_as, live_limiter):
-        """Same TestClient, so identical client address. User 10 burning the
-        /github/sync allowance must not throttle user 11. 403 = the request was let
-        through and the route said no (neither is a platform admin), which still
-        spends quota."""
         act_as(**ENGINEER)
 
         for _ in range(5):
@@ -163,8 +163,6 @@ class TestAuthenticatedRoutesAreKeyedByUser:
         assert client.post("/github/sync", headers=_bearer(11)).status_code == 403
 
     def test_one_user_cannot_spend_anothers_openai_allowance(self, client, act_as, monkeypatch, live_limiter, repo_with_activity):
-        """The whole point on /reports/generate: the hourly cap is per person, and
-        exhausting your own leaves everyone else's alone."""
         monkeypatch.setattr(llm, "generate_summaries", lambda payload: FAKE)
         act_as(**ENGINEER)
         body = {"repo_id": repo_with_activity.id, "week_start": WEEK}
@@ -176,8 +174,6 @@ class TestAuthenticatedRoutesAreKeyedByUser:
         assert client.post("/reports/generate", json=body, headers=_bearer(11)).status_code in (201, 409)
 
     def test_a_token_signed_by_someone_else_cannot_claim_a_users_bucket(self, client, act_as, live_limiter):
-        """Why the key function verifies instead of just reading `sub`: otherwise
-        anyone could mint sub=<victim> and spend their quota."""
         act_as(**ENGINEER)
 
         for _ in range(5):
@@ -198,12 +194,6 @@ class TestAuthenticatedRoutesAreKeyedByUser:
 
 
 def _build_probe_app():
-    """A minimal app on the real key functions. The Pulse routes can't show the
-    fallback paths on their own: the OAuth callback is address-keyed by design and
-    the authenticated ones need a real token to be interesting.
-
-    Built once — slowapi registers limits by endpoint name, so rebuilding it per
-    test would stack duplicate limits on the same counter."""
     app = FastAPI()
     app.state.limiter = limiter
     app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
@@ -223,15 +213,11 @@ def _build_probe_app():
 _probe = _build_probe_app()
 
 def _probe_from(address):
-    """Another caller of the same probe app, at a different address. Same app on
-    purpose — a second app would register the limit twice."""
     return TestClient(_probe.app, client=(address, 40000))
 
 
 class TestUnusableTokensFallBackToTheAddress:
     def test_forged_bearer_tokens_share_one_bucket(self, live_limiter):
-        """A made-up token must not mint a fresh bucket per value — every one of
-        these falls back to the caller's address."""
         for i in range(3):
             assert _probe.get("/probe", headers={"Authorization": f"Bearer garbage-{i}"}).status_code == 200
         assert _probe.get("/probe", headers={"Authorization": "Bearer garbage-99"}).status_code == 429
@@ -243,8 +229,6 @@ class TestUnusableTokensFallBackToTheAddress:
         assert _probe.get("/probe").status_code == 429
 
     def test_a_real_token_is_not_dragged_into_the_fallback_bucket(self, live_limiter):
-        """The fallback must be the address, not a key everyone shares — an
-        exhausted address bucket must leave a genuine caller alone."""
         for _ in range(3):
             assert _probe.get("/probe", headers={"Authorization": "Bearer garbage"}).status_code == 200
         assert _probe.get("/probe", headers={"Authorization": "Bearer garbage"}).status_code == 429
@@ -252,9 +236,6 @@ class TestUnusableTokensFallBackToTheAddress:
         assert _probe.get("/probe", headers=_bearer(10)).status_code == 200
 
     def test_the_fallback_is_the_address_and_not_one_shared_key(self, live_limiter):
-        """Two callers with unusable tokens must still be told apart. A constant
-        fallback key would pass the tests above and quietly let one stranger
-        throttle every other."""
         for _ in range(3):
             assert _probe_from("198.51.100.1").get("/probe", headers={"Authorization": "Bearer garbage"}).status_code == 200
         assert _probe_from("198.51.100.1").get("/probe", headers={"Authorization": "Bearer garbage"}).status_code == 429
@@ -262,9 +243,6 @@ class TestUnusableTokensFallBackToTheAddress:
         assert _probe_from("198.51.100.2").get("/probe", headers={"Authorization": "Bearer garbage"}).status_code == 200
 
     def test_an_unreachable_jwks_falls_back_instead_of_erroring(self, live_limiter, monkeypatch):
-        """Identity's key endpoint being down must not turn key derivation into the
-        thing that breaks the request — the auth dependency is where that gets
-        reported."""
         import httpx
 
         def _boom():
@@ -274,14 +252,11 @@ class TestUnusableTokensFallBackToTheAddress:
         for _ in range(3):
             assert _probe.get("/probe", headers=_bearer(10)).status_code == 200
         assert _probe.get("/probe", headers=_bearer(10)).status_code == 429
-        # Fell back to the address, so a caller elsewhere is untouched.
         assert _probe_from("198.51.100.7").get("/probe", headers=_bearer(11)).status_code == 200
 
 
 class TestForwardedForIsOnlyReadWhenTrusted:
     def test_untrusted_forwarded_header_buys_nothing(self, live_limiter, monkeypatch):
-        """The default. A new X-Forwarded-For per request must not reset the count,
-        or the header becomes a bypass for every address limit."""
         monkeypatch.setattr(settings, "TRUST_PROXY_HEADERS", False)
         for i in range(3):
             assert _probe.get("/probe-address", headers={"X-Forwarded-For": f"10.0.0.{i}"}).status_code == 200
@@ -297,9 +272,6 @@ class TestForwardedForIsOnlyReadWhenTrusted:
         assert _probe.get("/probe-address", headers={"X-Forwarded-For": "203.0.113.2"}).status_code == 200
 
     def test_only_the_entry_the_trusted_proxy_wrote_counts(self, live_limiter, monkeypatch):
-        """With one proxy in front, the rightmost entry is the one it appended.
-        Entries to the left came from the caller, so varying them must not shake the
-        limit off."""
         monkeypatch.setattr(settings, "TRUST_PROXY_HEADERS", True)
         monkeypatch.setattr(settings, "TRUSTED_PROXY_COUNT", 1)
         for i in range(3):
@@ -307,8 +279,6 @@ class TestForwardedForIsOnlyReadWhenTrusted:
         assert _probe.get("/probe-address", headers={"X-Forwarded-For": "9.9.9.9, 203.0.113.9"}).status_code == 429
 
     def test_a_second_hop_is_skipped_when_two_proxies_are_declared(self, live_limiter, monkeypatch):
-        """Two proxies: the rightmost entry is our own inner proxy, so the caller is
-        one further left."""
         monkeypatch.setattr(settings, "TRUST_PROXY_HEADERS", True)
         monkeypatch.setattr(settings, "TRUSTED_PROXY_COUNT", 2)
         for _ in range(3):
@@ -319,9 +289,6 @@ class TestForwardedForIsOnlyReadWhenTrusted:
 
 
 def test_the_oauth_callback_stays_on_the_address(client, live_limiter):
-    """GitHub redirects a browser here with no Authorization header at all, so there
-    is no user to key on. 303 = bad state bounced back to the frontend, i.e. the
-    request reached the route."""
     params = {"code": "x", "state": "not-a-real-state"}
     codes = [client.get("/github/oauth/callback", params=params, follow_redirects=False).status_code for _ in range(21)]
     assert codes[:20] == [303] * 20, codes
@@ -333,9 +300,6 @@ def _request(xff: str | None, client=("10.0.0.1", 1234)):
     return Request({"type": "http", "method": "GET", "path": "/", "headers": headers, "client": client})
 
 class TestAHeaderShorterThanTheProxyCountIsNotTrusted:
-    """The mirror of a count below 1: with 3 hops and TRUSTED_PROXY_COUNT=9 the old
-    `hops[-min(count, len)]` landed on hops[0] — the wholly caller-supplied end. Fewer
-    hops than proxies we run means this isn't our header, so the socket address is used."""
 
     @pytest.fixture(autouse=True)
     def _trusted(self, monkeypatch):
@@ -357,8 +321,6 @@ class TestAHeaderShorterThanTheProxyCountIsNotTrusted:
         assert _probe.get("/probe-address", headers={"X-Forwarded-For": "9.9.9.9, 203.0.113.9"}).status_code == 429
 
     def test_the_misconfiguration_is_warned_about_once_not_per_request(self, monkeypatch, caplog):
-        """A caller chooses when this fires, so a warning per request would be a
-        log-flooding lever. One per process is enough to spot a real misconfiguration."""
         monkeypatch.setattr(settings, "TRUSTED_PROXY_COUNT", 4)
         with caplog.at_level("WARNING"):
             for _ in range(5):
@@ -366,9 +328,6 @@ class TestAHeaderShorterThanTheProxyCountIsNotTrusted:
         assert len([r for r in caplog.records if "TRUSTED_PROXY_COUNT" in r.getMessage()]) == 1
 
 class TestTrustedProxyCountRefusesToDropBelowOne:
-    """0 selects the leftmost X-Forwarded-For entry — the wholly caller-supplied end —
-    so anyone could invent an address and get a fresh bucket. Refused when settings
-    load, the way a malformed retired key refuses the boot."""
 
     @pytest.mark.parametrize("bad", [0, -1, -5])
     def test_settings_will_not_load_with_a_count_below_one(self, bad):
@@ -384,3 +343,38 @@ class TestTrustedProxyCountRefusesToDropBelowOne:
         with pytest.raises(ValidationError):
             settings.TRUSTED_PROXY_COUNT = 0
         assert settings.TRUSTED_PROXY_COUNT >= 1
+
+class _FakeStorage:
+    def __init__(self, reachable: bool):
+        self._reachable = reachable
+
+    def check(self) -> bool:
+        return self._reachable
+
+class TestRedisBackedCountersDegradeToMemory:
+    def test_storage_uri_used_when_redis_answers(self, monkeypatch):
+        monkeypatch.setattr(rate_limit.settings, "REDIS_URL", "redis://redis:6379/0")
+        monkeypatch.setattr(rate_limit, "storage_from_string", lambda uri, **kw: _FakeStorage(True))
+        assert rate_limit._resolve_storage_uri() == "redis://redis:6379/0"
+
+    def test_falls_back_to_memory_when_redis_is_unreachable(self, monkeypatch, caplog):
+        monkeypatch.setattr(rate_limit.settings, "REDIS_URL", "redis://redis:6379/0")
+        monkeypatch.setattr(rate_limit, "storage_from_string", lambda uri, **kw: _FakeStorage(False))
+        with caplog.at_level("WARNING"):
+            assert rate_limit._resolve_storage_uri() is None
+        assert "unreachable" in caplog.text
+
+    def test_falls_back_to_memory_when_the_probe_raises(self, monkeypatch, caplog):
+        monkeypatch.setattr(rate_limit.settings, "REDIS_URL", "redis://redis:6379/0")
+
+        def _boom(uri, **kw):
+            raise ValueError("no driver")
+
+        monkeypatch.setattr(rate_limit, "storage_from_string", _boom)
+        with caplog.at_level("WARNING"):
+            assert rate_limit._resolve_storage_uri() is None
+        assert "unusable" in caplog.text
+
+    def test_blank_redis_url_means_in_memory(self, monkeypatch):
+        monkeypatch.setattr(rate_limit.settings, "REDIS_URL", "")
+        assert rate_limit._resolve_storage_uri() is None

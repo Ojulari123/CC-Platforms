@@ -4,8 +4,6 @@ from crescent_core.identity_client import IdentityUnavailable
 from crescent_core.revocation import RevocationChecker, Verdict
 
 class FakeClient:
-    """Stands in for ServiceTokenClient. `bodies` is what identity replies with;
-    `error` makes every lookup fail. Counts calls so cache tests can assert on them."""
 
     def __init__(self, versions: dict[int, int] | None = None, unknown: list[int] | None = None, error: Exception | None = None, body=None):
         self.versions = versions or {}
@@ -45,8 +43,6 @@ def test_lower_token_version_is_stale(clock):
     assert checker.check(7, 3) is Verdict.STALE
 
 def test_higher_token_version_is_not_treated_as_stale(clock):
-    """A token ahead of identity can only be a lagging read; rejecting would log out
-    users identity never revoked."""
     checker = RevocationChecker(FakeClient({7: 1}), clock=clock)
     assert checker.check(7, 5) is Verdict.CURRENT
 
@@ -55,8 +51,6 @@ def test_unknown_user_id_is_unknown(clock):
     assert checker.check(7, 0) is Verdict.UNKNOWN
 
 def test_lookup_failure_is_unavailable_not_unknown(clock):
-    """The dangerous mistake: reading a failed lookup as "no such user" would log
-    every user out the moment identity blinked."""
     checker = RevocationChecker(FakeClient(error=IdentityUnavailable("identity down")), clock=clock)
     assert checker.check(7, 0) is Verdict.UNAVAILABLE
     assert checker.check(7, 0) is not Verdict.UNKNOWN
@@ -66,7 +60,6 @@ def test_unexpected_exception_is_unavailable_not_unknown(clock):
     assert checker.check(7, 0) is Verdict.UNAVAILABLE
 
 def test_silence_about_an_id_is_unavailable_not_unknown(clock):
-    """Identity answered but never mentioned this id — that is silence, not a verdict."""
     checker = RevocationChecker(FakeClient(body={"users": [], "unknown_user_ids": []}), clock=clock)
     assert checker.check(7, 0) is Verdict.UNAVAILABLE
 
@@ -75,7 +68,6 @@ def test_malformed_row_is_unavailable_not_unknown(clock):
     assert checker.check(7, 0) is Verdict.UNAVAILABLE
 
 def test_answer_is_keyed_by_user_id_not_position(clock):
-    """Identity orders by id, not by the request, so position means nothing."""
     client = FakeClient()
     client.body = {
         "users": [{"user_id": 2, "token_version": 9}, {"user_id": 7, "token_version": 0}],
@@ -147,8 +139,6 @@ def test_unavailable_logging_is_throttled_but_reports_the_count(clock, caplog):
     assert "5 since last report" in caplog.records[1].getMessage()
 
 def test_unknown_is_not_cached(clock):
-    """An id can start existing; pinning "unknown" for the TTL would reject a user
-    created seconds ago."""
     client = FakeClient(unknown=[7])
     checker = RevocationChecker(client, clock=clock)
     assert checker.check(7, 0) is Verdict.UNKNOWN

@@ -32,13 +32,9 @@ def _membership_claims(db: Session, user_id: int) -> list[dict]:
     return [{"dept_id": m.dept_id, "team_id": m.team_id, "role": m.role} for m in rows]
 
 def _led_team_ids(db: Session, user_id: int) -> list[int]:
-    """Teams this user is the named lead of. Goes in the token so Pulse can route
-    report approvals to the right person without reading identity's DB."""
     return list(db.scalars(select(Team.id).where(Team.manager_user_id == user_id)))
 
 def _issue_token_pair(db: Session, user: User, family_id: str | None = None) -> tuple[str, str]:
-    """Create an access + refresh pair. Returns (access_token, raw_refresh_token).
-    Stores only the SHA-256 hash of the refresh token."""
     access = create_access_token(
         user_id=user.id,
         email=user.email,
@@ -65,9 +61,8 @@ def _build_pair_response(access: str, refresh: str, user: User) -> TokenPair:
     )
 
 def register_user(db: Session, payload: RegisterRequest) -> TokenPair:
-    """Bootstrap only: the first registration makes the platform admin and the first
-    department, then the door closes. The gate is a *platform admin* existing, not any
-    user — signup_user creates plain accounts, and closing on those would brick this."""
+    """Bootstrap only, and the gate is a *platform admin* existing, not any user —
+    signup_user creates plain accounts, and closing on those would brick this."""
     if db.scalar(select(User.id).where(User.is_platform_admin.is_(True)).limit(1)) is not None:
         raise HTTPException(
             status_code=403,
@@ -100,9 +95,6 @@ def register_user(db: Session, payload: RegisterRequest) -> TokenPair:
     return _build_pair_response(access, refresh, user)
 
 def signup_user(db: Session, payload: SignupRequest) -> TokenPair:
-    """Open self-signup: A separate door from register_user (bootstrap-only).
-    Creates a plain account with NO membership and NO platform-admin; a fresh
-    signup can log in but belongs to nothing until an admin places them."""
     domains = settings.signup_allowed_domains_list
     if domains:
         # Empty list = open to everyone; a set list locks signup to the org.
@@ -140,7 +132,6 @@ def request_password_reset(db: Session, email: str) -> None:
     if not user or not user.is_active:
         return  # silent no-op — no account enumeration
 
-    # Only the newest link should work: drop any earlier unused token first.
     db.query(PasswordResetToken).filter(
         PasswordResetToken.user_id == user.id, PasswordResetToken.used_at.is_(None)
     ).delete(synchronize_session=False)
@@ -162,8 +153,6 @@ def request_password_reset(db: Session, email: str) -> None:
         pass
 
 def reset_password(db: Session, raw_token: str, new_password: str) -> None:
-    """Complete a reset. Validates the token, sets the new password, then bumps token_version and revokes every refresh token
-    so a reset also logs the account out everywhere. No auto-login; the user signs in fresh with the new password."""
     row = db.scalar(select(PasswordResetToken).where(PasswordResetToken.token_hash == _hash_refresh(raw_token)))
     if not row or row.used_at is not None:
         raise HTTPException(status_code=400, detail="Invalid or already-used reset link")
@@ -200,9 +189,6 @@ def login_user(db: Session, email: str, password: str) -> TokenPair:
     return _build_pair_response(access, refresh, user)
 
 def rotate_refresh_token(db: Session, raw_token: str) -> TokenPair:
-    """Validate the presented refresh token, revoke it, and issue a new pair.
-    Presenting a revoked token nukes the entire family; every session spawned
-    from the same login is invalidated (stolen-token detection)."""
     stored = db.scalar(select(RefreshToken).where(RefreshToken.token_hash == _hash_refresh(raw_token)))
     if not stored:
         raise HTTPException(status_code=401, detail="Invalid refresh token")
@@ -239,15 +225,12 @@ def rotate_refresh_token(db: Session, raw_token: str) -> TokenPair:
     return _build_pair_response(access, new_refresh, user)
 
 def revoke_refresh_token(db: Session, raw_token: str) -> None:
-    """Single-token logout, idempotent. Deliberately does NOT bump token_version —
-    that is per-user, so it would sign them out everywhere. Their access token lives
-    until it expires (<=15 min); use logout-all to cut it now."""
+    """Deliberately does NOT bump token_version — that is per-user, so it would sign
+    them out everywhere. Use logout-all to cut the live access token now."""
     db.query(RefreshToken).filter(RefreshToken.token_hash == _hash_refresh(raw_token)).update({"is_revoked": True}, synchronize_session=False)
     db.commit()
 
 def revoke_all_for_user(db: Session, user_id: int) -> None:
-    """Logout-everywhere. Also bumps token_version so any still-valid access
-    tokens are rejected on next check (via the tv claim)."""
     db.query(RefreshToken).filter(RefreshToken.user_id == user_id, RefreshToken.is_revoked.is_(False)).update({"is_revoked": True}, synchronize_session=False)
     user = db.get(User, user_id)
     if user:
@@ -255,9 +238,6 @@ def revoke_all_for_user(db: Session, user_id: int) -> None:
     db.commit()
 
 def change_password(db: Session, user: User, current_password: str, new_password: str) -> TokenPair:
-    """Verify current password, set new one, bump tv, revoke all refresh tokens,
-    then issue a fresh pair so the caller stays logged in on THIS device.
-    Every other session (browser, mobile, other laptop) is now dead."""
     if not verify_password(current_password, user.password_hash):
         raise HTTPException(status_code=401, detail="Current password is incorrect")
 

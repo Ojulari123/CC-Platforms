@@ -6,7 +6,7 @@ import pytest
 from app.config import settings
 from app.models import STATUS_APPROVED, STATUS_DRAFT, Commit, PullRequest, Report, Repository
 from app.services import identity_client
-from tests.test_names import FakeIdentity  # the one identity fake; don't grow a second
+from tests.test_names import FakeIdentity
 
 DEPT = 1
 LEAD_ID = 20
@@ -21,12 +21,6 @@ def _dt(y, m, d):
     return datetime(y, m, d, 12, 0, tzinfo=timezone.utc)
 
 def _pdf_text(pdf: bytes) -> str:
-    """The visible text of a reportlab PDF, using only the stdlib.
-
-    reportlab writes page content as ASCII85-then-Flate, so inflating each stream and
-    collecting the literals handed to the Tj (show-text) operator is what a reader
-    actually sees on the page. Doing it here beats adding a PDF parser to dev deps for
-    a handful of assertions."""
     shown = []
     for stream in re.findall(rb"stream\r?\n(.*?)endstream", pdf, re.S):
         try:
@@ -37,9 +31,6 @@ def _pdf_text(pdf: bytes) -> str:
     return "\n".join(shown)
 
 def _pdf_flat(pdf: bytes) -> str:
-    """_pdf_text gives one line per show-text operator, and reportlab emits each
-    escaped entity as its own operator — "R&D" arrives as three. Collapse them for
-    character-level assertions."""
     return "".join(_pdf_text(pdf).split("\n"))
 
 @pytest.fixture
@@ -74,7 +65,6 @@ def _seed_report(db, repo, status=STATUS_APPROVED, author=10, with_generation=Tr
     if with_generation:
         report.generated_at = _dt(2026, 7, 27)
     db.add(report)
-    # A couple of commits + a PR inside the WEEK window, so the activity table is non-zero.
     for i in range(2):
         db.add(Commit(repo_id=repo.id, sha=f"w{i}", author_user_id=author,
                       message=f"commit {i}", committed_at=_dt(2026, 7, 21 + i)))
@@ -93,7 +83,7 @@ class TestReportPdf:
         assert r.status_code == 200, r.text
         assert r.headers["content-type"] == "application/pdf"
         assert r.content[:4] == b"%PDF"
-        assert len(r.content) > 500  # a real, non-trivial document
+        assert len(r.content) > 500
         assert "inline" in r.headers["content-disposition"]
         assert f"report-{report.id}-week-2026-07-20.pdf" in r.headers["content-disposition"]
 
@@ -132,8 +122,6 @@ class TestReportPdf:
 
 
 class TestPdfContent:
-    """These read the text off the page, not just the status line — an export that
-    returns 200 but prints "Engineer #10" is exactly the bug being closed."""
 
     def test_the_author_is_a_name_not_an_id(self, client, act_as, db, monkeypatch, wired_to_identity):
         fake = FakeIdentity(monkeypatch)
@@ -144,7 +132,7 @@ class TestPdfContent:
         r = client.get(f"/reports/{report.id}/pdf")
         assert r.status_code == 200, r.text
         text = _pdf_text(r.content)
-        assert "Weekly Report" in text  # the extractor is reading the real page
+        assert "Weekly Report" in text
         assert "Ada Lovelace" in text
         assert "Engineer #10" not in text
         assert fake.calls["profiles"] == 1
@@ -158,8 +146,6 @@ class TestPdfContent:
         r = client.get(f"/reports/{report.id}/pdf")
         assert r.status_code == 200, r.text
         assert r.content[:4] == b"%PDF" and len(r.content) > 500
-        # Falls back to what the PDF said before names existed, so the export degrades
-        # to less-readable rather than to a 500 or an anonymous document.
         assert "Engineer #10" in _pdf_text(r.content)
 
     def test_unknown_author_falls_back_to_the_id(self, client, act_as, db, monkeypatch, wired_to_identity):
@@ -173,9 +159,6 @@ class TestPdfContent:
         assert "Engineer #10" in _pdf_text(r.content)
 
     def test_markup_characters_in_summaries_survive(self, client, act_as, db):
-        """reportlab parses Paragraph text as markup, so unescaped report text either
-        renders wrong ("R&D" came out "R&D;", a <tag> was swallowed whole) or, on a
-        stray closing tag, raised on build and 500'd the export."""
         repo = _seed_repo(db)
         report = _seed_report(db, repo)
         report.summary_manager = "Cut R&D latency to <100ms; CI/CD & deploys stayed green."
@@ -188,14 +171,12 @@ class TestPdfContent:
         assert r.status_code == 200, r.text
         text = _pdf_flat(r.content)
         assert "Cut R&D latency to <100ms; CI/CD & deploys stayed green." in text
-        assert "R&D;" not in text  # the stray semicolon reportlab used to append
+        assert "R&D;" not in text
         assert 'Q&A signed off. 5 > 3 goals landed, marked "done".' in text
         assert "<alpha>" in text
         assert "</release>" in text
 
     def test_a_stray_closing_tag_does_not_500_the_export(self, client, act_as, db):
-        """A tag reportlab knows is worse than one it doesn't: an unknown <alpha> was
-        silently dropped, but </b> raised straight out of doc.build()."""
         repo = _seed_repo(db)
         report = _seed_report(db, repo)
         report.summary_manager = "Dropped the </b> tag from the report template."
@@ -207,8 +188,6 @@ class TestPdfContent:
         assert "Dropped the </b> tag from the report template." in _pdf_flat(r.content)
 
     def test_newlines_in_goals_still_break_lines(self, client, act_as, db):
-        """The <br/> the template inserts is ours, not the data's — escaping the text
-        must not turn it into a literal."""
         repo = _seed_repo(db)
         report = _seed_report(db, repo)
         report.next_week_goals = "First goal\nSecond goal"

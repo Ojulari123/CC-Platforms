@@ -20,8 +20,6 @@ _ACTION_TO_STATUS = {
 _EDITABLE = (STATUS_DRAFT, STATUS_CHANGES_REQUESTED)
 
 def _monday(d: date) -> date:
-    """The Monday of d's week, so 'one report per week' has a single canonical key
-    no matter which day the report was opened on."""
     return d - timedelta(days=d.weekday())
 
 def _get_report(db: Session, report_id: int) -> Report:
@@ -47,9 +45,8 @@ def _require_can_read(user: TokenClaims, report: Report, repo: Repository | None
         raise HTTPException(status_code=403, detail="You don't have access to this report")
 
 def _can_approve(user: TokenClaims, report: Report, repo: Repository | None) -> bool:
-    # Nobody reviews their own work, whatever role they hold — same reason you can't
-    # approve your own PR. This has to come first or a platform admin (or a lead
-    # reporting on their own repo) self-approves.
+    # Has to come first, or a platform admin (or a lead reporting on their own repo)
+    # self-approves.
     if report.author_user_id == user.user_id:
         return False
     if user.is_platform_admin:
@@ -63,22 +60,15 @@ def _require_author(user: TokenClaims, report: Report, verb: str) -> None:
         raise HTTPException(status_code=403, detail=f"Only the author can {verb} this report")
 
 def _has_content(report: Report) -> bool:
-    """True if any of the three summaries has real (non-whitespace) text — an
-    all-empty draft has nothing to review and must not reach an approver."""
     return any((s or "").strip() for s in (report.summary_manager, report.summary_exec, report.next_week_goals))
 
 def _has_activity(db: Session, user_id: int, repo_id: int) -> bool:
-    """True if any commit, PR, or issue in the repo is attributed to this person —
-    i.e. GitHub sync linked their login to a connected account."""
     for model in (Commit, PullRequest, Issue):
         if db.scalar(select(model.id).where(model.repo_id == repo_id, model.author_user_id == user_id).limit(1)):
             return True
     return False
 
 def _may_report_on(db: Session, user: TokenClaims, repo: Repository) -> bool:
-    """Reports are for repos you've worked in (Decision 7 — membership derived
-    from activity). A repo's own lead/deputy and admins may act without personally
-    committing; everyone else needs synced activity in the repo."""
     if user.is_platform_admin:
         return True
     if user.user_id in (repo.lead_user_id, repo.deputy_user_id):
@@ -104,7 +94,7 @@ def create_report(db: Session, user: TokenClaims, payload: ReportCreate) -> Repo
     report = Report(
         author_user_id=user.user_id,
         repo_id=repo.id,
-        dept_id=repo.dept_id,
+        dept_id=repo.dept_id,  # taken from the repo, never from the author
         week_start=week,
         status=STATUS_DRAFT,
         summary_manager=payload.summary_manager,
@@ -121,10 +111,6 @@ def create_report(db: Session, user: TokenClaims, payload: ReportCreate) -> Repo
     return report
 
 def list_reports(db: Session, user: TokenClaims, limit: int, offset: int, repo_id: int | None = None, dept_id: int | None = None, author_user_id: int | None = None, status: str | None = None) -> tuple[list[Report], int]:
-    """Reports the caller can see. A platform admin sees everything; a repo's lead/
-    deputy (or an admin of the repo's dept) sees that repo; a department admin sees
-    their department; everyone else sees only their own. Filters narrow, never
-    widen — the author filter can't reveal someone else's reports."""
     wide = user.is_platform_admin
     if not wide and repo_id is not None:
         repo = db.get(Repository, repo_id)
@@ -154,13 +140,6 @@ def list_reports(db: Session, user: TokenClaims, limit: int, offset: int, repo_i
     return list(rows), total
 
 def review_queue(db: Session, user: TokenClaims, limit: int, offset: int, status: str | None = STATUS_SUBMITTED) -> tuple[list[Report], int]:
-    """The approver's inbox: reports the caller can decide on, across EVERY repo
-    they approve for — not just one. `list_reports` only widens to a repo when you
-    name its repo_id, so a lead of several repos had no single 'what's waiting on
-    me' call; this is that call.
-
-    Scope mirrors _can_approve"""
-    # Your own report is never yours to decide, so it never sits in your inbox.
     filters = [Report.author_user_id != user.user_id]
     if status:
         filters.append(Report.status == status)
@@ -212,8 +191,6 @@ def submit_report(db: Session, user: TokenClaims, report_id: int) -> Report:
     return report
 
 def decide_report(db: Session, user: TokenClaims, report_id: int, action: str, note: str | None = None) -> Report:
-    """Approve / reject / request-changes on a submitted report. Either of the
-    repo's two approvers (lead or deputy) may decide, plus a dept/platform admin."""
     report = _get_report(db, report_id)
     if report.author_user_id == user.user_id:
         raise HTTPException(
@@ -236,8 +213,6 @@ def decide_report(db: Session, user: TokenClaims, report_id: int, action: str, n
     return report
 
 def delete_report(db: Session, user: TokenClaims, report_id: int) -> None:
-    """Delete a report and, cascade its comments. Only a draft can be
-    deleted, and only by its author. Once submitted a report is part of the permanent record and can never be deleted, by anyone."""
     report = _get_report(db, report_id)
     if report.status != STATUS_DRAFT:
         raise HTTPException(status_code=409, detail="A submitted report is part of the record and can't be deleted")
@@ -262,7 +237,7 @@ def _get_comment(db: Session, report_id: int, comment_id: int) -> Comment:
 
 def add_comment(db: Session, user: TokenClaims, report_id: int, body: str) -> Comment:
     report = _get_report(db, report_id)
-    _require_can_read(user, report, _repo_of(db, report))  # if you can see it, you can comment
+    _require_can_read(user, report, _repo_of(db, report))
     comment = Comment(report_id=report.id, author_user_id=user.user_id, body=body)
     db.add(comment)
     db.commit()
@@ -270,7 +245,6 @@ def add_comment(db: Session, user: TokenClaims, report_id: int, body: str) -> Co
     return comment
 
 def edit_comment(db: Session, user: TokenClaims, report_id: int, comment_id: int, body: str) -> Comment:
-    """Edit your own comment. Stamps edited_at so the UI can show '(edited)'."""
     comment = _get_comment(db, report_id, comment_id)
     if comment.author_user_id != user.user_id:
         raise HTTPException(status_code=403, detail="You can only edit your own comment")

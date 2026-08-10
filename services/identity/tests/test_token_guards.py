@@ -1,6 +1,3 @@
-"""The refusals the happy-path suite never reaches: expired or wrong-type tokens,
-tokens belonging to someone who is gone or deactivated, expired invites, and the
-department-admin / non-member branches of the team guard."""
 from sqlalchemy import select
 
 from app.config import settings
@@ -23,8 +20,6 @@ class TestAccessTokenRejected:
         assert "expired" in r.json()["detail"].lower()
 
     def test_service_token_cannot_stand_in_for_a_person(self, client, registered_user):
-        """Service tokens carry a scope string instead of memberships, so one
-        accepted here would sail past every role check."""
         token = create_service_token(client_id="pulse", scopes="users:read:email")
         r = client.get("/me", headers={"Authorization": f"Bearer {token}"})
         assert r.status_code == 401
@@ -41,9 +36,6 @@ class TestAccessTokenRejected:
 
 
 class TestTokenClaims:
-    """These accessors are the contract other services read a token through, so
-    they're exercised here rather than only inside identity's own dependencies."""
-
     def test_claims_survive_a_round_trip(self):
         token = create_access_token(
             user_id=7,
@@ -107,8 +99,6 @@ class TestRefreshTokenGuards:
         assert "reuse" in again.json()["detail"].lower()
 
     def test_deactivated_user_cannot_refresh(self, client, registered_user, engineer_user, db_session):
-        """Deactivating through the API revokes refresh tokens too, so this flips
-        is_active in the database to reach the guard inside the rotation itself."""
         user = db_session.scalar(select(User).where(User.email == "eng@example.com"))
         user.is_active = False
         db_session.commit()
@@ -165,8 +155,6 @@ class TestPasswordResetGuards:
         assert r.status_code == 400
 
     def test_a_failed_send_still_looks_like_success(self, client, registered_user, monkeypatch):
-        """Surfacing the transport error would tell the caller the address has an
-        account — the whole point of the silent 204."""
         from app.services import email as email_service
 
         def boom(to, raw_token):

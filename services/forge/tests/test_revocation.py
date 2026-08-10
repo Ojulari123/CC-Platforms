@@ -1,6 +1,3 @@
-"""Forge-side wiring for the revocation check. The behaviour itself is covered in
-packages/core; what matters here is that Forge actually enables it, on every
-authenticated route, pointed at the identity in its own settings."""
 import httpx
 from fastapi.routing import APIRoute
 from crescent_core.revocation import Verdict
@@ -48,7 +45,6 @@ def test_checker_calls_identity_at_the_configured_url_with_forges_client_id(monk
     assert sent[1][1] == {"user_ids": [5]}
 
 def test_unconfigured_secret_does_not_reject_callers():
-    """CI and any deploy without the secret must degrade to "unchecked", not "locked out"."""
     auth.revocation_checker.clear()
     try:
         assert auth.revocation_checker.check(5, 0) is Verdict.UNAVAILABLE

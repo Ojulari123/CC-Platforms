@@ -43,7 +43,6 @@ function onLogout() {
 <template>
   <div>
     <header class="border-b border-gray-200 bg-white">
-      <!-- Wraps rather than pushing Log out off-screen once the nav runs out of room. -->
       <div class="mx-auto flex max-w-5xl flex-wrap items-center justify-between gap-4 px-4 py-3">
         <div class="flex items-center gap-6">
           <NuxtLink to="/" class="text-sm font-semibold">Forge</NuxtLink>

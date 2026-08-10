@@ -28,8 +28,6 @@ class ProfileLookupRequest(BaseModel):
     user_ids: list[int] = Field(max_length=MAX_LOOKUP_IDS)
 
 class UserProfile(BaseModel):
-    """The minimum needed to draw a person on screen. No email — that stays behind
-    the higher-privilege users:read:email scope."""
     user_id: int
     first_name: str
     last_name: str
@@ -37,8 +35,8 @@ class UserProfile(BaseModel):
     is_active: bool
 
 class ProfileLookupResponse(BaseModel):
-    """Together the two lists account for every requested id. Both sorted by id, but
-    key by user_id — they are not positionally aligned with the request."""
+    """Both lists are sorted by id, but callers must key by user_id — they are not
+    positionally aligned with the request."""
     users: list[UserProfile]
     unknown_user_ids: list[int] = []
 
@@ -50,8 +48,7 @@ class UserTokenVersion(BaseModel):
     token_version: int
 
 class TokenVersionLookupResponse(BaseModel):
-    """Total over the requested ids, like the profile lookup. An id in unknown_user_ids
-    has no current version to compare against, so a caller must reject its tokens
-    rather than read the silence as "still valid"."""
+    """An id in unknown_user_ids has no current version to compare against, so a
+    caller must reject its tokens rather than read the silence as "still valid"."""
     users: list[UserTokenVersion]
     unknown_user_ids: list[int] = []

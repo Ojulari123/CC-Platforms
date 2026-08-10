@@ -1,6 +1,9 @@
 from datetime import datetime
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 from app.schemas.users import UserRef
+
+class RepositoryDepartmentRequest(BaseModel):
+    repo_ids: list[int] = Field(min_length=1, max_length=200)
 
 class RepositoryResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
@@ -15,7 +18,7 @@ class RepositoryResponse(BaseModel):
     default_branch: str | None
     dept_id: int | None
     lead_user_id: int | None
-    lead: UserRef | None = None  # filled from identity; null if it can't be resolved
+    lead: UserRef | None = None
     deputy_user_id: int | None
     deputy: UserRef | None = None
     last_synced_at: datetime | None

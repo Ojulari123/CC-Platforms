@@ -1,5 +1,3 @@
-"""Lives here rather than in any one service so Pulse, Forge and identity page and
-filter lists the same way — same query params, same response shape."""
 from dataclasses import dataclass
 from typing import Generic, Sequence, TypeVar
 from fastapi import Query
@@ -12,7 +10,6 @@ MAX_LIMIT = 200
 
 @dataclass(frozen=True)
 class PageParams:
-    """Bounded by MAX_LIMIT so a caller can't ask for an unbounded page."""
     limit: int
     offset: int
 

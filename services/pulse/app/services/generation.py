@@ -1,13 +1,3 @@
-"""AI generation of a weekly report from an engineer's synced GitHub activity.
-
-Flow: check if the caller can report on the repo, pull the week's activity (that week only), 
-and if there's anything, ask the LLM for three summaries and save them as a draft. 
-
-An empty week never calls the LLM
-
-Only the plumbing lives here; the prompt text is in `prompts.py` and the provider call
-is in `llm.py`
-"""
 import logging
 from datetime import date, datetime, time, timedelta, timezone
 from sqlalchemy import select
@@ -20,22 +10,17 @@ from app.services.reports import _EDITABLE, _may_report_on, _monday
 
 logger = logging.getLogger(__name__)
 
-# Token budget: cap how many items of each kind go into the prompt so a busy week
-# can't blow past the model's context (or our cost). Counts are always exact; only
-# the item lists are truncated, and we flag when that happens.
+# Counts stay exact; only the item lists sent to the prompt are capped, and the payload
+# is flagged when that happens.
 _MAX_ITEMS_PER_KIND = 50
 
 class NoActivityError(Exception):
-    """The engineer has no synced activity for the week, so there's nothing to
-    summarise. The route maps this to 422 — no report is created and the LLM isn't
-    called."""
+    pass
 
 class ReportConflictError(Exception):
-    """A report already exists for (author, repo, week) and is past editing
-    (submitted/approved/rejected), so it can't be regenerated. Route maps to 409."""
+    pass
 
 def _week_window(week_start: date) -> tuple[datetime, datetime]:
-    """[Monday 00:00 UTC, next Monday 00:00 UTC) for the report's week."""
     start = datetime.combine(week_start, time.min, tzinfo=timezone.utc)
     return start, start + timedelta(days=7)
 
@@ -52,9 +37,6 @@ def _issue_item(i: Issue) -> dict:
     return {"number": i.number, "title": i.title, "state": i.state, "gh_created_at": i.gh_created_at}
 
 def _collect_week_activity(db: Session, user_id: int, repo_id: int, week_start: date) -> dict:
-    """This week's activity for the engineer in the repo, as counts + capped item
-    lists. Mirrors the filter patterns in `activity.py`, but bounded on BOTH ends to
-    the week window (activity.py only has a lower bound)."""
     lo, hi = _week_window(week_start)
 
     cq = select(Commit).where(
@@ -93,7 +75,7 @@ def _collect_week_activity(db: Session, user_id: int, repo_id: int, week_start: 
             "commits": len(commits), "pull_requests": len(prs),
             "reviews": len(reviews), "issues": len(issues),
         },
-        "truncated": truncated,  # True if any list was capped to _MAX_ITEMS_PER_KIND
+        "truncated": truncated,
         "commits": [_commit_item(c) for c in commits[:n]],
         "pull_requests": [_pr_item(p) for p in prs[:n]],
         "reviews": [_review_item(r) for r in reviews[:n]],
@@ -105,13 +87,6 @@ def _total_items(activity: dict) -> int:
     return c["commits"] + c["pull_requests"] + c["reviews"] + c["issues"]
 
 def generate_report(db: Session, user: TokenClaims, repo_id: int, week_start: date | None = None) -> Report:
-    """Generate (or regenerate) the caller's weekly report for a repo from their
-    activity that week. The generating user is the author.
-
-    Raises: HTTPException(404/403) for missing repo / no eligibility, 
-    NoActivityError for an empty week, ReportConflictError if an
-    existing report is past editing, and llm.LLMError if the provider fails.
-    """
     repo = db.get(Repository, repo_id)
     if not repo:
         from fastapi import HTTPException
@@ -129,7 +104,6 @@ def generate_report(db: Session, user: TokenClaims, repo_id: int, week_start: da
 
     week = _monday(week_start or date.today())
 
-    # If a report already exists, it must be editable to regenerate into.
     existing = db.scalar(
         select(Report).where(
             Report.author_user_id == user.user_id,
@@ -150,7 +124,7 @@ def generate_report(db: Session, user: TokenClaims, repo_id: int, week_start: da
             "nothing to generate a report from."
         )
 
-    result = llm.generate_summaries(activity)  # LLMError propagates to the route (-> 502)
+    result = llm.generate_summaries(activity)
     logger.info(
         "generate_report: user=%s repo=%s week=%s model=%s tokens=%s truncated=%s",
         user.user_id, repo.id, week.isoformat(), result.model, result.token_count, activity["truncated"],
@@ -158,7 +132,6 @@ def generate_report(db: Session, user: TokenClaims, repo_id: int, week_start: da
 
     now = datetime.now(timezone.utc)
     if existing is not None:
-        # Regenerate: overwrite the editable draft's summaries.
         existing.summary_manager = result.summary_manager
         existing.summary_exec = result.summary_exec
         existing.next_week_goals = result.next_week_goals
@@ -180,12 +153,10 @@ def generate_report(db: Session, user: TokenClaims, repo_id: int, week_start: da
         )
         db.add(report)
 
-    # Token usage rolls up to the platform admin's consumption view, not onto the report.
-    # It goes in the SAME transaction as the report: a second commit meant a failed
-    # ledger write returned a 500 for a report that was already saved (so the caller
-    # retried and paid for another generation), and it could also lose usage rows the
-    # cost view relies on. One commit = report and its cost are always in step.
-    db.flush()  # assigns report.id for the usage row
+    # The usage row goes in the SAME transaction as the report: a second commit meant a
+    # failed ledger write 500'd a report that was already saved, so the caller retried
+    # and paid for another generation.
+    db.flush()
     db.add(LlmUsage(report_id=report.id, user_id=user.user_id, tokens=result.token_count or 0))
     db.commit()
     db.refresh(report)

@@ -53,8 +53,6 @@ class MembershipResponse(BaseModel):
     role: str
 
 class UserMeResponse(BaseModel):
-    """/me — plus EVERY department the caller belongs to. A list, not one "active"
-    department: picking one for them silently locked them out of the other."""
     id: int
     email: EmailStr
     first_name: str
@@ -67,8 +65,6 @@ class UserMeResponse(BaseModel):
     memberships: list[MembershipResponse] = []
 
 class ProfileUpdate(BaseModel):
-    """Fields a user may change about themselves. Email is deliberately absent —
-    changing it would need re-verification, so it gets its own flow later."""
     first_name: str | None = Field(default=None, min_length=1, max_length=100)
     last_name: str | None = Field(default=None, min_length=1, max_length=100)
     avatar_url: str | None = Field(default=None, max_length=500)
@@ -77,5 +73,5 @@ class TokenPair(BaseModel):
     access_token: str
     refresh_token: str
     token_type: str = "bearer"
-    expires_in: int  # seconds until access_token expiry
+    expires_in: int
     user: UserResponse

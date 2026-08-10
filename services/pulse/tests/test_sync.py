@@ -1,7 +1,3 @@
-"""The GitHub activity sync. The engine is driven by a fake GitHub
-client (no network); a separate test exercises the real client's pagination +
-rate-limit handling via httpx.MockTransport."""
-
 import time
 import httpx
 from sqlalchemy import func, select
@@ -16,7 +12,6 @@ import app.tasks
 REPO = {"id": 555, "name": "alpha", "full_name": "org/alpha", "private": False, "default_branch": "main", "owner": {"login": "org"}}
 
 class FakeGitHub:
-    """Duck-typed stand-in for GitHubClient. Records the `since` it was asked for."""
 
     def __init__(self, repo=REPO, commits=(), prs=(), reviews=None, issues=()):
         self._repo = repo
@@ -30,7 +25,10 @@ class FakeGitHub:
     def get_repo(self, full_name):
         return self._repo
 
-    def list_commits(self, full_name, since=None):
+    def list_branches(self, full_name):
+        return []
+
+    def list_commits(self, full_name, since=None, sha=None):
         self.commit_since.append(since)
         return self._commits
 
@@ -65,13 +63,13 @@ def _rich_fake():
             {"id": 22, "number": 3, "title": "a bug", "state": "open", "created_at": "2026-07-18T09:00:00Z",
              "closed_at": None, "user": {"login": "ada"}, "html_url": "u"},
             {"id": 23, "number": 8, "pull_request": {"url": "..."}, "title": "PR as issue",
-             "state": "open", "user": {"login": "ada"}},  # must be skipped
+             "state": "open", "user": {"login": "ada"}},
         ],
     )
 
 def test_sync_pulls_and_attributes_activity(db, monkeypatch):
     monkeypatch.setattr(settings, "GITHUB_REPOS", "org/alpha")
-    _connect_account(db)  # ada → user 10
+    _connect_account(db)
     fake = _rich_fake()
 
     runs = sync_service.run_full_sync(db, make_client=lambda token: fake)
@@ -82,16 +80,16 @@ def test_sync_pulls_and_attributes_activity(db, monkeypatch):
     assert runs[0].repo_id == repo.id
 
     commit = db.scalar(select(Commit))
-    assert commit.sha == "abc" and commit.author_user_id == 10  # attributed to ada
+    assert commit.sha == "abc" and commit.author_user_id == 10
 
     pr = db.scalar(select(PullRequest))
     assert pr.number == 7 and pr.author_user_id == 10
 
     review = db.scalar(select(Review))
-    assert review.state == "approved" and review.reviewer_user_id is None  # bob isn't connected
+    assert review.state == "approved" and review.reviewer_user_id is None
 
     issues = db.scalars(select(Issue)).all()
-    assert len(issues) == 1 and issues[0].number == 3  # the PR-as-issue was skipped
+    assert len(issues) == 1 and issues[0].number == 3
 
 def test_resync_is_idempotent(db, monkeypatch):
     monkeypatch.setattr(settings, "GITHUB_REPOS", "org/alpha")
@@ -108,20 +106,16 @@ def test_second_run_is_incremental(db, monkeypatch):
     fake = _rich_fake()
     sync_service.run_full_sync(db, make_client=lambda t: fake)
     sync_service.run_full_sync(db, make_client=lambda t: fake)
-    # First pull has no cursor; the second asks GitHub only for changes "since" —
-    # for both commits and pull requests.
     assert fake.commit_since[0] is None
     assert fake.commit_since[1] is not None
     assert fake.pr_since[0] is None
     assert fake.pr_since[1] is not None
 
 def test_untracked_repo_is_skipped(db, monkeypatch):
-    """Untracking must actually stop the pull, not just filter listings — so this
-    checks the fake was never asked for anything and no rows were written."""
     monkeypatch.setattr(settings, "GITHUB_REPOS", "org/alpha")
     _connect_account(db)
     fake = _rich_fake()
-    sync_service.run_full_sync(db, make_client=lambda t: fake)  # first pass creates the repo
+    sync_service.run_full_sync(db, make_client=lambda t: fake)
 
     repo = db.scalar(select(Repository).where(Repository.full_name == "org/alpha"))
     repo.is_tracked = False
@@ -139,11 +133,11 @@ def test_untracked_repo_is_skipped(db, monkeypatch):
 
     assert len(runs) == 1 and runs[0].status == "skipped"
     assert runs[0].repo_id == repo.id and "not tracked" in runs[0].detail
-    assert built == []  # no GitHub client was even constructed
+    assert built == []
     assert len(fake.commit_since) == calls_before
     assert db.scalar(select(func.count()).select_from(Commit)) == commits_before
     db.refresh(repo)
-    assert repo.last_synced_at == synced_at  # cursor untouched
+    assert repo.last_synced_at == synced_at
 
 def test_retracked_repo_syncs_again(db, monkeypatch):
     monkeypatch.setattr(settings, "GITHUB_REPOS", "org/alpha")
@@ -161,8 +155,6 @@ def test_retracked_repo_syncs_again(db, monkeypatch):
     assert runs[0].status == "success", runs[0].detail
 
 def test_a_repo_never_synced_before_is_not_treated_as_untracked(db, monkeypatch):
-    """No Repository row yet means no switch has been thrown — a brand-new allowlist
-    entry must still sync on its first pass."""
     monkeypatch.setattr(settings, "GITHUB_REPOS", "org/alpha")
     _connect_account(db)
     runs = sync_service.run_full_sync(db, make_client=lambda t: _rich_fake())
@@ -193,8 +185,8 @@ def test_client_waits_out_a_rate_limit_then_succeeds():
     out = client.list_commits("org/alpha")
 
     assert out == [{"sha": "x"}]
-    assert calls["n"] == 2       # it retried after the rate-limit response
-    assert len(slept) == 1       # and waited exactly once
+    assert calls["n"] == 2
+    assert len(slept) == 1
 
 def test_client_follows_pagination():
     def handler(request: httpx.Request) -> httpx.Response:
@@ -207,7 +199,6 @@ def test_client_follows_pagination():
     assert client.list_commits("org/alpha") == [{"sha": "a"}, {"sha": "b"}]
 
 def test_client_handles_a_secondary_rate_limit():
-    # Secondary limits return 403 with a Retry-After but remaining > 0.
     calls = {"n": 0}
 
     def handler(request: httpx.Request) -> httpx.Response:
@@ -232,7 +223,7 @@ def test_client_pull_requests_stop_at_since():
 
     client = GitHubClient("tok", base_url="https://api.github.test", transport=httpx.MockTransport(handler))
     out = client.list_pull_requests("org/alpha", since=datetime(2026, 7, 10, tzinfo=timezone.utc))
-    assert [p["number"] for p in out] == [3]  # #2 predates `since`, so it stops
+    assert [p["number"] for p in out] == [3]
 
 def test_sync_falls_back_to_a_second_account(db, monkeypatch):
     monkeypatch.setattr(settings, "GITHUB_REPOS", "org/alpha")
@@ -251,7 +242,7 @@ def test_sync_falls_back_to_a_second_account(db, monkeypatch):
     good = _rich_fake()
     runs = sync_service.run_full_sync(db, make_client=lambda token: good if token == "tok-B" else NoAccess())
     assert runs[0].status == "success", runs[0].detail
-    assert db.scalar(select(Commit)) is not None  # synced via the second account
+    assert db.scalar(select(Commit)) is not None
 
 def test_sync_trigger_requires_admin(client, act_as, monkeypatch):
     monkeypatch.setattr(settings, "GITHUB_REPOS", "")
@@ -259,8 +250,6 @@ def test_sync_trigger_requires_admin(client, act_as, monkeypatch):
     assert client.post("/github/sync?wait=true").status_code == 403
 
 def test_sync_trigger_rejects_a_department_admin(client, act_as, monkeypatch):
-    # A full sync burns the shared GitHub quota across every allowlisted repo, so
-    # running one is a platform-admin call — a department admin is not enough.
     monkeypatch.setattr(settings, "GITHUB_REPOS", "")
     act_as(user_id=30, memberships=[{"dept_id": 1, "team_id": None, "role": "admin"}])
     assert client.post("/github/sync?wait=true").status_code == 403
@@ -283,8 +272,6 @@ def test_sync_trigger_enqueues_by_default(client, act_as, monkeypatch):
     assert r.status_code == 200 and r.json() == {"mode": "queued", "task_id": "task-123"}
 
 class TestSyncRunHistory:
-    """GET /github/sync-runs — the answer to "why is my data stale?". Scoped like the
-    repository list: you see history for repos you can see."""
 
     DEPT = 1
     ENGINEER = dict(user_id=10, memberships=[{"dept_id": DEPT, "team_id": None, "role": "engineer"}])
@@ -335,8 +322,6 @@ class TestSyncRunHistory:
         assert client.get(f"/github/sync-runs?repo_id={repo.id}").json()["total"] == 0
 
     def test_repo_less_rows_are_platform_admin_only(self, client, act_as, db):
-        # "no repos configured" / "no connected account" are platform config problems,
-        # not something a department can act on.
         self._run(db, None, status="error", detail="no connected GitHub account to sync with")
         act_as(**self.ENGINEER)
         assert client.get("/github/sync-runs").json()["total"] == 0
