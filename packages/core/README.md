@@ -1,11 +1,11 @@
 # @crescent/core (Python)
 
-Shared backend helpers. **Never imports from any `services/*`** — it's the shared
+Shared backend helpers. **Never imports from any `services/*`**. It is the shared
 foundation, not a dumping ground.
 
 ## What's in it right now
 The **access-token verifier**. Pulse and Forge use this to check a caller's JWT
-without ever touching identity's database or copying its signing key — they
+without ever touching identity's database or copying its signing key. They
 fetch identity's public key(s) once, cache them, and verify locally.
 
 Plus a small **pagination** helper (`Page`, `PageParams`, `page_params`) so every
@@ -35,7 +35,7 @@ from crescent_core import JWKSClient, current_user_dep, require_dept_role, Token
 
 app = FastAPI()
 
-# Once, at startup — a single shared client for the app's lifetime.
+# Once, at startup: a single shared client for the app's lifetime.
 jwks = JWKSClient(jwks_url="http://identity:8000/.well-known/jwks.json")
 current_user = current_user_dep(jwks_client=jwks, issuer="cyphercrescent-identity")
 dept_manager = require_dept_role(current_user, "manager", "admin")
@@ -52,7 +52,7 @@ def approve(dept_id: int, report_id: int, user: TokenClaims = Depends(dept_manag
 ```
 
 `require_dept_role` reads `dept_id` **from the path**, so the check is always
-against the department actually being acted on — a manager in Engineering gets no
+against the department actually being acted on, so a manager in Engineering gets no
 manager rights in Data. Pass no roles to require membership only.
 
 ## What the verifier guarantees
@@ -64,11 +64,11 @@ manager rights in Data. Pass no roles to require membership only.
 Returns a `TokenClaims` object with `user_id`, `email`, `memberships`,
 `is_platform_admin`, `token_version`, `leads`, and the raw payload as `.raw`.
 
-There is **no single `dept_id`/`role`** — a person can be an admin in one
+There is **no single `dept_id`/`role`**, because a person can be an admin in one
 department and an engineer in another, so `memberships` is a tuple of
 `DeptMembership(dept_id, team_id, role)`. Read it through the helpers:
 `role_in(dept_id)`, `is_member_of(dept_id)`, `team_in(dept_id)`, `dept_ids`, and
-`leads_team(team_id)` (whether the caller is a team's named lead — this is what
+`leads_team(team_id)` (whether the caller is a team's named lead, which is what
 lets Pulse route approvals statelessly).
 
 ## Cutting a revoked session short (optional)
@@ -87,7 +87,7 @@ current_user = current_user_dep(jwks, issuer="cyphercrescent-identity",
 One `POST /internal/users/token-versions` per user per TTL (60s by default),
 however many requests arrive. A `tv` below identity's is `STALE` and 401s; an id
 identity explicitly says it doesn't have is `UNKNOWN` and also 401s. **Everything
-else is `UNAVAILABLE`, never `UNKNOWN`** — a failed lookup is the absence of an
+else is `UNAVAILABLE`, never `UNKNOWN`**. A failed lookup is the absence of an
 answer, and reading it as one would log the whole platform out the moment identity
 blinked. So `UNAVAILABLE` is accepted, logged (throttled to one line per 30s) and
 backed off for 10s before the next attempt.
@@ -103,7 +103,7 @@ never mistake a broken call for an answer.
 - Doesn't talk to identity at all after JWKS is cached (TTL: 1 hour by default),
   unless you wire the revocation checker above.
   An unknown `kid` triggers an early refresh so rotations land without a restart,
-  but at most once every 30s (`min_refresh_interval_seconds`) — otherwise anyone
+  but at most once every 30s (`min_refresh_interval_seconds`). Otherwise anyone
   waving a token with a made-up `kid` could make us fetch once per request, and
   auth runs before the rate limiter. Worst case a rotated key takes that interval
   to become usable.

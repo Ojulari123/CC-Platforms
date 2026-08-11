@@ -3,7 +3,7 @@ from sqlalchemy.orm import relationship
 from app.db import Base
 
 class User(Base):
-    """Identity fields only. No product-specific data lives here — products keep
+    """Identity fields only. No product-specific data lives here; products keep
     their own view of a user keyed by user_id."""
     __tablename__ = "users"
 
@@ -17,7 +17,7 @@ class User(Base):
     email_verified = Column(Boolean, nullable=False, server_default="false", default=False)
     is_platform_admin = Column(Boolean, nullable=False, server_default="false", default=False)
     token_version = Column(Integer, nullable=False, server_default="0", default=0)
-    # Set the first time the account is placed in a department, never cleared —
+    # Set the first time the account is placed in a department, never cleared.
     # the durable record that this person was really onboarded, which survives
     # remove_member hard-deleting the membership row.
     onboarded_at = Column(TIMESTAMP(timezone=True), nullable=True)

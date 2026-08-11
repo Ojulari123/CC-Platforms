@@ -4,7 +4,7 @@ Nuxt 3 + TypeScript + Tailwind + TanStack Query. First frontend in the repo.
 
 Working today: signup, login, dashboard, dataset upload with preview, and the
 bundled sample datasets. `/learning` and `/canvas` are navigable descriptions of
-what's coming in Week 6 — they're labelled as previews and nothing on them runs.
+what's coming in Week 6. They're labelled as previews and nothing on them runs.
 
 | Route                | What it is                                      |
 | -------------------- | ----------------------------------------------- |
@@ -33,10 +33,10 @@ npm run preview
 
 ## Backends must be running
 
-This is a UI only — it talks to two backend services (run them in Docker):
+This is a UI only. It talks to two backend services (run them in Docker):
 
-- **identity** on `http://localhost:8001` — login, refresh, `/me`
-- **forge** on `http://localhost:8003` — `/datasets`
+- **identity** on `http://localhost:8001`: login, refresh, `/me`
+- **forge** on `http://localhost:8003`: `/datasets`
 
 Without them, the login form and datasets page have nothing to talk to.
 
@@ -71,14 +71,14 @@ NUXT_PUBLIC_IDENTITY_URL=http://localhost:9001 npm run dev
   until an admin places the user.
 
 All of that lives in the shared Nuxt layer at `packages/ui`, which this app
-`extends` — `useAuth`, `useTokenStorage`, `useApiClient` and the `auth`
+`extends`. `useAuth`, `useTokenStorage`, `useApiClient` and the `auth`
 middleware are auto-imported from there, not from this directory. Forge only
 adds `composables/useApi.ts`, a one-liner that points the shared client at
 `forgeUrl`.
 
 Tokens are kept in `localStorage`, so all token access is client-side only.
 `packages/ui/composables/useTokenStorage.ts` is the only file that touches
-`localStorage` — moving tokens to cookies is a change to that one file, for
+`localStorage`, so moving tokens to cookies is a change to that one file, for
 every product on the layer. The keys stay namespaced per product via
 `authStoragePrefix` (`forge.access_token`, `forge.refresh_token`), so sessions
 created before the move still work.

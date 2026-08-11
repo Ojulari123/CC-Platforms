@@ -4,7 +4,7 @@ from fastapi import HTTPException
 
 # bcrypt silently ignores everything past 72 BYTES, so a longer password used to be
 # loggable-into with just its first 72. Reject rather than truncate. Bytes, not
-# characters — one emoji is 2-4.
+# characters: one emoji is 2-4.
 MAX_PASSWORD_BYTES = 72
 
 def hash_password(password: str) -> str:

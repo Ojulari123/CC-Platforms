@@ -1,6 +1,6 @@
 """Migration 0010's backfill, run against pre-migration rows. The chain itself can't
 run here (0003 is Postgres-only), so the UPDATE is imported from the migration and
-run as-is — fresh rows carry onboarded_at=NULL, which is the pre-migration state."""
+run as-is; fresh rows carry onboarded_at=NULL, which is the pre-migration state."""
 import importlib.util
 from pathlib import Path
 from sqlalchemy import text

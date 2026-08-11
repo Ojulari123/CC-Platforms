@@ -2,7 +2,7 @@
 identity's database, and stores nothing about a user beyond the id.
 
 Anything that fails raises IdentityResolutionError rather than returning an empty
-answer — a caller must never be able to mistake "identity didn't answer" for "identity
+answer: a caller must never be able to mistake "identity didn't answer" for "identity
 says there is no such user". resolve_profiles_safe swallows because names are
 decoration; resolve_profiles_answer swallows but keeps the two apart (see ProfileAnswer).
 """
@@ -131,7 +131,7 @@ class ProfileAnswer(NamedTuple):
     """Only what identity actually said: `profiles` are ids it returned a row for,
     `unknown` are ids it explicitly listed in unknown_user_ids. An id in NEITHER means
     identity never answered about it. Nothing here is derived by subtracting one from
-    the request, so silence can never be read as "deleted" — the difference between
+    the request, so silence can never be read as "deleted", which is the difference between
     cleaning up after a leaver and wiping every stored credential during an outage."""
     profiles: dict[int, dict]
     unknown: set[int]

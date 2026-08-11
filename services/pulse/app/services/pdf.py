@@ -19,7 +19,7 @@ _STATUS_COLORS = {
     STATUS_REJECTED: colors.HexColor("#dc2626"),
     STATUS_CHANGES_REQUESTED: colors.HexColor("#d97706"),
 }
-_EMPTY = "— not generated —"
+_EMPTY = "(not generated)"
 
 def _styles() -> dict:
     base = getSampleStyleSheet()
@@ -83,7 +83,7 @@ def render_report_pdf(db: Session, report: Report) -> bytes:
     week_end = week_start + timedelta(days=6)
 
     flow: list = []
-    flow.append(Paragraph(f"Weekly Report — {escape(repo_name)}", s["title"]))
+    flow.append(Paragraph(f"Weekly Report: {escape(repo_name)}", s["title"]))
     flow.append(Paragraph(
         f"{_author_label(report)} &nbsp;·&nbsp; "
         f"Week of {week_start.isoformat()} ({week_start.isoformat()} → {week_end.isoformat()})",

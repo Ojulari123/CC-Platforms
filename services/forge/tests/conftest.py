@@ -11,8 +11,8 @@ from crescent_core import TokenClaims
 # Every setting app/config.py declares is pinned here, assigned not setdefault, so .env
 # and exported shell vars can't change a test result. An exported DATABASE_URL (Neon,
 # local Postgres) would otherwise bind app.db.engine to a real database for the whole
-# run, and an exported IDENTITY_API_URL would point the revocation check — which runs on
-# every authenticated request — at a live identity. The service secret stays blank on
+# run, and an exported IDENTITY_API_URL would point the revocation check (which runs on
+# every authenticated request) at a live identity. The service secret stays blank on
 # purpose: a test that wants that path stubs it, as test_revocation does.
 _ambient_db_url = os.environ.get("DATABASE_URL")
 os.environ["DATABASE_URL"] = "sqlite:///:memory:"

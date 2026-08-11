@@ -31,12 +31,12 @@ class TestForgotPassword:
 
     def test_unknown_email_looks_identical_and_sends_nothing(self, client, registered_user, sent_resets):
         r = _forgot(client, "nobody@example.com")
-        assert r.status_code == 204  # same as a real address — no enumeration
+        assert r.status_code == 204  # same as a real address, so no enumeration
         assert sent_resets == []
 
     def test_503_only_when_email_is_misconfigured(self, client, registered_user):
         # is_configured() reads the blank test creds.
-        # The 503 is about the server, not the address — it can't be used to probe.
+        # The 503 is about the server, not the address, so it can't be used to probe.
         assert _forgot(client, registered_user["email"]).status_code == 503
         assert _forgot(client, "nobody@example.com").status_code == 503
 

@@ -66,7 +66,7 @@ class TestDeactivate:
         assert _deactivate(client, bob, alice_id).status_code == 200
 
         # Bob is now the last platform admin, and the only account able to
-        # deactivate him is his own — which is refused.
+        # deactivate him is his own, which is refused.
         r = client.post(f"/platform/users/{bob_id}/deactivate", headers=auth(bob))
         assert r.status_code == 400
         assert "your own account" in r.json()["detail"]

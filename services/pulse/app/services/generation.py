@@ -96,7 +96,7 @@ def generate_report(db: Session, user: TokenClaims, repo_id: int, week_start: da
         raise HTTPException(
             status_code=403,
             detail=(
-                "You have no synced activity in this repo — reports are for repos "
+                "You have no synced activity in this repo. Reports are for repos "
                 "you've worked in. If your GitHub isn't connected or synced yet, "
                 "do that first."
             ),
@@ -120,8 +120,8 @@ def generate_report(db: Session, user: TokenClaims, repo_id: int, week_start: da
     activity = _collect_week_activity(db, user.user_id, repo.id, week)
     if _total_items(activity) == 0:
         raise NoActivityError(
-            f"No synced GitHub activity for the week of {week.isoformat()} in this repo — "
-            "nothing to generate a report from."
+            f"No synced GitHub activity for the week of {week.isoformat()} in this repo, "
+            "so there is nothing to generate a report from."
         )
 
     result = llm.generate_summaries(activity)

@@ -64,7 +64,7 @@ def handle_callback(db: Session, code: str, state: str) -> GitHubAccount:
     try:
         payload = crypto.read_state(state, STATE_MAX_AGE_SECONDS)
     except crypto.InvalidStateError:
-        raise HTTPException(status_code=400, detail="Invalid or expired connect link — start again from /github/connect")
+        raise HTTPException(status_code=400, detail="Invalid or expired connect link. Start again from /github/connect")
     user_id = int(payload["uid"])
 
     token = exchange_code_for_token(code)

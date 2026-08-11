@@ -9,7 +9,7 @@ from app.schemas.auth import RegisterRequest, SignupRequest, TokenPair, UserResp
 from app.security import create_access_token, hash_password, validate_password, verify_password
 from app.services import email as email_service
 
-# dummy verify so unknown emails aren't faster — no enumeration
+# dummy verify so unknown emails aren't faster, which would allow enumeration
 _DUMMY_PASSWORD_HASH = hash_password(secrets.token_urlsafe(16))
 
 def _hash_refresh(token: str) -> str:
@@ -61,7 +61,7 @@ def _build_pair_response(access: str, refresh: str, user: User) -> TokenPair:
     )
 
 def register_user(db: Session, payload: RegisterRequest) -> TokenPair:
-    """Bootstrap only, and the gate is a *platform admin* existing, not any user —
+    """Bootstrap only, and the gate is a *platform admin* existing, not any user:
     signup_user creates plain accounts, and closing on those would brick this."""
     if db.scalar(select(User.id).where(User.is_platform_admin.is_(True)).limit(1)) is not None:
         raise HTTPException(
@@ -112,7 +112,7 @@ def signup_user(db: Session, payload: SignupRequest) -> TokenPair:
         password_hash=hash_password(payload.password),
         first_name=payload.first_name,
         last_name=payload.last_name,
-        # Email verification is deferred to a later flow — signing up doesn't
+        # Email verification is deferred to a later flow, since signing up doesn't
         # prove control of the address the way accepting an emailed invite does.
         email_verified=False,
     )
@@ -130,7 +130,7 @@ def request_password_reset(db: Session, email: str) -> None:
 
     user = db.scalar(select(User).where(User.email == email.lower()))
     if not user or not user.is_active:
-        return  # silent no-op — no account enumeration
+        return  # silent no-op, so no account enumeration
 
     db.query(PasswordResetToken).filter(
         PasswordResetToken.user_id == user.id, PasswordResetToken.used_at.is_(None)
@@ -147,7 +147,7 @@ def request_password_reset(db: Session, email: str) -> None:
     try:
         email_service.send_password_reset(to=user.email, raw_token=raw_token)
     except email_service.EmailSendError:
-        # Never surface a transport failure to the caller — it would leak that
+        # Never surface a transport failure to the caller: it would leak that
         # this address has an account. Logged inside the email layer; the token
         # just goes unused and expires.
         pass
@@ -158,7 +158,7 @@ def reset_password(db: Session, raw_token: str, new_password: str) -> None:
         raise HTTPException(status_code=400, detail="Invalid or already-used reset link")
     expires = row.expires_at if row.expires_at.tzinfo else row.expires_at.replace(tzinfo=timezone.utc)
     if expires < datetime.now(timezone.utc):
-        raise HTTPException(status_code=400, detail="This reset link has expired — request a new one")
+        raise HTTPException(status_code=400, detail="This reset link has expired, so request a new one")
 
     user = db.get(User, row.user_id)
     if not user or not user.is_active:
@@ -195,7 +195,7 @@ def rotate_refresh_token(db: Session, raw_token: str) -> TokenPair:
 
     if stored.is_revoked:
         # Killing the family only stops new pairs; bump token_version so the stolen
-        # access token dies too. That is per-user, so it signs them out everywhere —
+        # access token dies too. That is per-user, so it signs them out everywhere,
         # the right trade on a theft signal. See README "What revokes what".
         db.query(RefreshToken).filter(RefreshToken.family_id == stored.family_id).update({"is_revoked": True}, synchronize_session=False)
         user = db.get(User, stored.user_id)
@@ -225,7 +225,7 @@ def rotate_refresh_token(db: Session, raw_token: str) -> TokenPair:
     return _build_pair_response(access, new_refresh, user)
 
 def revoke_refresh_token(db: Session, raw_token: str) -> None:
-    """Deliberately does NOT bump token_version — that is per-user, so it would sign
+    """Deliberately does NOT bump token_version, which is per-user, so it would sign
     them out everywhere. Use logout-all to cut the live access token now."""
     db.query(RefreshToken).filter(RefreshToken.token_hash == _hash_refresh(raw_token)).update({"is_revoked": True}, synchronize_session=False)
     db.commit()

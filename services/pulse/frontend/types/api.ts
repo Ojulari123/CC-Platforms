@@ -69,6 +69,18 @@ export interface RepositoryResponse {
   last_synced_at: string | null;
 }
 
+export interface ApproverCandidate {
+  user_id: number;
+  person: UserRef | null;
+  has_activity: boolean;
+  is_lead: boolean;
+  is_deputy: boolean;
+}
+
+export interface ApproverCandidateList {
+  items: ApproverCandidate[];
+}
+
 export interface ActivityCounts {
   commits: number;
   pull_requests: number;

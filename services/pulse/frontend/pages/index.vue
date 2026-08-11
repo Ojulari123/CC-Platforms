@@ -103,7 +103,7 @@ const CONNECT_MESSAGES: Record<string, { ok: boolean; text: string }> = {
   },
   expired: {
     ok: false,
-    text: "That connect link was no longer valid — they only last a few minutes. Start again.",
+    text: "That connect link was no longer valid; they only last a few minutes. Start again.",
   },
   already_linked: {
     ok: false,
@@ -289,7 +289,7 @@ const selfLabel = computed(() => {
             <ul class="space-y-1 text-sm text-gray-600">
               <li v-for="run in syncRuns.items" :key="run.id">
                 <span class="font-medium">{{ run.repo_full_name ?? "All repositories" }}</span>
-                — {{ run.status }} · {{ formatDateTime(run.started_at) }}
+                · {{ run.status }} · {{ formatDateTime(run.started_at) }}
                 <span v-if="run.detail" class="text-gray-500">· {{ run.detail }}</span>
               </li>
             </ul>

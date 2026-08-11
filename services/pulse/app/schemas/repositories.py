@@ -5,6 +5,16 @@ from app.schemas.users import UserRef
 class RepositoryDepartmentRequest(BaseModel):
     repo_ids: list[int] = Field(min_length=1, max_length=200)
 
+class ApproverCandidate(BaseModel):
+    user_id: int
+    person: UserRef | None = None
+    has_activity: bool
+    is_lead: bool
+    is_deputy: bool
+
+class ApproverCandidateList(BaseModel):
+    items: list[ApproverCandidate]
+
 class RepositoryResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 

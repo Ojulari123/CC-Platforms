@@ -85,7 +85,7 @@ def create_report(db: Session, user: TokenClaims, payload: ReportCreate) -> Repo
         raise HTTPException(
             status_code=403,
             detail=(
-                "You have no synced activity in this repo — reports are for repos "
+                "You have no synced activity in this repo. Reports are for repos "
                 "you've worked in. If your GitHub isn't connected or synced yet, "
                 "do that first."
             ),
@@ -180,7 +180,7 @@ def submit_report(db: Session, user: TokenClaims, report_id: int) -> Report:
     if report.status not in _EDITABLE:
         raise HTTPException(status_code=409, detail=f"A {report.status} report can't be submitted")
     if not _has_content(report):
-        raise HTTPException(status_code=422, detail="Cannot submit an empty report — generate or write summaries first.")
+        raise HTTPException(status_code=422, detail="Cannot submit an empty report. Generate or write summaries first.")
     report.status = STATUS_SUBMITTED
     db.add(Approval(report_id=report.id, actor_user_id=user.user_id, action=ACTION_SUBMITTED))
     db.commit()
@@ -197,7 +197,7 @@ def decide_report(db: Session, user: TokenClaims, report_id: int, action: str, n
             status_code=403,
             detail=(
                 "You can't decide your own report. Ask this repo's lead or deputy, an "
-                "admin of its department, or another platform admin to review it — if "
+                "admin of its department, or another platform admin to review it. If "
                 "the repo has none of those, ask a platform admin to file it under a "
                 "department or name a lead."
             ),

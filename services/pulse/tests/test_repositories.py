@@ -321,6 +321,75 @@ class TestAssignLeadDeputy:
         assert client.put(f"/github/repositories/{rid}/lead/20").status_code == 401
 
 
+class TestApproverCandidates:
+    def _ids(self, client, rid):
+        return [c["user_id"] for c in client.get(f"/github/repositories/{rid}/approver-candidates").json()["items"]]
+
+    def test_contributors_are_offered(self, client, act_as, db):
+        rid = _seed_repo(db, dept_id=DEPT)
+        _seed_commit(db, rid, user_id=10)
+        _seed_commit(db, rid, user_id=11, sha="c2")
+        act_as(**DEPT_ADMIN)
+        assert self._ids(client, rid) == [10, 11]
+
+    def test_a_reviewer_counts_as_a_contributor(self, client, act_as, db):
+        rid = _seed_repo(db, dept_id=DEPT)
+        pr = PullRequest(repo_id=rid, github_pr_id=1, number=7, title="pr", state="open", merged=False,
+                         author_user_id=11, gh_created_at=datetime(2026, 7, 19, 12, 0, tzinfo=timezone.utc))
+        db.add(pr)
+        db.commit()
+        db.refresh(pr)
+        db.add(Review(pull_request_id=pr.id, github_review_id=1, reviewer_user_id=10, state="approved",
+                      submitted_at=datetime(2026, 7, 19, 13, 0, tzinfo=timezone.utc)))
+        db.commit()
+        act_as(**DEPT_ADMIN)
+        assert self._ids(client, rid) == [10, 11]
+
+    def test_the_sitting_lead_is_offered_even_with_no_activity(self, client, act_as, db):
+        """Otherwise a lead assigned by id through the API drops out of the picker and
+        reads as unset."""
+        rid = _seed_repo(db, dept_id=DEPT, lead=20, deputy=25)
+        act_as(**DEPT_ADMIN)
+        body = client.get(f"/github/repositories/{rid}/approver-candidates").json()["items"]
+        by_id = {c["user_id"]: c for c in body}
+        assert by_id[20]["is_lead"] is True and by_id[20]["has_activity"] is False
+        assert by_id[25]["is_deputy"] is True
+
+    def test_activity_and_post_are_reported_separately(self, client, act_as, db):
+        rid = _seed_repo(db, dept_id=DEPT, lead=10)
+        _seed_commit(db, rid, user_id=10)
+        act_as(**DEPT_ADMIN)
+        entry = client.get(f"/github/repositories/{rid}/approver-candidates").json()["items"][0]
+        assert entry["has_activity"] is True and entry["is_lead"] is True
+
+    def test_unattributed_activity_is_left_out(self, client, act_as, db):
+        """Sync leaves author_user_id null for a GitHub login it can't match to an
+        identity user, and a null is not a person we can name."""
+        rid = _seed_repo(db, dept_id=DEPT)
+        _seed_commit(db, rid, user_id=None)
+        act_as(**DEPT_ADMIN)
+        assert self._ids(client, rid) == []
+
+    def test_engineer_cannot_enumerate_contributors(self, client, act_as, db):
+        rid = _seed_repo(db, dept_id=DEPT)
+        _seed_commit(db, rid, user_id=10)
+        act_as(**ENGINEER)
+        assert client.get(f"/github/repositories/{rid}/approver-candidates").status_code == 403
+
+    def test_admin_of_another_department_cannot(self, client, act_as, db):
+        rid = _seed_repo(db, dept_id=DEPT)
+        act_as(**OTHER_ADMIN)
+        assert client.get(f"/github/repositories/{rid}/approver-candidates").status_code == 403
+
+    def test_missing_repo_is_404(self, client, act_as):
+        act_as(**PLATFORM)
+        assert client.get("/github/repositories/9999/approver-candidates").status_code == 404
+
+    def test_requires_auth(self, client, db):
+        rid = _seed_repo(db, dept_id=DEPT)
+        assert client.get(f"/github/repositories/{rid}/approver-candidates").status_code == 401
+
+
 class TestTracking:
 
     def test_dept_admin_can_untrack_and_retrack(self, client, act_as, db):

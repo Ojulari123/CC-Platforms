@@ -28,6 +28,18 @@ def repo_ids_worked_in_q(user_id: int):
 def repo_ids_worked_in(db: Session, user_id: int) -> set[int]:
     return set(db.scalars(repo_ids_worked_in_q(user_id)))
 
+def user_ids_worked_in_repo(db: Session, repo_id: int) -> set[int]:
+    """The mirror of repo_ids_worked_in_q — who worked in one repo, rather than which
+    repos one person worked in. Same four activity sources, so keep the two in step.
+    Sync leaves author/reviewer null for a GitHub login it couldn't match to an identity
+    user, and those nulls are dropped: they are not people we can name."""
+    q = select(Commit.author_user_id).where(Commit.repo_id == repo_id).union(
+        select(PullRequest.author_user_id).where(PullRequest.repo_id == repo_id),
+        select(Issue.author_user_id).where(Issue.repo_id == repo_id),
+        select(Review.reviewer_user_id).join(PullRequest, PullRequest.id == Review.pull_request_id).where(PullRequest.repo_id == repo_id),
+    )
+    return {uid for uid in db.scalars(q) if uid is not None}
+
 def visible_repo_ids(db: Session, user: TokenClaims, target_user_id: int) -> list[int] | None:
     """`None` means no restriction, not "nothing found" — an empty list is no overlap.
 

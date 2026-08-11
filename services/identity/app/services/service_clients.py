@@ -11,12 +11,12 @@ _DUMMY_SECRET_HASH = hash_password("service-client-does-not-exist")
 # Explicit so seeding can't silently over-grant. Split by sensitivity: a service that
 # only draws names never gets the email one, and tokens:verify carries no PII at all.
 PULSE_SCOPES = "users:read:email users:read:profile tokens:verify"
-# Forge renders no names or addresses — it only needs to spot a killed session.
+# Forge renders no names or addresses; it only needs to spot a killed session.
 FORGE_SCOPES = "tokens:verify"
 
 def seed_service_client(db: Session, *, client_id: str, secret: str, scopes: str) -> ServiceClient:
-    """Rotates the hashed secret and scopes but never touches is_active — otherwise a
-    re-seed on every boot would undo a manual revocation."""
+    """Rotates the hashed secret and scopes but never touches is_active, because a
+    re-seed on every boot would otherwise undo a manual revocation."""
     client = db.scalar(select(ServiceClient).where(ServiceClient.client_id == client_id))
     if client is None:
         client = ServiceClient(client_id=client_id, is_active=True)

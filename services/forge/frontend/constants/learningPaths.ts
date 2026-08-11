@@ -1,4 +1,4 @@
-// The four paths named in the platform plan. Descriptions only — none of these
+// The four paths named in the platform plan. Descriptions only; none of these
 // run yet, and the pages that render them say so.
 
 export interface LearningPath {
@@ -25,7 +25,7 @@ export const LEARNING_PATHS: LearningPath[] = [
       },
       {
         title: "Choose the column to predict",
-        detail: "The label — the column holding the category, e.g. pass/fail.",
+        detail: "The label: the column holding the category, e.g. pass/fail.",
       },
       {
         title: "Choose the columns to learn from",

@@ -1,4 +1,4 @@
-"""PROMPT_VERSION bumps whenever the wording or schema below changes — it's stamped on
+"""PROMPT_VERSION bumps whenever the wording or schema below changes. It's stamped on
 every draft, so it's the only way to tell which prompt produced one.
 """
 import json

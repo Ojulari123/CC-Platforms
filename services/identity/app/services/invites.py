@@ -63,7 +63,7 @@ def create_invite(db: Session, dept_id: int, inviter: User, payload: InviteCreat
     except email_service.EmailNotConfigured:
         raise HTTPException(status_code=503, detail="Email is not configured on the server (BREVO_API_KEY / EMAIL_FROM)")
     except email_service.EmailSendError:
-        raise HTTPException(status_code=502, detail="Could not send the invite email — invite not created, try again")
+        raise HTTPException(status_code=502, detail="Could not send the invite email, so the invite was not created. Try again")
 
     # Commit only after the email went out, so a failed send leaves no orphan invite.
     db.commit()
@@ -71,7 +71,7 @@ def create_invite(db: Session, dept_id: int, inviter: User, payload: InviteCreat
     return invite
 
 def list_pending_invites(db: Session, dept_id: int) -> list[Invite]:
-    """Expired invites are included on purpose — an admin needs to see a dead invite
+    """Expired invites are included on purpose: an admin needs to see a dead invite
     to know why someone never got in."""
     return list(db.scalars(
         select(Invite).where(Invite.dept_id == dept_id, Invite.accepted_at.is_(None)).order_by(Invite.created_at.desc())
@@ -82,7 +82,7 @@ def revoke_invite(db: Session, dept_id: int, invite_id: int) -> None:
     if not invite:
         raise HTTPException(status_code=404, detail="Invite not found in this department")
     if invite.accepted_at is not None:
-        raise HTTPException(status_code=400, detail="That invite was already accepted — remove the member instead")
+        raise HTTPException(status_code=400, detail="That invite was already accepted; remove the member instead")
     db.delete(invite)
     db.commit()
 
@@ -94,7 +94,7 @@ def _load_valid_invite(db: Session, raw_token: str) -> Invite:
         raise HTTPException(status_code=400, detail="This invite has already been used")
     expires = invite.expires_at if invite.expires_at.tzinfo else invite.expires_at.replace(tzinfo=timezone.utc)
     if expires < datetime.now(timezone.utc):
-        raise HTTPException(status_code=400, detail="This invite has expired — ask for a new one")
+        raise HTTPException(status_code=400, detail="This invite has expired, so ask for a new one")
     return invite
 
 def preview_invite(db: Session, raw_token: str) -> InvitePreview:

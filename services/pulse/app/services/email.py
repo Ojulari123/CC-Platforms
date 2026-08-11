@@ -49,7 +49,7 @@ def build_no_approver_html(report, repo, review_url: str) -> str:
         f"<p>Your weekly report (#{report.id}) was submitted, but nobody is named to review it.</p>"
         f"<p><b>{repo.full_name}</b> hasn't been filed under a department and has no lead or deputy.</p>"
         "<p>Ask a platform admin to file the repository under a department (or name a repo "
-        "lead) — the report is already submitted and becomes reviewable as soon as they do.</p>"
+        "lead). The report is already submitted and becomes reviewable as soon as they do.</p>"
         f'<p><a href="{review_url}">Open the report</a></p>'
     )
 

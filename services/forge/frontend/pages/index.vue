@@ -35,7 +35,7 @@ const firstSample = computed(() => recent.value.find((ds) => ds.is_sample) ?? nu
         {{ firstName ? `Welcome, ${firstName}` : "Welcome to Forge" }}
       </h1>
       <p class="mt-1 text-sm text-gray-500">
-        Load a CSV, look at it, and build a workflow on top of it — no code needed.
+        Load a CSV, look at it, and build a workflow on top of it. No code needed.
       </p>
     </header>
 
@@ -106,7 +106,7 @@ const firstSample = computed(() => recent.value.find((ds) => ds.is_sample) ?? nu
                 <NuxtLink to="/learning" class="font-medium text-gray-900 hover:underline">
                   See the four paths
                 </NuxtLink>
-                — they open for real in Week 6.
+                (they open for real in Week 6).
               </p>
             </div>
           </li>

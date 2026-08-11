@@ -116,7 +116,7 @@ function start(mode: "blank" | "generate") {
       class="mt-4 rounded-md border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900"
     >
       This repository has no department and no named lead or deputy, so nobody can
-      approve a report about it yet. You can still write one — ask an admin to file it
+      approve a report about it yet. You can still write one. Ask an admin to file it
       under a department on the
       <NuxtLink to="/repositories" class="underline">Repositories</NuxtLink> page and it
       becomes reviewable.

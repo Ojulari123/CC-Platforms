@@ -26,7 +26,7 @@ def connect(request: Request, user: TokenClaims = Depends(current_user)) -> GitH
     return GitHubConnectResponse(authorize_url=github_oauth.build_authorize_url(user.user_id))
 
 def _back_to_pulse(outcome: str) -> RedirectResponse:
-    """The target is built only from settings and a fixed outcome code — nothing from
+    """The target is built only from settings and a fixed outcome code: nothing from
     the request reaches it, so this callback can never be turned into an open redirect."""
     if outcome not in CONNECT_OUTCOMES:
         outcome = "failed"

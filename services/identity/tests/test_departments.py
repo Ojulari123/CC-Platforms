@@ -57,7 +57,7 @@ class TestRename:
         assert r.json()["slug"] == "platform-engineering"
 
     def test_rename_to_same_name_keeps_clean_slug(self, client, registered_user):
-        # Guards the exclude_id logic — without it the department collides with
+        # Guards the exclude_id logic: without it the department collides with
         # itself and picks up a "-2" suffix.
         dept_id = registered_user["dept_id"]
         r = client.patch(f"/departments/{dept_id}", json={"name": "Engineering"}, headers=auth(registered_user["tokens"]))

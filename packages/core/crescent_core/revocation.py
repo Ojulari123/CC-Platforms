@@ -14,7 +14,7 @@ TOKEN_VERSIONS_PATH = "/internal/users/token-versions"
 
 class Verdict(str, Enum):
     """What identity actually said. UNAVAILABLE is the absence of an answer, and is
-    deliberately not UNKNOWN — reading a failed lookup as "deleted user" would log
+    deliberately not UNKNOWN, because reading a failed lookup as "deleted user" would log
     everyone out the moment identity blinked."""
     CURRENT = "current"
     STALE = "stale"
@@ -79,7 +79,7 @@ class RevocationChecker:
             return self._compare(token_version, current)
         if user_id in unknown:
             # Identity said, in as many words, that it has no such user: deleted account.
-            # Not cached — this rejects the request anyway, and an id can start existing.
+            # Not cached: this rejects the request anyway, and an id can start existing.
             return Verdict.UNKNOWN
         # Identity answered without mentioning this id. That is silence, not "unknown".
         return self._unavailable(user_id, ValueError("identity answered without this user_id"))

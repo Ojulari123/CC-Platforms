@@ -1,7 +1,7 @@
 <script setup lang="ts">
 definePageMeta({ middleware: "auth" });
 
-// Static sketch. Nothing here is wired to the API — it exists to pin down the
+// Static sketch. Nothing here is wired to the API; it exists to pin down the
 // layout and vocabulary of the workflow builder before it gets built.
 const modules = [
   { group: "Data in", items: ["Dataset", "Join", "Filter rows"] },

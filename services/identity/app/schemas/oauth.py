@@ -35,7 +35,7 @@ class UserProfile(BaseModel):
     is_active: bool
 
 class ProfileLookupResponse(BaseModel):
-    """Both lists are sorted by id, but callers must key by user_id — they are not
+    """Both lists are sorted by id, but callers must key by user_id: they are not
     positionally aligned with the request."""
     users: list[UserProfile]
     unknown_user_ids: list[int] = []

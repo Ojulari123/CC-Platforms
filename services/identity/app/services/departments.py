@@ -50,7 +50,7 @@ def set_head(db: Session, dept_id: int, head_user_id: int | None) -> DepartmentR
         if not membership:
             raise HTTPException(status_code=400, detail="The head must be a member of this department")
         if membership.role != "admin":
-            raise HTTPException(status_code=400, detail="The head must have the admin role — promote them first")
+            raise HTTPException(status_code=400, detail="The head must have the admin role, so promote them first")
 
     department.head_user_id = head_user_id
     db.commit()
@@ -76,13 +76,13 @@ def delete_department(db: Session, dept_id: int) -> None:
     department = get_department(db, dept_id)
     members = db.scalar(select(func.count()).select_from(Membership).where(Membership.dept_id == dept_id))
     if members:
-        raise HTTPException(status_code=400, detail=f"Department still has {members} member(s) — remove them first")
+        raise HTTPException(status_code=400, detail=f"Department still has {members} member(s); remove them first")
     db.delete(department)
     db.commit()
 
 def list_members(db: Session, dept_id: int, limit: int, offset: int, role: str | None = None, team_id: int | None = None, q: str | None = None) -> MemberListResponse:
     # Without this an unknown department answers 200 with an empty page, which
-    # reads as "nobody works here" rather than "no such department" — and
+    # reads as "nobody works here" rather than "no such department", and
     # GET /departments/{dept_id} already 404s.
     if not db.get(Department, dept_id):
         raise HTTPException(status_code=404, detail="Department not found")

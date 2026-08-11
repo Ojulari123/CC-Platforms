@@ -27,7 +27,7 @@ const path = computed(() => findLearningPath(route.params.slug as string));
         <p class="text-sm font-medium text-amber-900">Not built yet</p>
         <p class="mt-1 text-sm text-amber-800">
           This page describes the path so you know what's coming. The steps below aren't
-          clickable and nothing runs — that's Week 6 work. In the meantime you can upload
+          clickable and nothing runs. That's Week 6 work. In the meantime you can upload
           a CSV and preview it from
           <NuxtLink to="/datasets" class="underline">Datasets</NuxtLink>.
         </p>

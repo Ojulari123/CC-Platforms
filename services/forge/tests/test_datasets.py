@@ -57,7 +57,7 @@ def test_upload_rejects_oversized_file(client, act_as):
 def test_upload_just_over_limit_is_413(client, act_as):
     from app.config import settings
     act_as(7)
-    # Exactly one byte past the limit — the chunked read must abort with 413, not buffer the whole body.
+    # Exactly one byte past the limit: the chunked read must abort with 413, not buffer the whole body.
     limit = settings.MAX_UPLOAD_MB * 1024 * 1024
     over = b"x" * (limit + 1)
     r = _upload(client, content=over)

@@ -2,11 +2,11 @@
 
 Internal monorepo. Two products sharing one login system:
 
-- **identity** (`services/identity`) — accounts, departments, teams, JWT tokens. Everyone trusts tokens issued here.
-- **pulse** (`services/pulse`) — engineering performance reporting (GitHub sync + AI-drafted weekly reports + manager approval).
-- **forge** (`services/forge`) — no-code AI/ML learning platform.
+- **identity** (`services/identity`): accounts, departments, teams, JWT tokens. Everyone trusts tokens issued here.
+- **pulse** (`services/pulse`): engineering performance reporting (GitHub sync + AI-drafted weekly reports + manager approval).
+- **forge** (`services/forge`): no-code AI/ML learning platform.
 
-Shared code: `packages/core` (Python — starts with the JWT verifier that Pulse/Forge use to accept identity's tokens) and `packages/ui` (Vue/Nuxt shared components — not populated yet).
+Shared code: `packages/core` (Python, starting with the JWT verifier that Pulse/Forge use to accept identity's tokens) and `packages/ui` (Vue/Nuxt shared components, not populated yet).
 
 ---
 
@@ -23,7 +23,7 @@ cp .env.example .env
 cp services/identity/.env.example services/identity/.env
 ```
 
-Then edit `services/identity/.env` and set `DATABASE_URL` to your Neon connection string (or leave the localhost default if you're using the sandbox Postgres). The `+psycopg` prefix is required — SQLAlchemy needs it to pick up psycopg 3.
+Then edit `services/identity/.env` and set `DATABASE_URL` to your Neon connection string (or leave the localhost default if you're using the sandbox Postgres). The `+psycopg` prefix is required: SQLAlchemy needs it to pick up psycopg 3.
 
 ## Running the code
 
@@ -34,7 +34,7 @@ docker compose up --build
 - Identity API: <http://localhost:8001> (Swagger UI at `/docs`)
 - Pulse API: <http://localhost:8002> (Swagger UI at `/docs`)
 - Forge API: <http://localhost:8003> (Swagger UI at `/docs`)
-- Local Postgres: `localhost:5432` (sandbox — identity itself points at Neon by default)
+- Local Postgres: `localhost:5432` (sandbox; identity itself points at Neon by default)
 
 Stop with `Ctrl+C`. Wipe the local DB volume with `docker compose down -v`.
 
@@ -66,7 +66,7 @@ Forge's Nuxt frontend (login + datasets UI) is separate:
 cd services/forge/frontend  &&  npm install  &&  npm run dev
 ```
 
-### Just the tests (no DB, no server — SQLite in-memory + ephemeral RSA keys)
+### Just the tests (no DB, no server: SQLite in-memory + ephemeral RSA keys)
 ```bash
 cd services/identity  &&  .venv/bin/pytest    # identity suite
 cd services/pulse     &&  .venv/bin/pytest    # pulse suite
@@ -131,12 +131,12 @@ CC-Platforms/
 | POST | `/internal/users/profiles` | service token | Batch `user_id` → name / avatar / `is_active` (scope `users:read:profile`) |
 
 **Department actions name the `dept_id` in the path** (e.g. `PATCH
-/departments/12`), and permission is checked against *that* department — so
+/departments/12`), and permission is checked against *that* department, so
 someone who is admin in Engineering and an engineer in Data can only administer
 Engineering. The token carries every membership; there is no "active department".
 
 Interactive versions at `/docs`. In Swagger's **Authorize** box paste the raw
-token only (starts `eyJ`) — it adds the `Bearer ` prefix itself, and pasting it
+token only (starts `eyJ`). It adds the `Bearer ` prefix itself, and pasting it
 twice gives `401 Invalid token`.
 
 ## Endpoints (forge, current)
@@ -148,23 +148,23 @@ twice gives `401 Invalid token`.
 | GET | `/datasets` | Bearer | Own datasets + shared samples (paginated: `limit`,`offset`) |
 | GET | `/datasets/{id}` | Bearer | Dataset metadata |
 | GET | `/datasets/{id}/preview` | Bearer | First `rows` rows (default `DATASET_PREVIEW_ROWS`, max 500) |
-| DELETE | `/datasets/{id}` | Bearer | Delete — owner only; sample datasets can't be deleted |
+| DELETE | `/datasets/{id}` | Bearer | Delete (owner only); sample datasets can't be deleted |
 
 Forge verifies identity's tokens locally via `packages/core` and identity's JWKS;
 it never reads identity's database. Pulse's endpoints are documented in
 [services/pulse/README.md](services/pulse/README.md).
 
-## Two databases — which is which
+## Two databases: which is which
 
 | | Docker Postgres | Neon |
 |---|---|---|
 | Where | your laptop, via `docker compose up` | hosted, on the internet |
-| Job | **everyday development** — wipe and rebuild freely | the copy that survives: deploys, demos, anything not on your laptop |
+| Job | **everyday development**, wipe and rebuild freely | the copy that survives: deploys, demos, anything not on your laptop |
 | Used when | always, right now | from Week 8 (deployment), or whenever something off your machine needs the data |
 | Safe to destroy | yes, that's the point | no |
 
 Under Docker Compose, `DATABASE_URL` is **overridden** to the local sandbox
-Postgres — in Compose, `environment:` beats `env_file:`, so the Neon URL in
+Postgres. In Compose, `environment:` beats `env_file:`, so the Neon URL in
 `services/identity/.env` is ignored while running in Docker. Deliberate: dev is
 where you run half-finished migrations and create junk users, and none of that
 should land in the database you later demo from.

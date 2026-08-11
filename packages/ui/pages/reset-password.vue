@@ -86,7 +86,7 @@ async function onSubmit() {
       <template v-else-if="linkDead">
         <h1 class="mb-1 text-xl font-semibold">This link won't work</h1>
         <p class="mb-6 text-sm text-gray-500">
-          {{ errorMessage ?? "This reset link is missing its token — open the link from the email itself." }}
+          {{ errorMessage ?? "This reset link is missing its token. Open the link from the email itself." }}
         </p>
         <NuxtLink
           to="/forgot-password"

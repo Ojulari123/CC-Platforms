@@ -273,7 +273,7 @@ class TestStartupKeyValidation:
 
     def test_a_file_that_goes_bad_after_boot_cannot_take_jwks_down(self, rotate):
         """Startup reads the directory once and the process serves that set for its
-        life, so a stray file dropped in later is invisible until the next restart —
+        life, so a stray file dropped in later is invisible until the next restart,
         which is where it gets caught."""
         with tempfile.TemporaryDirectory() as d:
             retired = os.path.join(d, "retired")

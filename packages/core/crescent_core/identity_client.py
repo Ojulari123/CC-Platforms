@@ -10,7 +10,7 @@ MAX_LOOKUP_IDS = 200
 
 class IdentityUnavailable(Exception):
     """Couldn't reach identity, authenticate, or get a usable answer. Never means
-    "no such user" — absence of an answer is not a verdict."""
+    "no such user": absence of an answer is not a verdict."""
 
 class ServiceTokenClient:
 

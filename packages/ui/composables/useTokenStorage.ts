@@ -12,7 +12,7 @@ export function useTokenStorage() {
   // (NUXT_PUBLIC_AUTH_STORAGE_PREFIX=""), so refuse to touch unprefixed keys here too.
   if (!prefix) {
     throw new Error(
-      "[@crescent/ui] runtimeConfig.public.authStoragePrefix is empty — refusing to read or write unprefixed token keys.",
+      "[@crescent/ui] runtimeConfig.public.authStoragePrefix is empty, so reading or writing unprefixed token keys is refused.",
     );
   }
   const accessKey = `${prefix}.access_token`;

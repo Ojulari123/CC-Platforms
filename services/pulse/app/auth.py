@@ -1,4 +1,4 @@
-"""Tokens are verified locally against identity's published public keys — Pulse never
+"""Tokens are verified locally against identity's published public keys, so Pulse never
 reads identity's database. The one call out is the revocation check: a locally-valid
 token says nothing about whether the session was killed a minute ago.
 """

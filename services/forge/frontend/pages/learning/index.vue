@@ -18,7 +18,7 @@ definePageMeta({ middleware: "auth" });
       <p class="text-sm font-medium text-amber-900">These don't run yet</p>
       <p class="mt-1 text-sm text-amber-800">
         The pages below describe what each path will do and the steps involved. Nothing
-        trains a model at the moment — that lands in Week 6. Uploading and previewing
+        trains a model at the moment. That lands in Week 6. Uploading and previewing
         datasets works today.
       </p>
     </div>

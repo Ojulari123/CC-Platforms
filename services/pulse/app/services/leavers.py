@@ -1,7 +1,7 @@
 """Dropping the stored GitHub credentials of people who have left.
 
 The failure mode this file exists to avoid: reading "identity didn't answer" as
-"everyone left". Departure is only ever inferred from something identity said —
+"everyone left". Departure is only ever inferred from something identity said:
 is_active=False, or an id it listed as unknown (hard-deleted). A chunk identity failed
 to answer contributes to neither, so an outage (total or partial) can't delete a row.
 

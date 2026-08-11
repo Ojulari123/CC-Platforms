@@ -60,7 +60,7 @@ const repo = computed(() =>
   repositories.value.find((r) => r.id === report.value?.repo_id) ?? null,
 );
 
-// Mirrors the API's _can_approve. Getting it wrong only shows or hides buttons — the
+// Mirrors the API's _can_approve. Getting it wrong only shows or hides buttons; the
 // API decides.
 const canApprove = computed(() => {
   const r = report.value;
@@ -122,6 +122,27 @@ const submit = useMutation({
   },
   onError: (err) => {
     actionError.value = apiMessage(err, "Could not submit this report.");
+  },
+});
+
+// Draft-only and author-only, mirroring delete_report in app/services/reports.py. A
+// submitted report is part of the record. isEditable is wider (it admits
+// changes_requested), so it can't stand in for this.
+const isDeletable = computed(
+  () => !!report.value && report.value.status === "draft" && isAuthor.value,
+);
+const confirmingDelete = ref(false);
+
+const remove = useMutation({
+  mutationFn: () => api.request<void>(`/reports/${id.value}`, { method: "DELETE" }),
+  onSuccess: () => {
+    queryClient.invalidateQueries({ queryKey: ["reports"] });
+    queryClient.removeQueries({ queryKey: ["report", id.value] });
+    navigateTo("/reports");
+  },
+  onError: (err) => {
+    confirmingDelete.value = false;
+    actionError.value = apiMessage(err, "Could not delete this draft.");
   },
 });
 
@@ -292,6 +313,31 @@ function sectionValue(r: ReportResponse, key: (typeof SECTIONS)[number]["key"]):
         >
           {{ pdfLoading ? "Building PDF…" : "Download PDF" }}
         </button>
+
+        <template v-if="isDeletable">
+          <button
+            v-if="!confirmingDelete"
+            class="rounded-md border border-red-300 px-3 py-2 text-sm font-medium text-red-600 hover:bg-red-50"
+            @click="confirmingDelete = true; actionError = null"
+          >
+            Delete draft
+          </button>
+          <template v-else>
+            <button
+              :disabled="remove.isPending.value"
+              class="rounded-md bg-red-600 px-3 py-2 text-sm font-medium text-white hover:bg-red-700 disabled:opacity-60"
+              @click="remove.mutate()"
+            >
+              {{ remove.isPending.value ? "Deleting…" : "Delete for good" }}
+            </button>
+            <button
+              class="rounded-md px-3 py-2 text-sm font-medium text-gray-600 hover:bg-gray-100"
+              @click="confirmingDelete = false"
+            >
+              Keep it
+            </button>
+          </template>
+        </template>
       </div>
 
       <p v-if="actionError" class="mb-4 text-sm text-red-600">{{ actionError }}</p>
@@ -301,7 +347,7 @@ function sectionValue(r: ReportResponse, key: (typeof SECTIONS)[number]["key"]):
         v-if="isAuthor && !isEditable"
         class="mb-6 rounded-md border border-gray-200 bg-white px-4 py-3 text-sm text-gray-500"
       >
-        This report is {{ statusLabel(report.status).toLowerCase() }} — it can't be edited.
+        This report is {{ statusLabel(report.status).toLowerCase() }}, so it can't be edited.
         It stays on the record as it was reviewed.
       </p>
 
@@ -339,7 +385,7 @@ function sectionValue(r: ReportResponse, key: (typeof SECTIONS)[number]["key"]):
       <section class="mb-8 rounded-lg border border-gray-200 bg-white p-5">
         <h2 class="mb-3 text-sm font-semibold">Approval history</h2>
         <p v-if="!approvals || !approvals.items.length" class="text-sm text-gray-500">
-          Nothing yet — this report hasn't been submitted for review.
+          Nothing yet. This report hasn't been submitted for review.
         </p>
         <ul v-else class="space-y-3">
           <li v-for="entry in approvals.items" :key="entry.id" class="text-sm">

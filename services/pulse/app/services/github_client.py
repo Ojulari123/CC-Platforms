@@ -55,7 +55,7 @@ class GitHubClient:
         return False
 
     def _wait_for(self, resp: httpx.Response) -> float:
-        """How long GitHub says to wait, UNCAPPED — the raw number is what tells a
+        """How long GitHub says to wait, UNCAPPED: the raw number is what tells a
         few-second secondary-limit pause apart from an hour-long primary exhaustion."""
         if "Retry-After" in resp.headers:
             return max(0, int(resp.headers["Retry-After"]))

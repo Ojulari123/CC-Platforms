@@ -31,7 +31,7 @@ _storage_uri = _resolve_storage_uri()
 _short_forwarded_header_warned = False
 
 def client_address(request: Request) -> str:
-    # X-Forwarded-For is caller-supplied — only trust it behind proxies we run.
+    # X-Forwarded-For is caller-supplied, so only trust it behind proxies we run.
     # Count hops from the right; anything further left is caller-controlled.
     global _short_forwarded_header_warned
     if settings.TRUST_PROXY_HEADERS:
@@ -81,7 +81,7 @@ limiter = Limiter(
 )
 
 # slowapi attaches a handler that discards every record it emits, so a swallowed
-# storage error — the one event that means limits are off — is invisible. Point its
+# storage error, the one event that means limits are off, is invisible. Point its
 # logger at uvicorn's error log so a degradation is actually visible.
 limiter.logger.handlers.clear()
 limiter.logger.setLevel(logging.WARNING)

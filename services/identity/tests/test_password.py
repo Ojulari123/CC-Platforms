@@ -48,7 +48,7 @@ class TestBcryptLengthLimit:
 
     def test_no_truncated_password_can_log_in(self, client, registered_user, invite_user):
         dept = registered_user["dept_id"]
-        long_pw = "Aa1!" + "x" * 68  # exactly 72 — the longest we now accept
+        long_pw = "Aa1!" + "x" * 68  # exactly 72, the longest we now accept
         u = invite_user(registered_user["tokens"], dept, "long@example.com", "engineer", password=long_pw)
         assert u  # accepted
         r = client.post("/auth/login", json={"email": "long@example.com", "password": long_pw[:60]})

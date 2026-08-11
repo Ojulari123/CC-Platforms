@@ -5,26 +5,26 @@
 Three databases, because of the core rule *"products own their own data and
 reference identity by id"* (see `CLAUDE.md`):
 
-1. **Identity DB** — `services/identity`. **Built & migrated `0001`–`0010`.**
+1. **Identity DB**: `services/identity`. **Built & migrated `0001`–`0010`.**
    People, departments, teams, memberships, sessions, invites, password resets,
    and (migration `0008`) **service clients** for service-to-service auth.
-2. **Pulse DB** — `services/pulse`. **Built & migrated `0001`–`0006`.** Two
+2. **Pulse DB**: `services/pulse`. **Built & migrated `0001`–`0006`.** Two
    domains: the **reporting** domain (reports, approvals, comments, plus the
    Week-4 `llm_usage` ledger) and the **GitHub sync** domain (connected accounts,
    repos, commits, PRs, reviews, issues, sync runs). Reporting is **repo-centric**
    (session 05): a report is about a repo, and each repo has a department, a lead,
-   and a deputy. Week 4 (session 06) adds AI-drafted summaries — `reports` gains
-   `generated_at` — and a token-usage ledger (`llm_usage`). Since then, `0005`
+   and a deputy. Week 4 (session 06) adds AI-drafted summaries (`reports` gains
+   `generated_at`) and a token-usage ledger (`llm_usage`). Since then, `0005`
    dropped `commits.additions`/`deletions` (declared but never populated: GitHub's
    commit-list endpoint doesn't return line counts) and `0006` added
    `reports.prompt_version`.
-3. **Forge DB** — `services/forge`. **Built & migrated `0001`–`0002`.** Product 2
+3. **Forge DB**: `services/forge`. **Built & migrated `0001`–`0002`.** Product 2
    (no-code ML). One table so far: **datasets** (uploaded + bundled sample CSVs),
    with the CSV content stored in the row.
 
 > **Cross-service references are by id, not foreign keys.** Pulse stores
 > `author_user_id`, `dept_id`, `lead_user_id`, etc. as plain integers pointing at
-> rows in the identity DB. **No database-level FK crosses the service boundary** —
+> rows in the identity DB. **No database-level FK crosses the service boundary**:
 > the two services have separate databases and deploy independently. Below, real
 > (enforced) FKs are drawn as relationships; cross-service links are only noted in
 > the column comments as "→ identity.X (by id)".
@@ -130,7 +130,7 @@ erDiagram
 ```
 
 > **`service_clients` is standalone** (no relationship to `users`). It's a
-> non-human caller — another service (Pulse) authenticating as itself via OAuth2
+> non-human caller, another service (Pulse) authenticating as itself via OAuth2
 > client-credentials to mint a scoped service token. The `pulse` row is seeded on
 > startup from `PULSE_CLIENT_SECRET`. Migration `0008`.
 
@@ -141,7 +141,7 @@ erDiagram
 
 ---
 
-## Pulse database — GitHub sync domain
+## Pulse database: GitHub sync domain
 
 ```mermaid
 erDiagram
@@ -242,7 +242,7 @@ erDiagram
 
 ---
 
-## Pulse database — reporting domain
+## Pulse database: reporting domain
 
 ```mermaid
 erDiagram
@@ -299,7 +299,7 @@ erDiagram
 
 **How reporting works (session-05 decisions):**
 
-- A report is about a **repo**: **one report per (author, repo, week)** — the
+- A report is about a **repo**: **one report per (author, repo, week)**, enforced by the
   unique key `(author_user_id, repo_id, week_start)`. Working in two repos in a
   week means two reports.
 - A repo belongs to a **department** and has a **lead + deputy**, both referenced
@@ -316,7 +316,7 @@ erDiagram
 ## Forge database
 
 Product 2 (no-code ML). One table so far. People are referenced by identity
-`user_id` only — **no FK crosses into identity**.
+`user_id` only, and **no FK crosses into identity**.
 
 ```mermaid
 erDiagram
@@ -334,7 +334,7 @@ erDiagram
     }
 ```
 
-> **`uq_sample_name` — partial unique index** on `name` WHERE `is_sample`
+> **`uq_sample_name`, a partial unique index** on `name` WHERE `is_sample`
 > (migration `0002`). Stops two workers booting at once from double-seeding a
 > bundled sample; user uploads are excluded by the predicate, so duplicate private
 > dataset names stay allowed. A caller sees their own datasets plus every sample and
@@ -350,7 +350,7 @@ all unique. `memberships (user_id, dept_id)` unique. `teams (dept_id, slug)` uni
 `manager_user_id` / `head_user_id` have no uniqueness (one person may lead many).
 
 **Forge:** `datasets` has the **partial** unique index `uq_sample_name` (`name`
-WHERE `is_sample`) — sample names are unique; user-upload names are not constrained.
+WHERE `is_sample`): sample names are unique; user-upload names are not constrained.
 
 **Pulse:** `repositories.github_repo_id`, `pull_requests.github_pr_id`,
 `reviews.github_review_id`, `issues.github_issue_id`,
@@ -367,5 +367,5 @@ lead/deputise many repos).
 - Identity structure (departments, teams, roles, platform admins, one-team-per-
   person): `docs/decisions/2026-07-23-identity-structure.md`.
 - Repo-centric reporting (repos replace teams; lead + deputy both approve):
-  `docs/decisions/2026-07-30-repo-centric-reporting.md` — **supersedes** the
+  `docs/decisions/2026-07-30-repo-centric-reporting.md`, which **supersedes** the
   team-based approval flow.

@@ -15,7 +15,7 @@ _token_version_reader = require_service_scope("tokens:verify")
 @router.post("/users/emails", response_model=EmailLookupResponse)
 def lookup_emails(payload: EmailLookupRequest, _=Depends(_emails_reader), db: Session = Depends(get_db)) -> EmailLookupResponse:
     """Unknown ids are omitted so a partial list still succeeds. No unknown_user_ids
-    counterpart — the only consumer emails people, and has no cleanup decision
+    counterpart, because the only consumer emails people and has no cleanup decision
     riding on it."""
     if not payload.user_ids:
         return EmailLookupResponse(users=[])

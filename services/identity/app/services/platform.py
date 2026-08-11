@@ -50,7 +50,7 @@ def reactivate_user(db: Session, user_id: int) -> UserAccountResponse:
     db.refresh(user)
     return _account_response(db, user)
 
-_DEACTIVATE_INSTEAD = "Deactivate it instead — that keeps their name on anything they've already done in other products."
+_DEACTIVATE_INSTEAD = "Deactivate it instead: that keeps their name on anything they've already done in other products."
 
 def _history_reason(db: Session, user: User) -> str | None:
     """remove_member deletes the membership row, so a live count can't see an
@@ -72,13 +72,13 @@ def delete_user(db: Session, user_id: int, acting_user: User) -> None:
     # Also covers "the last platform admin": demoting is always the first step, and
     # revoke_platform_admin refuses to demote the only one.
     if user.is_platform_admin:
-        raise HTTPException(status_code=400, detail="Cannot delete a platform administrator — revoke their platform admin role first")
+        raise HTTPException(status_code=400, detail="Cannot delete a platform administrator; revoke their platform admin role first")
 
     memberships = db.scalar(select(func.count()).select_from(Membership).where(Membership.user_id == user_id))
     if memberships:
         raise HTTPException(
             status_code=400,
-            detail=f"That account belongs to {memberships} department(s) — remove them from those first. {_DEACTIVATE_INSTEAD}",
+            detail=f"That account belongs to {memberships} department(s). Remove them from those first. {_DEACTIVATE_INSTEAD}",
         )
 
     # The FKs for these are ON DELETE SET NULL, so a delete would quietly vacate
@@ -89,7 +89,7 @@ def delete_user(db: Session, user_id: int, acting_user: User) -> None:
         runs = [f"leads {name}" for name in led] + [f"heads {name}" for name in headed]
         raise HTTPException(
             status_code=400,
-            detail=f"That account still {' and '.join(runs)} — hand that over first. {_DEACTIVATE_INSTEAD}",
+            detail=f"That account still {' and '.join(runs)}. Hand that over first. {_DEACTIVATE_INSTEAD}",
         )
 
     reason = _history_reason(db, user)
@@ -98,7 +98,7 @@ def delete_user(db: Session, user_id: int, acting_user: User) -> None:
 
     # Neither table has a relationship on User, so the ORM would leave them behind;
     # done here because SQLite doesn't enforce FKs by default. The invite survives
-    # with no named inviter — someone else is waiting on that link.
+    # with no named inviter, since someone else is waiting on that link.
     db.query(PasswordResetToken).filter(PasswordResetToken.user_id == user_id).delete(synchronize_session=False)
     db.query(Invite).filter(Invite.invited_by == user_id).update({"invited_by": None}, synchronize_session=False)
     db.delete(user)

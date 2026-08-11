@@ -126,7 +126,7 @@ const showingTo = computed(() => Math.min(offset.value + LIMIT, total.value));
               <tr v-if="openReportId === report.id" class="border-b border-gray-100 bg-gray-50">
                 <td colspan="5" class="px-4 py-4">
                   <p class="mb-3 text-sm text-gray-500">
-                    Deciding without reading it first is your call — the full report is one
+                    Deciding without reading it first is your call, but the full report is one
                     click away under Read.
                   </p>
                   <ReportDecision :report-id="report.id" @decided="openReportId = null" />

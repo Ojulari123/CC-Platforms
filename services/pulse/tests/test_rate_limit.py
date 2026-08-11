@@ -49,7 +49,7 @@ def _deterministic_limiter(monkeypatch):
     # is meant to be refused. Frozen, only requests can spend a window.
     monkeypatch.setattr(limits_memory, "time", _FrozenClock(time.time()))
     # The flip side: a window now never expires on its own. A test that wants to watch
-    # one lapse has to move the _FrozenClock forward itself — waiting will never work.
+    # one lapse has to move the _FrozenClock forward itself; waiting will never work.
     # slowapi keeps counters on one limiter for the whole process; clear them either
     # side so what a test sees never depends on which tests ran before it.
     limiter.reset()

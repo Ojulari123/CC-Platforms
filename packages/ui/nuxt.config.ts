@@ -1,5 +1,5 @@
 
-// Node builtins are off-limits here — Nuxt typechecks a layer's config with the app's
+// Node builtins are off-limits here: Nuxt typechecks a layer's config with the app's
 // tsconfig, which loads no ambient @types. decodeURIComponent covers paths with spaces.
 const layerDir = decodeURIComponent(new URL(".", import.meta.url).pathname).replace(/\/$/, "");
 
@@ -20,7 +20,7 @@ export default defineNuxtConfig({
   },
   // This layer has no node_modules of its own, so `vue` doesn't resolve from a .vue
   // file living here and vue-tsc types every page in it as `{}`. Point at the
-  // consuming app's copy — every product on this layer sits at services/*/frontend.
+  // consuming app's copy; every product on this layer sits at services/*/frontend.
   typescript: {
     tsConfig: {
       compilerOptions: {
@@ -33,7 +33,7 @@ export default defineNuxtConfig({
       identityUrl: "http://localhost:8001",
       // Namespaces the stored tokens, so a product that already has sessions in
       // browsers can keep its existing keys when it moves onto this layer.
-      // Intentionally has no usable default — see the `ready` hook below.
+      // Intentionally has no usable default. See the `ready` hook below.
       authStoragePrefix: "",
     },
   },

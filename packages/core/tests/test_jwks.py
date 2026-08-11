@@ -43,7 +43,7 @@ def test_a_rotated_key_becomes_usable_after_the_interval(jwks_doc, rsa_keypair):
     assert client.get_key("rotated-kid") is None  # still inside the interval
     assert calls["n"] == 1
 
-    client._last_attempt_at -= 30.0  # interval elapses — worst case for a new key
+    client._last_attempt_at -= 30.0  # interval elapses, worst case for a new key
     assert client.get_key("rotated-kid")["kid"] == "rotated-kid"
     assert calls["n"] == 2
 
@@ -89,6 +89,6 @@ def test_invalidate_forces_refetch(jwks_doc, rsa_keypair):
     client = JWKSClient(jwks_url="http://ignored", fetcher=fetcher)
     client.get_key(rsa_keypair["kid"])
     assert calls["n"] == 1
-    client.invalidate()  # must beat the interval floor — it's a local, trusted signal
+    client.invalidate()  # must beat the interval floor, since it's a local, trusted signal
     client.get_key(rsa_keypair["kid"])
     assert calls["n"] == 2

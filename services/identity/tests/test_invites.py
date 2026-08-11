@@ -24,7 +24,7 @@ class TestCreateInvite:
         assert sent_emails[0]["raw_token"]
 
     def test_email_not_configured_returns_503(self, client, registered_user):
-        # No monkeypatch here — send_invite runs for real and hits the guard
+        # No monkeypatch here: send_invite runs for real and hits the guard
         # (test env has no BREVO_API_KEY). Also proves a failed send rolls back.
         r = _invite(client, registered_user["tokens"], registered_user["dept_id"])
         assert r.status_code == 503

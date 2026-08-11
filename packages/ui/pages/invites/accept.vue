@@ -12,7 +12,7 @@ const token = ref(typeof route.query.token === "string" ? route.query.token : ""
 
 const preview = ref<InvitePreview | null>(null);
 const loading = ref(true);
-// Terminal state: invalid, expired, already accepted — retrying can't fix it.
+// Terminal state: invalid, expired, already accepted. Retrying can't fix it.
 const deadReason = ref<string | null>(null);
 
 const firstName = ref("");
@@ -26,7 +26,7 @@ const submitting = ref(false);
 const placement = computed(() => {
   const p = preview.value;
   if (!p) return "";
-  return p.team_name ? `${p.dept_name} — ${p.team_name}` : p.dept_name;
+  return p.team_name ? `${p.team_name} in ${p.dept_name}` : p.dept_name;
 });
 
 function serverDetail(err: unknown): string | null {
@@ -41,7 +41,7 @@ function statusOf(err: unknown): number | undefined {
 
 onMounted(async () => {
   if (!token.value) {
-    deadReason.value = "This invite link is missing its token — open the link from the email itself.";
+    deadReason.value = "This invite link is missing its token. Open the link from the email itself.";
     loading.value = false;
     return;
   }

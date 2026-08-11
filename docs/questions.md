@@ -8,12 +8,12 @@ one place to find every open/closed question.
 
 ---
 
-## Session 05 (2026-07-30) — repo-centric restructure
+## Session 05 (2026-07-30): repo-centric restructure
 
 All resolved on 2026-07-30. Design recorded in
 `docs/decisions/2026-07-30-repo-centric-reporting.md`.
 
-1. ✅ **Repo membership — derived or assigned?**
+1. ✅ **Repo membership: derived or assigned?**
    → **Derived from GitHub activity** (contributed to a repo → you report on it).
    May materialise a list later if speed/UX needs it.
 2. ✅ **Do repos belong to a department?**
@@ -21,7 +21,7 @@ All resolved on 2026-07-30. Design recorded in
 3. ✅ **Who assigns a repo's lead + deputy?**
    → **Department admin or platform admin** (either). Lead/deputy must hold the
    manager or admin role.
-4. ✅ **A repo with no lead/deputy yet — block reports?**
+4. ✅ **A repo with no lead/deputy yet: block reports?**
    → **No.** Engineers may create and submit; reports wait in `submitted` until a
    lead/deputy is assigned, then appear in that person's queue.
 

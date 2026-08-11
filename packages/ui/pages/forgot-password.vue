@@ -32,7 +32,7 @@ async function onSubmit() {
     const status = (err as { statusCode?: number; status?: number })?.statusCode
       ?? (err as { status?: number })?.status;
     if (status === 503) {
-      // Server-wide email misconfiguration — same answer for every address, so
+      // Server-wide email misconfiguration: same answer for every address, so
       // showing it still says nothing about whether this one has an account.
       errorMessage.value = serverDetail(err) ?? "Password reset email isn't configured on the server yet.";
     } else if (status === 429) {

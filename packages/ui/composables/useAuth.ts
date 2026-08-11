@@ -63,7 +63,7 @@ export function useAuth() {
     }
   }
 
-  // For flows that get a token pair from somewhere other than login/signup —
+  // For flows that get a token pair from somewhere other than login/signup:
   // invite acceptance returns one, so the invitee lands already signed in.
   async function adoptSession(pair: TokenPair): Promise<void> {
     persist(pair);

@@ -99,7 +99,7 @@ async function onSubmit() {
       </form>
 
       <p class="mt-6 text-sm text-gray-500">
-        Pulse accounts are created by your department admin — there's no sign-up here.
+        Pulse accounts are created by your department admin. There's no sign-up here.
       </p>
     </div>
   </div>

@@ -1,6 +1,6 @@
 """
-Rows are upserted by GitHub's own ids, so a re-run — including the overlap window
-_commit_window re-requests — updates rather than duplicates. Every repo gets a
+Rows are upserted by GitHub's own ids, so a re-run (including the overlap window
+_commit_window re-requests) updates rather than duplicates. Every repo gets a
 `sync_runs` row either way: "nothing happened" and "nothing was meant to happen" have
 to be tellable apart.
 """
@@ -38,7 +38,7 @@ def _login_map(db: Session) -> dict[str, int]:
 def _attribute(login_map: dict[str, int], login: str | None, existing: int | None = None) -> int | None:
     """A login that no longer maps keeps whatever the row was already attributed to.
     Once a leaver's account is dropped their login falls out of the map, and GitHub
-    re-lists old items whenever they're touched (a PR gets a comment, say) — that
+    re-lists old items whenever they're touched (a PR gets a comment, say), and that
     must not quietly blank out who wrote them."""
     return (login_map.get(login.lower()) if login else None) or existing
 
@@ -114,7 +114,7 @@ def _sync_issues(db: Session, client, repo: Repository, login_map: dict[str, int
     n = 0
     for i in client.list_issues(repo.full_name, since=since):
         if "pull_request" in i:
-            continue  # GitHub's issues endpoint also returns PRs — skip them
+            continue  # GitHub's issues endpoint also returns PRs, so skip them
         login = (i.get("user") or {}).get("login")
         existing = db.scalar(select(Issue).where(Issue.github_issue_id == i["id"]))
         issue = existing or Issue(repo_id=repo.id, github_issue_id=i["id"])
@@ -135,7 +135,7 @@ def _commit_window(cursor: datetime | None) -> datetime | None:
     """Commits are asked for from the cursor MINUS an overlap, because GitHub's `since`
     filters on commit date, not push time: an engineer who commits offline for a week
     and pushes today produces commits dated behind the cursor, which a window starting
-    at the cursor would never return — and never would on any later run either. Re-asking
+    at the cursor would never return, and never would on any later run either. Re-asking
     for a window we mostly hold already is cheap: the rows upsert by (repo, sha)."""
     if cursor is None:
         return None

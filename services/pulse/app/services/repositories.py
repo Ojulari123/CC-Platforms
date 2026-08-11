@@ -7,7 +7,7 @@ from sqlalchemy import func, or_, select, update
 from sqlalchemy.orm import Session
 from crescent_core import TokenClaims
 from app.models import Report, Repository
-from app.services.activity import repo_ids_worked_in, repo_ids_worked_in_q
+from app.services.activity import repo_ids_worked_in, repo_ids_worked_in_q, user_ids_worked_in_repo
 
 def _get_repo(db: Session, repo_id: int) -> Repository:
     repo = db.get(Repository, repo_id)
@@ -113,6 +113,20 @@ def set_tracked(db: Session, user: TokenClaims, repo_id: int, tracked: bool) -> 
     db.commit()
     db.refresh(repo)
     return repo
+
+def approver_candidates(db: Session, user: TokenClaims, repo_id: int) -> tuple[Repository, list[int], set[int]]:
+    """Who this repo's lead/deputy can be picked from: everyone with activity in it, plus
+    whoever currently holds either post. The current holders are included even with no
+    activity — Pulse can't list identity's users, so a lead assigned through the API by id
+    would otherwise vanish from the picker and look unset.
+
+    Gated by the same guard as set_lead/set_deputy, so it can't be used to enumerate a
+    repo's contributors by anyone who couldn't already reassign them."""
+    repo = _get_repo(db, repo_id)
+    _require_can_admin_repo(user, repo)
+    worked_in = user_ids_worked_in_repo(db, repo.id)
+    ids = worked_in | {uid for uid in (repo.lead_user_id, repo.deputy_user_id) if uid is not None}
+    return repo, sorted(ids), worked_in
 
 def set_lead(db: Session, user: TokenClaims, repo_id: int, lead_user_id: int | None) -> Repository:
     repo = _get_repo(db, repo_id)

@@ -3,7 +3,9 @@ from sqlalchemy.orm import Session
 from crescent_core import Page, PageParams, TokenClaims, page_params
 from app.auth import current_user
 from app.db import get_db
-from app.schemas.repositories import RepositoryDepartmentRequest, RepositoryResponse
+from app.schemas.repositories import (
+    ApproverCandidate, ApproverCandidateList, RepositoryDepartmentRequest, RepositoryResponse,
+)
 from app.services import people, repositories as repo_service
 
 router = APIRouter(prefix="/github/repositories", tags=["repositories"])
@@ -46,6 +48,21 @@ def track_repository(repo_id: int, user: TokenClaims = Depends(current_user), db
 @router.delete("/{repo_id}/tracked", response_model=RepositoryResponse)
 def untrack_repository(repo_id: int, user: TokenClaims = Depends(current_user), db: Session = Depends(get_db)) -> RepositoryResponse:
     return _named([repo_service.set_tracked(db, user, repo_id, False)])[0]
+
+@router.get("/{repo_id}/approver-candidates", response_model=ApproverCandidateList)
+def list_approver_candidates(repo_id: int, user: TokenClaims = Depends(current_user), db: Session = Depends(get_db)) -> ApproverCandidateList:
+    repo, ids, worked_in = repo_service.approver_candidates(db, user, repo_id)
+    items = [
+        ApproverCandidate(
+            user_id=uid,
+            has_activity=uid in worked_in,
+            is_lead=uid == repo.lead_user_id,
+            is_deputy=uid == repo.deputy_user_id,
+        )
+        for uid in ids
+    ]
+    people.attach_names(items, ("user_id", "person"))
+    return ApproverCandidateList(items=items)
 
 @router.put("/{repo_id}/lead/{user_id}", response_model=RepositoryResponse)
 def set_lead(repo_id: int, user_id: int, user: TokenClaims = Depends(current_user), db: Session = Depends(get_db)) -> RepositoryResponse:

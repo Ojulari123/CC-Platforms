@@ -4,7 +4,7 @@
 Signs a token with identity's private key exactly the way identity does, so you
 can call Pulse (which verifies tokens against identity's public JWKS) without
 going through register → invite → accept for every test user. The dept/team ids
-in the token are just claims — Pulse trusts them, so they don't need to exist in
+in the token are just claims. Pulse trusts them, so they don't need to exist in
 identity's database for you to exercise Pulse.
 
 DO NOT use outside local development.
@@ -56,7 +56,7 @@ def lookup_token_version(identity_url: str, user_id: int) -> int | None:
     self-minted service token: this script already holds the signing key, and the
     endpoint only wants the tokens:verify scope. Going through identity (rather than
     the database) means it reads whatever database that identity is actually pointed
-    at — in Compose that is the sandbox Postgres, not the .env URL. Returns None when
+    at, and in Compose that is the sandbox Postgres, not the .env URL. Returns None when
     identity is unreachable or does not know the user."""
     import httpx
     from app.security.jwt import create_service_token
@@ -145,7 +145,7 @@ def main() -> None:
         token_version = lookup_token_version(args.identity_url, args.user_id)
         if token_version is None:
             # 0 is right for the made-up user ids used to exercise Pulse/Forge, and wrong
-            # for a real user whose tv has moved — say so instead of printing a dud token.
+            # for a real user whose tv has moved, so say so instead of printing a dud token.
             print("warning: falling back to tv=0. Fine for a user id that only exists as a claim; "
                   "identity will answer 401 'Session revoked' for a real user past tv 0. "
                   "Pass --token-version to set it.", file=sys.stderr)

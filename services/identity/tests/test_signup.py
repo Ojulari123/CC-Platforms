@@ -121,7 +121,7 @@ class TestPlacement:
             json={"user_id": user_id, "role": "engineer"},
             headers=auth(registered_user["tokens"]),
         )
-        # The placed user re-reads /me — a stale token still has no membership
+        # The placed user re-reads /me. A stale token still has no membership
         # claim, but /me reads live from the DB, so it shows up immediately.
         me = client.get("/me", headers=auth(tokens)).json()
         assert len(me["memberships"]) == 1

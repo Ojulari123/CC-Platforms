@@ -44,7 +44,7 @@ def _deterministic_limiter(monkeypatch):
     # is meant to be refused. Frozen, only requests can spend a window.
     monkeypatch.setattr(limits_memory, "time", _FrozenClock(time.time()))
     # The flip side: a window now never expires on its own. A test that wants to watch
-    # one lapse has to move the _FrozenClock forward itself — waiting will never work.
+    # one lapse has to move the _FrozenClock forward itself; waiting will never work.
     # slowapi keeps counters on one limiter for the whole process; clear them either
     # side so what a test sees never depends on which tests ran before it.
     rate_limit.limiter.reset()
@@ -164,7 +164,7 @@ class TestAuthenticatedRoutesAreKeyedByUser:
 def _build_probe_app():
     """A minimal app on the limiter's default key function: the dataset routes' auth
     dependency rejects a bad token before the limiter runs, so they can't show the
-    fallbacks. Built once — slowapi keys limits by endpoint name, so rebuilding stacks them."""
+    fallbacks. Built once, because slowapi keys limits by endpoint name and rebuilding stacks them."""
     app = FastAPI()
     app.state.limiter = limiter
     app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
@@ -259,7 +259,7 @@ def _request(xff: str | None, client=("10.0.0.1", 1234)):
 
 class TestAHeaderShorterThanTheProxyCountIsNotTrusted:
     """The mirror of a count below 1: with 3 hops and TRUSTED_PROXY_COUNT=9 the old
-    `hops[-min(count, len)]` landed on hops[0] — the wholly caller-supplied end. Fewer
+    `hops[-min(count, len)]` landed on hops[0], the wholly caller-supplied end. Fewer
     hops than proxies we run means this isn't our header, so the socket address is used."""
 
     @pytest.fixture(autouse=True)
@@ -289,7 +289,7 @@ class TestAHeaderShorterThanTheProxyCountIsNotTrusted:
         assert len([r for r in caplog.records if "TRUSTED_PROXY_COUNT" in r.getMessage()]) == 1
 
 class TestTrustedProxyCountRefusesToDropBelowOne:
-    """0 selects the leftmost X-Forwarded-For entry — the wholly caller-supplied end —
+    """0 selects the leftmost X-Forwarded-For entry, the wholly caller-supplied end,
     so anyone could invent an address and get a fresh bucket. Refused when settings
     load, the way a malformed retired key refuses the boot."""
 

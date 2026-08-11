@@ -9,7 +9,7 @@ class _MissingKid(InvalidToken):
     pass
 
 def verify_access_token(token: str, jwks_client: JWKSClient, issuer: str, algorithms: tuple[str, ...] = ("RS256",)) -> TokenClaims:
-    """Never touches identity's DB — verification is local, against the published JWKS."""
+    """Never touches identity's DB: verification is local, against the published JWKS."""
     try:
         header = jwt.get_unverified_header(token)
     except JWTError:

@@ -2,7 +2,7 @@ from app.schemas.users import UserRef
 from app.services.identity_client import resolve_profiles_safe
 
 def attach_names(items, *pairs: tuple[str, str]) -> None:
-    """`pairs` are (id_field, name_field) — e.g. ("author_user_id", "author"). Profiles
+    """`pairs` are (id_field, name_field), e.g. ("author_user_id", "author"). Profiles
     are keyed by the user_id identity sends back: its response is in database order, not
     request order, so pairing by position would put the wrong name on the wrong person.
     Anything identity doesn't return is left as None rather than faked."""

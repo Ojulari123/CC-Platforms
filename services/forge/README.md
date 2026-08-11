@@ -1,4 +1,4 @@
-# Forge — No-Code AI / ML Learning Platform
+# Forge: No-Code AI / ML Learning Platform
 
 Product 2. Guided environment for classification, regression, time-series, and
 LLM workflows without writing code first.
@@ -13,7 +13,7 @@ Sits alongside the other product, **Pulse** (`services/pulse/`).
 ## Boundaries (from CLAUDE.md)
 Same rules as Pulse:
 - Owns its own database (`forge`). Never touches identity's or Pulse's DB.
-- References people by identity `user_id` only (from the token) — a dataset's
+- References people by identity `user_id` only (from the token), so a dataset's
   owner is a plain integer, not a copy of the user.
 - Verifies tokens locally against identity's public keys via JWKS
   (`IDENTITY_JWKS_URL`, default `/.well-known/jwks.json`). The signing key never
@@ -21,7 +21,7 @@ Same rules as Pulse:
 
 ## Endpoints
 
-**Datasets** — every route needs a signed-in identity user.
+**Datasets**: every route needs a signed-in identity user.
 
 | Method | Path | Who | Purpose |
 |---|---|---|---|
@@ -33,13 +33,13 @@ Same rules as Pulse:
 | DELETE | `/datasets/{id}` | owner only | Delete your dataset (204). Samples are owner-less, so nobody can delete them |
 
 Access rules (in `app/services/datasets.py`): a caller sees their own datasets
-plus every `is_sample` dataset and nothing else — a dataset that isn't yours and
+plus every `is_sample` dataset and nothing else. A dataset that isn't yours and
 isn't a sample is a **403**, a missing id is a **404**. Delete is **owner-only**;
 since samples have no owner, a delete against one is a 403.
 
 Upload validation rejects (400) anything that isn't UTF-8 text, is empty, or has
 no header row (a header with zero data rows is allowed), and rejects (413) a body
-over `MAX_UPLOAD_MB` — the body is read in 1 MB chunks and bailed the moment it
+over `MAX_UPLOAD_MB`: the body is read in 1 MB chunks and bailed the moment it
 crosses the limit, so an oversized upload never fully buffers into memory.
 
 ## Rate limits
@@ -48,7 +48,7 @@ Per minute, per route: **10** upload, **60** list / summary / get, **30** previe
 row); delete sits below the reads because it writes, above upload because it only
 drops a row.
 
-Counters are keyed **per user**, not per address — everyone behind one office NAT
+Counters are keyed **per user**, not per address, because everyone behind one office NAT
 or reverse proxy would otherwise share a bucket, so one heavy user could lock out
 the rest. The bearer token is fully verified before its `user_id` becomes the key;
 keying on an unverified claim would let anyone forge a header to mint fresh buckets
@@ -56,11 +56,11 @@ or drain someone else's. A missing or unverifiable token falls back to the clien
 address. Same implementation as identity (`app/rate_limit.py` in both).
 
 The client address comes from the socket unless `TRUST_PROXY_HEADERS=true`, since
-`X-Forwarded-For` is caller-supplied — see the warning in `.env.example` before
+`X-Forwarded-For` is caller-supplied, so see the warning in `.env.example` before
 turning it on.
 
 `GET /health` returns `{"status": "ok", "db": "reachable"}`.
-Interactive docs at `/docs` — paste the raw identity access token (starts `eyJ`)
+Interactive docs at `/docs`. Paste the raw identity access token (starts `eyJ`)
 in Swagger's **Authorize** box.
 
 ## Storage & samples
@@ -82,14 +82,14 @@ double-seed), which keeps a new user's list from ever being empty.
 | `CORS_ORIGINS` | `http://localhost:3000` | Comma-separated allowed frontend origins |
 | `RATE_LIMIT_ENABLED` | `true` | Set `false` to turn rate limiting off (tests do) |
 | `REDIS_URL` | `redis://redis:6379/0` | Shared rate-limit counters; falls back to in-memory if unreachable |
-| `TRUST_PROXY_HEADERS` | `false` | Read `X-Forwarded-For` for the client address. **Only** true behind a proxy you run — the header is caller-supplied |
+| `TRUST_PROXY_HEADERS` | `false` | Read `X-Forwarded-For` for the client address. **Only** true behind a proxy you run; the header is caller-supplied |
 | `TRUSTED_PROXY_COUNT` | `1` | How many of your proxies sit in front; the address is taken that far from the right of `X-Forwarded-For` |
 | `DATASET_PREVIEW_ROWS` | `10` | Default rows returned by preview |
 | `MAX_UPLOAD_MB` | `5` | Reject dataset uploads larger than this (413) |
 
 ## Run it
 
-**Backend** — via docker-compose (recommended; builds from the repo root so the
+**Backend**, via docker-compose (recommended; builds from the repo root so the
 image can pull in `packages/core`):
 
 ```bash
@@ -106,7 +106,7 @@ pip install -r services/forge/requirements.txt
 cd services/forge && alembic upgrade head && uvicorn app.main:app --reload --port 8003
 ```
 
-**Frontend** — Nuxt 3 dev server on port 3000:
+**Frontend**: Nuxt 3 dev server on port 3000:
 
 ```bash
 cd services/forge/frontend && npm install && npm run dev   # http://localhost:3000

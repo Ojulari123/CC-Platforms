@@ -35,7 +35,7 @@ const decide = useMutation({
 function submit(decision: Decision) {
   errorMessage.value = null;
   if (decision !== "approve" && !note.value.trim()) {
-    errorMessage.value = "Say what needs to change — a note is required to reject or send back.";
+    errorMessage.value = "Say what needs to change: a note is required to reject or send back.";
     return;
   }
   decide.mutate(decision);

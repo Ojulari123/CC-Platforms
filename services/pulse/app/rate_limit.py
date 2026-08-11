@@ -34,7 +34,7 @@ _short_forwarded_header_warned = False
 
 def client_address(request: Request) -> str:
     """X-Forwarded-For is caller-supplied, so trusting it unconditionally hands out a
-    fresh bucket per made-up value — hence TRUST_PROXY_HEADERS. Each hop appends the
+    fresh bucket per made-up value, hence TRUST_PROXY_HEADERS. Each hop appends the
     address it saw, so the entry TRUSTED_PROXY_COUNT from the RIGHT is the last one a
     trusted proxy wrote; a header carrying fewer hops than that is not the one our
     proxies produce, so it is ignored entirely rather than read from its
@@ -61,7 +61,7 @@ def address_key(request: Request) -> str:
 def user_or_address_key(request: Request) -> str:
     """The token is verified in full rather than just decoded: a key taken from an
     unverified claim would let anyone forge a header for a fresh bucket, or aim one at
-    someone else's — and on /reports/generate someone else's bucket is someone else's
+    someone else's, and on /reports/generate someone else's bucket is someone else's
     OpenAI spend. Anything unverifiable falls back to the address, never a shared key.
     """
     scheme, _, token = request.headers.get("authorization", "").partition(" ")
@@ -86,7 +86,7 @@ limiter = Limiter(
 )
 
 # slowapi attaches a handler that discards every record it emits, so a swallowed
-# storage error — the one event that means limits are off — is invisible. Point its
+# storage error, the one event that means limits are off, is invisible. Point its
 # logger at uvicorn's error log so a degradation is actually visible.
 limiter.logger.handlers.clear()
 limiter.logger.setLevel(logging.WARNING)

@@ -34,7 +34,7 @@ class Settings(BaseSettings):
     GITHUB_TOKEN_ENC_KEY: str = ""
     GITHUB_REPOS: str = ""
 
-    # How far back before the cursor commits are re-requested — see sync._commit_window.
+    # How far back before the cursor commits are re-requested. See sync._commit_window.
     GITHUB_SYNC_OVERLAP_MINUTES: int = Field(10080, ge=0)  # 7 days
     GITHUB_SYNC_BRANCHES: bool = True
     GITHUB_SYNC_MAX_BRANCHES: int = Field(25, ge=1)

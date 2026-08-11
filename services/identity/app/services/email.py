@@ -45,7 +45,7 @@ def send(to: str, subject: str, html: str) -> None:
 
 def send_invite(to: str, dept_name: str, role: str, raw_token: str, team_name: str | None = None) -> None:
     link = f"{settings.FRONTEND_URL}/invites/accept?token={raw_token}"
-    where = f"{dept_name} — {team_name}" if team_name else dept_name
+    where = f"{team_name} in {dept_name}" if team_name else dept_name
     placement = (
         f"<p>You've been invited to join the <strong>{team_name}</strong> team "
         f"in <strong>{dept_name}</strong> as <strong>{role}</strong>.</p>"
@@ -73,7 +73,7 @@ def send_password_reset(to: str, raw_token: str) -> None:
             "<p>We got a request to reset your password. "
             f'<a href="{link}">Choose a new password</a> '
             f"(link expires in {settings.PASSWORD_RESET_EXPIRE_MINUTES} minutes).</p>"
-            "<p>If you didn't ask for this, you can ignore this email — your "
+            "<p>If you didn't ask for this, you can ignore this email. Your "
             "password stays the same.</p>"
         ),
     )

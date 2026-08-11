@@ -2,7 +2,7 @@ from pydantic import field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 # Counts hops from the RIGHT of X-Forwarded-For, so anything below 1 reads a
-# caller-supplied entry — the exact thing the setting exists to avoid.
+# caller-supplied entry, the exact thing the setting exists to avoid.
 MIN_TRUSTED_PROXY_COUNT = 1
 
 class Settings(BaseSettings):
@@ -21,7 +21,7 @@ class Settings(BaseSettings):
     CORS_ORIGINS: str = "http://localhost:3000,http://localhost:3001"
     RATE_LIMIT_ENABLED: bool = True
     REDIS_URL: str = "redis://redis:6379/0"
-    # Only turn on when identity really is behind proxies we control — see .env.example.
+    # Only turn on when identity really is behind proxies we control. See .env.example.
     TRUST_PROXY_HEADERS: bool = False
     TRUSTED_PROXY_COUNT: int = 1
     BREVO_API_KEY: str = ""
