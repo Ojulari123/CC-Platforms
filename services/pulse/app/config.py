@@ -17,7 +17,9 @@ class Settings(BaseSettings):
     JWT_ISSUER: str = "cyphercrescent-identity"
     JWKS_TTL_SECONDS: int = 3600
     TOKEN_VERSION_TTL_SECONDS: int = 60
-    CORS_ORIGINS: str = "http://localhost:3000,http://localhost:3001"
+    # Forge 3000, Pulse's own frontend 3001, identity's admin UI 3002 — identity's product
+    # picker reads live counts straight from Pulse, so its origin has to be on the list.
+    CORS_ORIGINS: str = "http://localhost:3000,http://localhost:3001,http://localhost:3002"
 
     RATE_LIMIT_ENABLED: bool = True
     TRUST_PROXY_HEADERS: bool = False

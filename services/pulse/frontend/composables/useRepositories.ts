@@ -20,8 +20,10 @@ export function useRepositories() {
     return map;
   });
 
+  // An id Pulse cannot resolve renders as an id. Never a fabricated name, and never a
+  // bare number dressed up as one.
   function repoName(repoId: number): string {
-    return nameById.value.get(repoId) ?? `Repository #${repoId}`;
+    return nameById.value.get(repoId) ?? `repo_id ${repoId} · unresolved`;
   }
 
   return { ...query, repositories, repoName };

@@ -1,6 +1,9 @@
 <script setup lang="ts">
-import { useQuery, useMutation, useQueryClient } from "@tanstack/vue-query";
+import type { ComponentPublicInstance } from "vue";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/vue-query";
+import type { Decision } from "~/components/ReportDecision.vue";
 import type {
+  ActivityResponse,
   ApprovalResponse,
   CommentResponse,
   Page,
@@ -10,141 +13,222 @@ import type {
 
 definePageMeta({ middleware: "auth" });
 
+/* One report, its evidence and its history. The evidence sits beside the claim rather
+   than behind a link: reading the claim and checking it is one movement. */
+
 const route = useRoute();
 const auth = useAuth();
 const api = useApi();
 const config = useRuntimeConfig();
 const queryClient = useQueryClient();
+const announce = useAnnounce();
+const { show: showToast } = useToast();
 const { repositories, repoName } = useRepositories();
 
-const id = computed(() => route.params.id as string);
+const id = computed(() => String(route.params.id));
 
-const {
-  data: report,
-  isPending,
-  isError,
-  error,
-} = useQuery({
+const { data: report, isPending, isError, error } = useQuery({
   queryKey: computed(() => ["report", id.value]),
   queryFn: () => api.request<ReportResponse>(`/reports/${id.value}`),
   retry: false,
 });
 
+const me = computed(() => auth.user.value as UserMeResponse | null);
+const repo = computed(() => repositories.value.find((r) => r.id === report.value?.repo_id) ?? null);
+const isAuthor = computed(() => !!report.value && report.value.author_user_id === me.value?.id);
+// An approved report is closed to edits; the API answers 409/403 and so does this.
+const isEditable = computed(
+  () => isAuthor.value && !!report.value && ["draft", "changes_requested"].includes(report.value.status),
+);
+const verdict = computed(() => canDecide(report.value ?? null, repo.value, me.value));
+
 const { data: approvals } = useQuery({
   queryKey: computed(() => ["report", id.value, "approvals"]),
   enabled: computed(() => !!report.value),
-  queryFn: () => api.request<Page<ApprovalResponse>>(`/reports/${id.value}/approvals`, {
-    query: { limit: 100 },
-  }),
+  queryFn: () =>
+    api.request<Page<ApprovalResponse>>(`/reports/${id.value}/approvals`, { query: { limit: 100 } }),
 });
 
-const { data: comments } = useQuery({
+const { data: comments, isError: commentsFailed } = useQuery({
   queryKey: computed(() => ["report", id.value, "comments"]),
   enabled: computed(() => !!report.value),
-  queryFn: () => api.request<Page<CommentResponse>>(`/reports/${id.value}/comments`, {
-    query: { limit: 100 },
-  }),
+  queryFn: () =>
+    api.request<Page<CommentResponse>>(`/reports/${id.value}/comments`, { query: { limit: 100 } }),
 });
 
-const notFound = computed(() => {
-  const status = httpStatus(error.value);
-  return status === 403 || status === 404;
+// The week the report claims to describe, read back from the same source it was drafted
+// from. It can come back empty on its own, which is not the same as four zeroes.
+const { data: evidence, isPending: evidencePending, isError: evidenceFailed } = useQuery({
+  queryKey: computed(() => ["activity", "report", id.value]),
+  enabled: computed(() => !!report.value),
+  retry: false,
+  queryFn: () =>
+    api.request<ActivityResponse>(`/activity/${report.value!.author_user_id}`, {
+      query: { since: report.value!.week_start, repo_id: report.value!.repo_id },
+    }),
 });
 
-const me = computed(() => auth.user.value as UserMeResponse | null);
-const isAuthor = computed(() => !!report.value && report.value.author_user_id === me.value?.id);
-const isEditable = computed(
-  () => !!report.value && ["draft", "changes_requested"].includes(report.value.status),
-);
-const repo = computed(() =>
-  repositories.value.find((r) => r.id === report.value?.repo_id) ?? null,
-);
+const only = ref<"commits" | "pull_requests" | "reviews" | "issues" | null>(null);
 
-// Mirrors the API's _can_approve. Getting it wrong only shows or hides buttons; the
-// API decides.
-const canApprove = computed(() => {
-  const r = report.value;
-  const user = me.value;
-  if (!r || !user) return false;
-  if (user.is_platform_admin) return true;
-  if (repo.value && (repo.value.lead_user_id === user.id || repo.value.deputy_user_id === user.id)) {
-    return true;
+const evidenceRows = computed(() => {
+  const a = evidence.value;
+  if (!a) return [];
+  const rows: { key: string; label: string; detail: string; stamp: string | null; kind: string }[] = [];
+  if (!only.value || only.value === "commits") {
+    for (const c of a.recent_commits) {
+      rows.push({
+        key: `c-${c.sha}`,
+        label: c.sha.slice(0, 7),
+        detail: (c.message ?? "(no message)").split("\n")[0] ?? "",
+        stamp: c.committed_at,
+        kind: "commits",
+      });
+    }
   }
-  return (
-    r.dept_id !== null &&
-    (user.memberships ?? []).some((m) => m.dept_id === r.dept_id && m.role === "admin")
-  );
+  if (!only.value || only.value === "pull_requests") {
+    for (const p of a.recent_pull_requests) {
+      rows.push({
+        key: `p-${p.repo_id}-${p.number}`,
+        label: `#${p.number}`,
+        detail: p.title ?? "(no title)",
+        stamp: p.gh_created_at,
+        kind: "pull_requests",
+      });
+    }
+  }
+  if (!only.value || only.value === "reviews") {
+    a.recent_reviews.forEach((r, i) => {
+      rows.push({
+        key: `r-${r.pull_request_id}-${i}`,
+        label: r.state.replace(/_/g, " "),
+        detail: `Review on pull_request_id ${r.pull_request_id}`,
+        stamp: r.submitted_at,
+        kind: "reviews",
+      });
+    });
+  }
+  if (!only.value || only.value === "issues") {
+    for (const issue of a.recent_issues) {
+      rows.push({
+        key: `i-${issue.repo_id}-${issue.number}`,
+        label: `#${issue.number}`,
+        detail: issue.title ?? "(no title)",
+        stamp: issue.gh_created_at,
+        kind: "issues",
+      });
+    }
+  }
+  return rows;
 });
 
-const editing = ref(false);
-const draft = reactive({ summary_manager: "", summary_exec: "", next_week_goals: "" });
-const actionError = ref<string | null>(null);
+const COUNT_META = [
+  { key: "commits", label: "Commits" },
+  { key: "pull_requests", label: "Pull requests" },
+  { key: "reviews", label: "Reviews" },
+  { key: "issues", label: "Issues" },
+] as const;
 
-function seedDraft() {
-  const r = report.value;
-  if (!r) return;
-  draft.summary_manager = r.summary_manager ?? "";
-  draft.summary_exec = r.summary_exec ?? "";
-  draft.next_week_goals = r.next_week_goals ?? "";
+/* ── editing a field in place ──────────────────────────────────────────────── */
+
+const editing = ref<string | null>(null);
+const draftText = ref("");
+const saveError = ref<string | null>(null);
+const editButtons = ref<Record<string, HTMLElement | null>>({});
+
+function setEditButton(el: Element | ComponentPublicInstance | null, key: string) {
+  editButtons.value[key] = (el as HTMLElement | null) ?? null;
 }
 
-watch(report, seedDraft, { immediate: true });
+function startEdit(key: string, current: string | null) {
+  saveError.value = null;
+  editing.value = key;
+  draftText.value = current ?? "";
+}
 
 const save = useMutation({
-  mutationFn: () =>
-    api.request<ReportResponse>(`/reports/${id.value}`, { method: "PATCH", body: { ...draft } }),
-  onSuccess: (updated) => {
+  mutationFn: (vars: { key: string; value: string }) =>
+    api.request<ReportResponse>(`/reports/${id.value}`, {
+      method: "PATCH",
+      body: { [vars.key]: vars.value.trim() === "" ? null : vars.value },
+    }),
+  onSuccess: (updated, vars) => {
     queryClient.setQueryData(["report", id.value], updated);
     queryClient.invalidateQueries({ queryKey: ["reports"] });
-    editing.value = false;
+    editing.value = null;
+    announce("Saved");
+    // Focus goes back to the control that opened the field, not to the top of the page.
+    nextTick(() => editButtons.value[vars.key]?.focus());
   },
   onError: (err) => {
-    actionError.value = apiMessage(err, "Could not save your changes.");
+    const code = httpStatus(err);
+    saveError.value =
+      code === 409 || code === 403
+        ? "This report is closed to edits — an approved report stays on the record as it was reviewed."
+        : apiMessage(err, "Could not save that field.");
   },
 });
 
 const submit = useMutation({
-  mutationFn: async () => {
-    if (editing.value) {
-      await api.request<ReportResponse>(`/reports/${id.value}`, {
-        method: "PATCH",
-        body: { ...draft },
-      });
-    }
-    return api.request<ReportResponse>(`/reports/${id.value}/submit`, { method: "POST" });
-  },
+  mutationFn: () => api.request<ReportResponse>(`/reports/${id.value}/submit`, { method: "POST" }),
   onSuccess: (updated) => {
     queryClient.setQueryData(["report", id.value], updated);
     queryClient.invalidateQueries({ queryKey: ["reports"] });
     queryClient.invalidateQueries({ queryKey: ["report", id.value, "approvals"] });
-    queryClient.invalidateQueries({ queryKey: ["review-queue"] });
-    editing.value = false;
+    announce("Submitted for review");
+    showToast("Submitted for review.", "info");
   },
   onError: (err) => {
-    actionError.value = apiMessage(err, "Could not submit this report.");
+    saveError.value =
+      httpStatus(err) === 422
+        ? "422 · all three fields are empty, so there is nothing to submit."
+        : apiMessage(err, "Could not submit this report.");
   },
 });
 
-// Draft-only and author-only, mirroring delete_report in app/services/reports.py. A
-// submitted report is part of the record. isEditable is wider (it admits
-// changes_requested), so it can't stand in for this.
-const isDeletable = computed(
-  () => !!report.value && report.value.status === "draft" && isAuthor.value,
-);
-const confirmingDelete = ref(false);
+const decide = useMutation({
+  mutationFn: (vars: { decision: Decision; note: string }) =>
+    api.request<ReportResponse>(`/reports/${id.value}/${vars.decision}`, {
+      method: "POST",
+      body: { note: vars.note || null },
+    }),
+  onSuccess: (updated) => {
+    queryClient.setQueryData(["report", id.value], updated);
+    queryClient.invalidateQueries({ queryKey: ["reports"] });
+    queryClient.invalidateQueries({ queryKey: ["report", id.value, "approvals"] });
+    announce(`Report is now ${statusLabel(updated.status).toLowerCase()}`);
+    showToast("Decision recorded. The author was notified.", "ok");
+  },
+  onError: (err) => {
+    const code = httpStatus(err);
+    showToast(
+      code === 403
+        ? "403 · you cannot decide this report. Authorship is checked before any admin power."
+        : code === 409
+          ? "409 · this report has already been decided."
+          : apiMessage(err, "Could not record that decision."),
+      "bad",
+    );
+  },
+});
+
+const isDeletable = computed(() => isAuthor.value && report.value?.status === "draft");
+const confirmDelete = ref(false);
 
 const remove = useMutation({
   mutationFn: () => api.request<void>(`/reports/${id.value}`, { method: "DELETE" }),
   onSuccess: () => {
+    confirmDelete.value = false;
     queryClient.invalidateQueries({ queryKey: ["reports"] });
     queryClient.removeQueries({ queryKey: ["report", id.value] });
     navigateTo("/reports");
   },
   onError: (err) => {
-    confirmingDelete.value = false;
-    actionError.value = apiMessage(err, "Could not delete this draft.");
+    confirmDelete.value = false;
+    showToast(apiMessage(err, "Could not delete this draft."), "bad");
   },
 });
+
+/* ── comments ──────────────────────────────────────────────────────────────── */
 
 const newComment = ref("");
 const commentError = ref<string | null>(null);
@@ -157,6 +241,7 @@ const addComment = useMutation({
     }),
   onSuccess: () => {
     newComment.value = "";
+    commentError.value = null;
     queryClient.invalidateQueries({ queryKey: ["report", id.value, "comments"] });
   },
   onError: (err) => {
@@ -199,12 +284,12 @@ function startCommentEdit(comment: CommentResponse) {
   commentError.value = null;
 }
 
-const pdfError = ref<string | null>(null);
+/* ── pdf ───────────────────────────────────────────────────────────────────── */
+
 const pdfLoading = ref(false);
 
-// The PDF endpoint needs the bearer token, so it can't be a plain <a href>.
+// The PDF endpoint needs the bearer token, so it cannot be a plain <a href>.
 async function openPdf() {
-  pdfError.value = null;
   pdfLoading.value = true;
   try {
     const blob = await $fetch<Blob>(`${config.public.pulseUrl}/reports/${id.value}/pdf`, {
@@ -213,269 +298,349 @@ async function openPdf() {
     });
     window.open(URL.createObjectURL(blob), "_blank", "noopener");
   } catch (err: unknown) {
-    pdfError.value = apiMessage(err, "Could not build the PDF.");
+    showToast(apiMessage(err, "Could not build the PDF."), "bad");
   } finally {
     pdfLoading.value = false;
   }
 }
 
-const SECTIONS = [
-  { key: "summary_manager", label: "Summary for your manager" },
-  { key: "summary_exec", label: "Summary for the executive" },
-  { key: "next_week_goals", label: "Next week's goals" },
-] as const;
-
-function sectionValue(r: ReportResponse, key: (typeof SECTIONS)[number]["key"]): string | null {
-  return r[key];
-}
+const unreachable = computed(() => {
+  const code = httpStatus(error.value);
+  return code === 403 || code === 404;
+});
 </script>
 
 <template>
-  <div class="mx-auto max-w-4xl px-4 py-8">
-    <header class="mb-6">
-      <NuxtLink to="/reports" class="text-sm text-gray-500 hover:underline">
-        &larr; Back to reports
+  <PulseShell :readout="`report ${id}`">
+    <header class="sec">
+      <NuxtLink
+        to="/reports"
+        :class="[FOCUS, TAP, '-ml-1 inline-flex items-center gap-1.5 rounded px-1 py-1 text-[12px] text-ink-muted transition-colors hover:text-ink']"
+      >
+        <Icon name="arrowLeft" class="h-3.5 w-3.5" />
+        All reports
       </NuxtLink>
     </header>
 
-    <p v-if="isPending" class="text-sm text-gray-500">Loading report…</p>
+    <p v-if="isPending" class="mt-8 text-[12.5px] text-ink-muted">Loading report…</p>
 
-    <div v-else-if="notFound" class="rounded-lg border border-gray-200 bg-white p-6">
-      <p class="text-sm font-medium">This report isn't available to you.</p>
-      <p class="mt-1 text-sm text-gray-500">
-        It may have been deleted, or you may not be its author, its repository's lead or
-        deputy, or an admin of its department.
+    <div v-else-if="unreachable" class="mt-8 rounded-md bg-surface/40 px-5 py-10 ring-1 ring-inset ring-line-subtle">
+      <h1 class="text-[15px] font-medium tracking-tight">This report is not available to you</h1>
+      <p class="mt-1.5 max-w-[54ch] text-[12.5px] leading-relaxed text-ink-muted">
+        It may have been deleted, or you may not be its author, its repository's lead or deputy, or
+        an admin of its department.
       </p>
+      <div class="mt-4 flex">
+        <NuxtLink to="/reports"><Btn size="sm" variant="secondary">Back to reports</Btn></NuxtLink>
+      </div>
     </div>
 
-    <p v-else-if="isError" class="text-sm text-red-600">
-      {{ apiMessage(error, "Could not load this report.") }}
-    </p>
+    <div v-else-if="isError" role="alert" class="mt-8 rounded-md bg-bad-surface px-5 py-6">
+      <h1 class="text-[15px] font-medium tracking-tight">Could not load this report</h1>
+      <p class="mt-1.5 max-w-[54ch] text-[12.5px] leading-relaxed text-ink-muted">
+        {{ apiMessage(error, "The Pulse API did not answer. Check that the service is running.") }}
+      </p>
+      <div class="mt-4 flex gap-2">
+        <Btn size="sm" variant="secondary" @click="queryClient.invalidateQueries({ queryKey: ['report', id] })">
+          Try again
+        </Btn>
+        <NuxtLink to="/reports"><Btn size="sm" variant="ghost">Back to reports</Btn></NuxtLink>
+      </div>
+    </div>
 
     <template v-else-if="report">
-      <div class="mb-6 flex flex-wrap items-start justify-between gap-4">
-        <div>
-          <h1 class="text-2xl font-semibold">Week of {{ formatDate(report.week_start) }}</h1>
-          <p class="mt-1 text-sm text-gray-500">
-            {{ repoName(report.repo_id) }} ·
-            {{ personName(report.author, report.author_user_id) }}
-          </p>
-          <p v-if="report.generated_at" class="mt-1 text-xs text-gray-500">
-            Drafted by AI on {{ formatDateTime(report.generated_at) }}
-            <template v-if="report.prompt_version">({{ report.prompt_version }})</template>
-          </p>
+      <div class="sec mt-3">
+        <Eyebrow>Pulse · report</Eyebrow>
+        <p class="mono mt-3 text-[12px] text-ink-muted">
+          {{ repoName(report.repo_id) }} › Week of {{ formatDate(report.week_start) }}
+        </p>
+        <div class="mt-1 flex flex-wrap items-center gap-3">
+          <h1 class="text-[clamp(1.5rem,2.2vw,1.9rem)] font-semibold leading-[1.05] tracking-[-0.035em]">
+            Weekly report
+          </h1>
+          <span
+            aria-live="polite"
+            :class="[MONO_LABEL, 'inline-flex items-center rounded px-2 py-1', statusClass(report.status)]"
+          >{{ statusLabel(report.status) }}</span>
+          <span class="mono text-[11px] text-ink-muted">report_id {{ report.id }}</span>
         </div>
-        <span
-          class="rounded-full px-3 py-1 text-xs font-medium"
-          :class="statusClass(report.status)"
-        >
-          {{ statusLabel(report.status) }}
-        </span>
+        <p class="mt-2 flex flex-wrap items-center gap-2 text-[12.5px] text-ink-muted">
+          <Avatar :name="personName(report.author, report.author_user_id)" size="sm" />
+          Written by
+          <span class="text-ink">{{ personName(report.author, report.author_user_id) }}</span>
+          <span v-if="isAuthor">(you)</span>
+          <span class="mono text-[11px]">· user_id {{ report.author_user_id }}</span>
+          <span v-if="report.generated_at" class="mono text-[11px]">
+            · AI-drafted {{ formatDateTime(report.generated_at) }}
+            <template v-if="report.prompt_version">· {{ report.prompt_version }}</template>
+          </span>
+        </p>
       </div>
 
-      <div class="mb-6 flex flex-wrap gap-2">
-        <template v-if="isAuthor && isEditable">
-          <button
-            v-if="!editing"
-            class="rounded-md border border-gray-300 px-3 py-2 text-sm font-medium hover:bg-gray-100"
-            @click="editing = true; actionError = null"
-          >
-            Edit
-          </button>
-          <template v-else>
-            <button
-              :disabled="save.isPending.value"
-              class="rounded-md border border-gray-300 px-3 py-2 text-sm font-medium hover:bg-gray-100 disabled:opacity-60"
-              @click="save.mutate()"
-            >
-              {{ save.isPending.value ? "Saving…" : "Save draft" }}
-            </button>
-            <button
-              class="rounded-md px-3 py-2 text-sm font-medium text-gray-600 hover:bg-gray-100"
-              @click="editing = false; seedDraft(); actionError = null"
-            >
-              Cancel
-            </button>
-          </template>
-          <button
-            :disabled="submit.isPending.value"
-            class="rounded-md bg-gray-900 px-3 py-2 text-sm font-medium text-white hover:bg-gray-800 disabled:opacity-60"
-            @click="submit.mutate()"
-          >
-            {{ submit.isPending.value ? "Submitting…" : "Submit for review" }}
-          </button>
-        </template>
-
-        <button
-          :disabled="pdfLoading"
-          class="rounded-md border border-gray-300 px-3 py-2 text-sm font-medium hover:bg-gray-100 disabled:opacity-60"
-          @click="openPdf"
-        >
-          {{ pdfLoading ? "Building PDF…" : "Download PDF" }}
-        </button>
-
-        <template v-if="isDeletable">
-          <button
-            v-if="!confirmingDelete"
-            class="rounded-md border border-red-300 px-3 py-2 text-sm font-medium text-red-600 hover:bg-red-50"
-            @click="confirmingDelete = true; actionError = null"
-          >
-            Delete draft
-          </button>
-          <template v-else>
-            <button
-              :disabled="remove.isPending.value"
-              class="rounded-md bg-red-600 px-3 py-2 text-sm font-medium text-white hover:bg-red-700 disabled:opacity-60"
-              @click="remove.mutate()"
-            >
-              {{ remove.isPending.value ? "Deleting…" : "Delete for good" }}
-            </button>
-            <button
-              class="rounded-md px-3 py-2 text-sm font-medium text-gray-600 hover:bg-gray-100"
-              @click="confirmingDelete = false"
-            >
-              Keep it
-            </button>
-          </template>
-        </template>
+      <div class="sec mt-5 flex flex-wrap gap-2" style="animation-delay: 40ms">
+        <Btn v-if="isEditable" size="sm" :busy="submit.isPending.value" @click="submit.mutate()">
+          Submit for review
+        </Btn>
+        <Btn size="sm" variant="secondary" :busy="pdfLoading" @click="openPdf">Download PDF</Btn>
+        <Btn v-if="isDeletable" size="sm" variant="destructive" @click="confirmDelete = true">
+          Delete draft
+        </Btn>
       </div>
 
-      <p v-if="actionError" class="mb-4 text-sm text-red-600">{{ actionError }}</p>
-      <p v-if="pdfError" class="mb-4 text-sm text-red-600">{{ pdfError }}</p>
-
-      <p
-        v-if="isAuthor && !isEditable"
-        class="mb-6 rounded-md border border-gray-200 bg-white px-4 py-3 text-sm text-gray-500"
-      >
-        This report is {{ statusLabel(report.status).toLowerCase() }}, so it can't be edited.
-        It stays on the record as it was reviewed.
+      <p v-if="saveError" role="alert" class="mt-4 max-w-[74ch] rounded-md bg-bad-surface px-4 py-3 text-[12.5px] leading-relaxed text-ink">
+        {{ saveError }}
       </p>
 
-      <section class="mb-8 space-y-4">
-        <div
-          v-for="section in SECTIONS"
-          :key="section.key"
-          class="rounded-lg border border-gray-200 bg-white p-5"
-        >
-          <h2 class="mb-2 text-sm font-semibold">{{ section.label }}</h2>
-          <textarea
-            v-if="editing"
-            v-model="draft[section.key]"
-            rows="6"
-            class="w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-gray-500 focus:outline-none"
-          />
-          <p
-            v-else-if="sectionValue(report, section.key)"
-            class="whitespace-pre-wrap text-sm text-gray-700"
-          >
-            {{ sectionValue(report, section.key) }}
-          </p>
-          <p v-else class="text-sm text-gray-400">Not written yet.</p>
-        </div>
-      </section>
-
-      <section
-        v-if="canApprove && report.status === 'submitted'"
-        class="mb-8 rounded-lg border border-gray-200 bg-white p-5"
-      >
-        <h2 class="mb-3 text-sm font-semibold">Your decision</h2>
-        <ReportDecision :report-id="report.id" />
-      </section>
-
-      <section class="mb-8 rounded-lg border border-gray-200 bg-white p-5">
-        <h2 class="mb-3 text-sm font-semibold">Approval history</h2>
-        <p v-if="!approvals || !approvals.items.length" class="text-sm text-gray-500">
-          Nothing yet. This report hasn't been submitted for review.
-        </p>
-        <ul v-else class="space-y-3">
-          <li v-for="entry in approvals.items" :key="entry.id" class="text-sm">
-            <p>
-              <span class="font-medium">{{ personName(entry.actor, entry.actor_user_id) }}</span>
-              {{ actionLabel(entry.action) }}
-              <span class="text-gray-500">· {{ formatDateTime(entry.created_at) }}</span>
-            </p>
-            <p v-if="entry.note" class="mt-1 whitespace-pre-wrap text-gray-600">{{ entry.note }}</p>
-          </li>
-        </ul>
-      </section>
-
-      <section class="rounded-lg border border-gray-200 bg-white p-5">
-        <h2 class="mb-3 text-sm font-semibold">Comments</h2>
-
-        <p v-if="!comments || !comments.items.length" class="text-sm text-gray-500">
-          No comments yet.
-        </p>
-        <ul v-else class="mb-5 space-y-4">
-          <li v-for="comment in comments.items" :key="comment.id" class="text-sm">
-            <p class="text-gray-500">
-              <span class="font-medium text-gray-900">
-                {{ personName(comment.author, comment.author_user_id) }}
+      <div class="mt-8 grid gap-8 lg:grid-cols-[minmax(0,1fr)_340px]">
+        <div class="min-w-0">
+          <!-- Counts as filters over the evidence beside them. -->
+          <section class="sec grid grid-cols-2 gap-3 md:grid-cols-4" style="animation-delay: 60ms" aria-label="The week's counts">
+            <button
+              v-for="meta in COUNT_META"
+              :key="meta.key"
+              type="button"
+              :aria-pressed="only === meta.key"
+              :disabled="!evidence"
+              :class="[
+                FOCUS,
+                'rounded-md px-4 py-3.5 text-left ring-1 ring-inset transition-colors disabled:opacity-50',
+                only === meta.key ? 'bg-surface-active ring-line' : 'bg-surface/40 ring-line-subtle enabled:hover:ring-line',
+              ]"
+              @click="only = only === meta.key ? null : meta.key"
+            >
+              <span :class="[MONO_LABEL, 'block text-ink-faint']">{{ meta.label }}</span>
+              <span class="mono mt-2 block text-[26px] leading-none tracking-tight text-ink">
+                <template v-if="evidencePending"><span class="inline-block h-6 w-8 animate-pulse rounded bg-surface" /></template>
+                <template v-else-if="evidence">{{ evidence.counts[meta.key] }}</template>
+                <template v-else>—</template>
               </span>
-              · {{ formatDateTime(comment.created_at) }}
-              <span v-if="comment.edited_at" class="text-gray-400">(edited)</span>
+            </button>
+          </section>
+
+          <p v-if="evidenceFailed" role="alert" class="mt-3 max-w-[74ch] text-[12.5px] leading-relaxed text-ink-muted">
+            The week's activity did not come back, so the counts above are missing rather than
+            zero. The report itself is unaffected — this is a second request.
+          </p>
+          <p v-else class="mt-3 max-w-[74ch] text-[12.5px] leading-relaxed text-ink-muted">
+            Counts are the week's totals for this author in this repository. Selecting one narrows
+            the evidence list to that kind.
+          </p>
+
+          <!-- The three fields, each editable where it stands. -->
+          <section class="sec mt-8" style="animation-delay: 80ms" aria-label="The report">
+            <div v-for="field in REPORT_FIELDS" :key="field.key" class="border-t border-line-subtle pt-3.5 first:border-t-0 first:pt-0 [&+div]:mt-5">
+              <div class="flex flex-wrap items-center gap-2.5">
+                <h2 class="text-[13px] font-medium tracking-tight text-ink">{{ field.label }}</h2>
+                <span class="mono text-[11px] text-ink-faint">{{ field.api }}</span>
+                <button
+                  v-if="isEditable && editing !== field.key"
+                  :ref="(el) => setEditButton(el, field.key)"
+                  type="button"
+                  :class="[FOCUS, 'ml-auto rounded px-1 py-0.5 text-[12px] text-ink-muted transition-colors hover:text-ink']"
+                  @click="startEdit(field.key, report[field.key])"
+                >Edit</button>
+              </div>
+
+              <template v-if="editing === field.key">
+                <label class="sr-only" :for="`field-${field.key}`">{{ field.label }}</label>
+                <textarea
+                  :id="`field-${field.key}`"
+                  v-model="draftText"
+                  rows="6"
+                  :class="[FOCUS, 'mt-2 w-full resize-y rounded-md bg-sunken px-3 py-2.5 text-[12.5px] leading-relaxed text-ink ring-1 ring-inset ring-line-subtle transition-colors placeholder:text-ink-faint hover:ring-line']"
+                />
+                <div class="mt-2 flex flex-wrap items-center gap-2">
+                  <Btn size="sm" :busy="save.isPending.value" @click="save.mutate({ key: field.key, value: draftText })">
+                    Save
+                  </Btn>
+                  <Btn size="sm" variant="ghost" @click="editing = null">Cancel</Btn>
+                  <span class="mono ml-auto text-[11px] text-ink-muted">{{ draftText.trim().length }} characters</span>
+                </div>
+              </template>
+
+              <p v-else class="mt-2 max-w-[74ch] whitespace-pre-wrap text-[13px] leading-relaxed text-ink">
+                <template v-if="report[field.key]">{{ report[field.key] }}</template>
+                <span v-else class="italic text-ink-muted">Not written yet.</span>
+              </p>
+            </div>
+
+            <p v-if="isAuthor && !isEditable" class="mt-5 max-w-[74ch] text-[12.5px] leading-relaxed text-ink-muted">
+              This report is {{ statusLabel(report.status).toLowerCase() }}, so it is closed to
+              edits. It stays on the record as it was reviewed.
             </p>
+          </section>
 
-            <template v-if="editingCommentId === comment.id">
-              <textarea
-                v-model="editingCommentBody"
-                rows="3"
-                class="mt-1 w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-gray-500 focus:outline-none"
-              />
-              <div class="mt-2 flex gap-2">
-                <button
-                  :disabled="updateComment.isPending.value"
-                  class="rounded-md border border-gray-300 px-3 py-1.5 text-sm font-medium hover:bg-gray-100 disabled:opacity-60"
-                  @click="updateComment.mutate(comment.id)"
-                >
-                  Save
-                </button>
-                <button
-                  class="rounded-md px-3 py-1.5 text-sm font-medium text-gray-600 hover:bg-gray-100"
-                  @click="editingCommentId = null"
-                >
-                  Cancel
-                </button>
-              </div>
-            </template>
+          <!-- A decision only exists while one is being asked for. -->
+          <section class="sec mt-8" style="animation-delay: 100ms" aria-labelledby="decision-heading">
+            <h2 id="decision-heading" class="sr-only">Decision</h2>
+            <ReportDecision
+              v-if="verdict.allowed"
+              :report-id="report.id"
+              :allowed="true"
+              :author-name="personName(report.author, report.author_user_id)"
+              :busy="decide.isPending.value"
+              @decide="(decision, note) => decide.mutate({ decision, note })"
+            />
+            <div v-else class="rounded-md bg-surface/40 px-4 py-4 ring-1 ring-inset ring-line-subtle">
+              <Eyebrow>Decision</Eyebrow>
+              <p class="mt-2 max-w-[62ch] text-[12.5px] leading-relaxed text-ink-muted">
+                <template v-if="verdict.reason">{{ verdict.reason }}</template>
+                <template v-else>
+                  This report is {{ statusLabel(report.status).toLowerCase() }}. Whatever happened
+                  is in the history.
+                </template>
+              </p>
+            </div>
+          </section>
 
-            <template v-else>
-              <p class="mt-1 whitespace-pre-wrap text-gray-700">{{ comment.body }}</p>
-              <div v-if="comment.author_user_id === me?.id" class="mt-1 flex gap-3">
-                <button
-                  class="text-xs font-medium text-gray-500 hover:underline"
-                  @click="startCommentEdit(comment)"
-                >
-                  Edit
-                </button>
-                <button
-                  class="text-xs font-medium text-red-600 hover:underline"
-                  @click="removeComment.mutate(comment.id)"
-                >
-                  Delete
-                </button>
-              </div>
-            </template>
-          </li>
-        </ul>
+          <!-- Comments. The prototype has no thread; this page does, and it stays. -->
+          <section class="sec mt-8 border-t border-line-subtle pt-6" style="animation-delay: 120ms" aria-labelledby="comments-heading">
+            <h2 id="comments-heading" class="text-[13px] font-medium tracking-tight text-ink">Comments</h2>
 
-        <label for="new-comment" class="mb-1 block text-xs font-medium text-gray-600">
-          Add a comment
-        </label>
-        <textarea
-          id="new-comment"
-          v-model="newComment"
-          rows="3"
-          class="w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-gray-500 focus:outline-none"
-        />
-        <button
-          :disabled="!newComment.trim() || addComment.isPending.value"
-          class="mt-2 rounded-md bg-gray-900 px-3 py-2 text-sm font-medium text-white hover:bg-gray-800 disabled:opacity-60"
-          @click="addComment.mutate()"
-        >
-          {{ addComment.isPending.value ? "Posting…" : "Post comment" }}
-        </button>
-        <p v-if="commentError" class="mt-2 text-sm text-red-600">{{ commentError }}</p>
-      </section>
+            <p v-if="commentsFailed" role="alert" class="mt-2 text-[12.5px] text-ink-muted">
+              The comment thread did not load. Everything else on this page is unaffected.
+            </p>
+            <p v-else-if="!comments || !comments.items.length" class="mt-2 text-[12.5px] text-ink-muted">
+              No comments yet.
+            </p>
+            <ul v-else class="mt-3 divide-y divide-line-subtle border-y border-line-subtle">
+              <li v-for="comment in comments.items" :key="comment.id" class="py-3">
+                <p class="flex flex-wrap items-baseline gap-2 text-[12px] text-ink-muted">
+                  <span class="text-ink">{{ personName(comment.author, comment.author_user_id) }}</span>
+                  <span class="mono text-[11px]">{{ formatDateTime(comment.created_at) }}</span>
+                  <span v-if="comment.edited_at" class="mono text-[11px]">(edited)</span>
+                </p>
+
+                <template v-if="editingCommentId === comment.id">
+                  <label class="sr-only" :for="`comment-${comment.id}`">Edit your comment</label>
+                  <textarea
+                    :id="`comment-${comment.id}`"
+                    v-model="editingCommentBody"
+                    rows="3"
+                    :class="[FOCUS, 'mt-2 w-full resize-y rounded-md bg-sunken px-3 py-2 text-[12.5px] leading-relaxed text-ink ring-1 ring-inset ring-line-subtle hover:ring-line']"
+                  />
+                  <div class="mt-2 flex gap-2">
+                    <Btn size="sm" :busy="updateComment.isPending.value" @click="updateComment.mutate(comment.id)">Save</Btn>
+                    <Btn size="sm" variant="ghost" @click="editingCommentId = null">Cancel</Btn>
+                  </div>
+                </template>
+
+                <template v-else>
+                  <p class="mt-1.5 max-w-[74ch] whitespace-pre-wrap text-[12.5px] leading-relaxed text-ink">
+                    {{ comment.body }}
+                  </p>
+                  <div v-if="comment.author_user_id === me?.id" class="mt-1.5 flex gap-3">
+                    <button
+                      type="button"
+                      :class="[FOCUS, 'rounded text-[11.5px] text-ink-muted transition-colors hover:text-ink']"
+                      @click="startCommentEdit(comment)"
+                    >Edit</button>
+                    <button
+                      type="button"
+                      :class="[FOCUS, 'rounded text-[11.5px] text-bad transition-colors hover:brightness-110']"
+                      @click="removeComment.mutate(comment.id)"
+                    >Delete</button>
+                  </div>
+                </template>
+              </li>
+            </ul>
+
+            <label for="new-comment" class="mt-4 block text-[12px] text-ink-muted">Add a comment</label>
+            <textarea
+              id="new-comment"
+              v-model="newComment"
+              rows="3"
+              :class="[FOCUS, 'mt-1.5 w-full resize-y rounded-md bg-sunken px-3 py-2 text-[12.5px] leading-relaxed text-ink ring-1 ring-inset ring-line-subtle hover:ring-line']"
+            />
+            <div class="mt-2 flex items-center gap-2">
+              <Btn
+                size="sm"
+                :disabled="!newComment.trim()"
+                :busy="addComment.isPending.value"
+                @click="addComment.mutate()"
+              >Post comment</Btn>
+            </div>
+            <p v-if="commentError" role="alert" class="mt-2 text-[12.5px] text-bad">{{ commentError }}</p>
+          </section>
+        </div>
+
+        <!-- Evidence and history. -->
+        <aside class="min-w-0 space-y-8">
+          <section aria-labelledby="evidence-heading" class="sec" style="animation-delay: 60ms">
+            <div class="flex items-baseline justify-between gap-3 border-b border-line-subtle pb-2">
+              <h2 id="evidence-heading" :class="[MONO_LABEL, 'text-ink-faint']">Evidence</h2>
+              <p class="mono text-[11px] text-ink-muted">{{ evidenceRows.length }} shown</p>
+            </div>
+            <p v-if="evidencePending" class="mt-3 text-[12px] text-ink-muted">Reading the week…</p>
+            <p v-else-if="evidenceFailed" class="mt-3 text-[12px] leading-relaxed text-ink-muted">
+              No evidence could be read for this week.
+            </p>
+            <p v-else-if="!evidenceRows.length" class="mt-3 text-[12px] leading-relaxed text-ink-muted">
+              Nothing was synced for this author in this repository that week.
+            </p>
+            <ul v-else class="divide-y divide-line-subtle">
+              <li v-for="row in evidenceRows" :key="row.key" class="py-2.5">
+                <p class="flex items-baseline justify-between gap-3">
+                  <span class="mono text-[11px] text-ink-muted">{{ row.label }}</span>
+                  <span class="mono shrink-0 text-[11px] text-ink-muted">{{ formatStamp(row.stamp) }}</span>
+                </p>
+                <p class="mt-0.5 text-[12.5px] leading-relaxed text-ink">{{ row.detail }}</p>
+              </li>
+            </ul>
+          </section>
+
+          <section aria-labelledby="history-heading" class="sec" style="animation-delay: 100ms">
+            <h2 id="history-heading" :class="[MONO_LABEL, 'border-b border-line-subtle pb-2 text-ink-faint']">History</h2>
+            <p v-if="!approvals || !approvals.items.length" class="mt-3 text-[12px] leading-relaxed text-ink-muted">
+              Nothing yet. This report has not been submitted for review.
+            </p>
+            <ul v-else class="mt-3 space-y-3">
+              <li v-for="entry in approvals.items" :key="entry.id" class="flex gap-2.5">
+                <span class="mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full bg-ink-faint" aria-hidden="true" />
+                <span class="min-w-0">
+                  <span class="block text-[12.5px] leading-relaxed text-ink-muted">
+                    <span class="text-ink">{{ personName(entry.actor, entry.actor_user_id) }}</span>
+                    {{ actionLabel(entry.action) }}
+                  </span>
+                  <span class="mono block text-[11px] text-ink-muted">{{ formatDateTime(entry.created_at) }}</span>
+                  <span v-if="entry.note" class="mt-1 block max-w-[46ch] whitespace-pre-wrap text-[12px] leading-relaxed text-ink">
+                    {{ entry.note }}
+                  </span>
+                </span>
+              </li>
+            </ul>
+          </section>
+
+          <section class="rounded-md bg-sunken/60 px-4 py-3.5 ring-1 ring-inset ring-line-subtle">
+            <Eyebrow>One per person, per repository, per week</Eyebrow>
+            <p class="mt-2 max-w-[46ch] text-[12.5px] leading-relaxed text-ink-muted">
+              This is yours for <span class="mono text-[12px] text-ink">{{ repoName(report.repo_id) }}</span
+              >, week of <span class="mono text-[12px] text-ink">{{ report.week_start }}</span
+              >. Rewriting it replaces what is here rather than adding a second copy, which is why
+              the history matters.
+            </p>
+          </section>
+        </aside>
+      </div>
     </template>
-  </div>
+
+    <Modal
+      :open="confirmDelete"
+      title="Delete this draft?"
+      description="Drafts are only visible to you, so nobody else has read it — but deleting cannot be undone."
+      :close-on-backdrop="false"
+      @close="confirmDelete = false"
+    >
+      <p class="text-[12.5px] leading-relaxed text-ink-muted">
+        Pulse can draft a new one for this week from your synced activity, but anything you typed
+        into this draft goes with it.
+      </p>
+      <template #footer>
+        <Btn size="sm" variant="ghost" @click="confirmDelete = false">Keep it</Btn>
+        <Btn size="sm" variant="destructive" :busy="remove.isPending.value" @click="remove.mutate()">
+          Delete draft
+        </Btn>
+      </template>
+    </Modal>
+  </PulseShell>
 </template>

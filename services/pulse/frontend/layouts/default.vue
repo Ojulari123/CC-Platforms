@@ -1,76 +1,16 @@
 <script setup lang="ts">
+// The chrome moved into <PulseShell>, which each screen renders itself so it can set
+// its own ruler readout. What is left here is the session: tokens live in localStorage,
+// so they have to be read back before anything asks who the user is.
 const auth = useAuth();
-const route = useRoute();
-const router = useRouter();
-
-const links = [
-  { to: "/", label: "Activity" },
-  { to: "/reports", label: "Reports" },
-  { to: "/review", label: "Review queue" },
-  { to: "/repositories", label: "Repositories" },
-];
+const { me, load } = useMe();
 
 onMounted(async () => {
   auth.hydrate();
-  if (auth.isAuthenticated.value && !auth.user.value) {
-    try {
-      await auth.fetchMe();
-    } catch {
-      // non-fatal for the header
-    }
-  }
+  if (auth.isAuthenticated.value && !me.value) await load();
 });
-
-const displayName = computed(() => {
-  const u = auth.user.value;
-  if (!u) return null;
-  const full = `${u.first_name ?? ""} ${u.last_name ?? ""}`.trim();
-  return full || u.email;
-});
-
-function isActive(to: string): boolean {
-  return to === "/" ? route.path === "/" : route.path.startsWith(to);
-}
-
-function onLogout() {
-  auth.logout();
-  router.push("/login");
-}
 </script>
 
 <template>
-  <div>
-    <header class="border-b border-gray-200 bg-white">
-      <div class="mx-auto flex max-w-6xl flex-wrap items-center justify-between gap-4 px-4 py-3">
-        <div class="flex flex-wrap items-center gap-6">
-          <NuxtLink to="/" class="text-sm font-semibold">Pulse</NuxtLink>
-          <nav class="flex items-center gap-4">
-            <NuxtLink
-              v-for="link in links"
-              :key="link.to"
-              :to="link.to"
-              class="text-sm hover:text-gray-900"
-              :class="isActive(link.to) ? 'font-medium text-gray-900' : 'text-gray-500'"
-            >
-              {{ link.label }}
-            </NuxtLink>
-          </nav>
-        </div>
-
-        <div class="flex items-center gap-3">
-          <span v-if="displayName" class="hidden text-sm text-gray-500 sm:inline">
-            {{ displayName }}
-          </span>
-          <button
-            class="rounded-md border border-gray-300 px-3 py-1.5 text-sm font-medium hover:bg-gray-100"
-            @click="onLogout"
-          >
-            Sign out
-          </button>
-        </div>
-      </div>
-    </header>
-
-    <slot />
-  </div>
+  <slot />
 </template>

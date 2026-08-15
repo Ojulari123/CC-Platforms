@@ -1,427 +1,339 @@
 <script setup lang="ts">
 import { useQuery } from "@tanstack/vue-query";
-import type {
-  ActivityResponse,
-  GitHubAccountResponse,
-  Page,
-  SyncRunResponse,
-} from "~/types/api";
+import type { TabItem } from "@crescent/ui/types/ui";
+import type { ActivityResponse, Page, ReportResponse } from "~/types/api";
 
 definePageMeta({ middleware: "auth" });
 
-const auth = useAuth();
 const api = useApi();
-const route = useRoute();
-const router = useRouter();
 const { repositories, repoName } = useRepositories();
-const { others: teammates, hasDepartment } = useTeammates();
 
-const RANGES = [
-  { days: 7, label: "Last 7 days" },
-  { days: 30, label: "Last 30 days" },
-  { days: 90, label: "Last 90 days" },
-  { days: 0, label: "All time" },
-];
+const { me, unavailable: meUnavailable } = useMe();
+const week = computed(() => mondayOf(new Date()));
 
-const selectedUserId = ref<number | null>(null);
-const selectedRepoId = ref<number | null>(null);
-const rangeDays = ref(30);
-
-const since = computed(() => (rangeDays.value > 0 ? isoDaysAgo(rangeDays.value) : undefined));
-const viewingSelf = computed(() => selectedUserId.value === null);
-
-const {
-  data: activity,
-  isPending,
-  isError,
-  error,
-} = useQuery({
-  queryKey: computed(() => [
-    "activity",
-    selectedUserId.value ?? "me",
-    selectedRepoId.value ?? "all",
-    since.value ?? "all",
-  ]),
-  queryFn: () =>
-    api.request<ActivityResponse>(
-      viewingSelf.value ? "/activity/me" : `/activity/${selectedUserId.value}`,
-      { query: { since: since.value, repo_id: selectedRepoId.value ?? undefined } },
-    ),
-});
-
-const counts = computed(() => activity.value?.counts ?? null);
-const isEmpty = computed(() => {
-  const c = counts.value;
-  return !!c && c.commits === 0 && c.pull_requests === 0 && c.reviews === 0 && c.issues === 0;
-});
-
-const { data: githubAccount, isFetched: githubChecked } = useQuery({
-  queryKey: ["github-account"],
-  enabled: computed(() => viewingSelf.value && isEmpty.value),
-  retry: false,
-  queryFn: async () => {
-    try {
-      return await api.request<GitHubAccountResponse>("/github/account");
-    } catch (err: unknown) {
-      if (httpStatus(err) === 404) return null;
-      throw err;
-    }
-  },
-});
-
-const { data: syncRuns } = useQuery({
-  queryKey: ["sync-runs"],
-  enabled: computed(() => viewingSelf.value && isEmpty.value),
-  queryFn: () => api.request<Page<SyncRunResponse>>("/github/sync-runs", { query: { limit: 5 } }),
-});
-
-const connecting = ref(false);
-const connectError = ref<string | null>(null);
-
-async function connectGitHub() {
-  connecting.value = true;
-  connectError.value = null;
-  try {
-    const res = await api.request<{ authorize_url: string }>("/github/connect");
-    // Same tab on purpose: window.open after an await is outside the click's call
-    // stack and gets blocked as a popup.
-    window.location.href = res.authorize_url;
-  } catch (err: unknown) {
-    connectError.value = apiMessage(err, "Could not start the GitHub connection.");
-    connecting.value = false;
-  }
-}
-
-const CONNECT_MESSAGES: Record<string, { ok: boolean; text: string }> = {
-  connected: {
-    ok: true,
-    text: "GitHub connected. Your commits, pull requests and reviews will appear after the next sync.",
-  },
-  denied: {
-    ok: false,
-    text: "You cancelled on GitHub, so nothing was connected. You can try again whenever you like.",
-  },
-  expired: {
-    ok: false,
-    text: "That connect link was no longer valid; they only last a few minutes. Start again.",
-  },
-  already_linked: {
-    ok: false,
-    text: "That GitHub account is already connected to a different Pulse user. Connect a different account, or ask an admin to release it.",
-  },
-  not_configured: {
-    ok: false,
-    text: "GitHub connecting isn't set up on this server yet. Ask a platform admin to finish the setup.",
-  },
-  failed: {
-    ok: false,
-    text: "Connecting to GitHub didn't finish. Try again, and tell an admin if it keeps happening.",
-  },
-};
-
-const connectResult = ref<{ ok: boolean; text: string } | null>(null);
-
-onMounted(() => {
-  const outcome = route.query.github;
-  if (typeof outcome !== "string") return;
-  connectResult.value = CONNECT_MESSAGES[outcome] ?? CONNECT_MESSAGES.failed!;
-  const { github: _github, ...rest } = route.query;
-  router.replace({ query: rest });
-});
-
-const selectedTeammate = computed(
-  () => teammates.value.find((mate) => mate.user_id === selectedUserId.value) ?? null,
+// "This week" needs a subject, and the repository you are named lead on is the one you
+// are answerable for. Deputy counts too; without either there is nothing to headline.
+const leadRepo = computed(
+  () =>
+    repositories.value.find((r) => r.lead_user_id === me.value?.id)
+      ?? repositories.value.find((r) => r.deputy_user_id === me.value?.id)
+      ?? null,
 );
 
-const subjectName = computed(() => {
-  if (viewingSelf.value) return "You";
-  const mate = selectedTeammate.value;
-  if (mate) return `${mate.first_name} ${mate.last_name}`.trim();
-  const a = activity.value;
-  return a ? personName(a.user, a.user_id) : "This person";
+const queue = useQuery({
+  queryKey: ["review-queue", "home"],
+  queryFn: () =>
+    api.request<Page<ReportResponse>>("/reports/review-queue", {
+      query: { status: "submitted", limit: 5, offset: 0 },
+    }),
 });
 
-const selfLabel = computed(() => {
-  const me = auth.user.value;
-  if (!me) return "You";
-  const full = `${me.first_name ?? ""} ${me.last_name ?? ""}`.trim();
-  return full ? `${full} (you)` : "You";
+const mine = useQuery({
+  queryKey: computed(() => ["reports", "mine-home", me.value?.id ?? "anon"]),
+  enabled: computed(() => me.value !== null),
+  queryFn: () =>
+    api.request<Page<ReportResponse>>("/reports", {
+      query: { author_user_id: me.value?.id, limit: 5, offset: 0 },
+    }),
 });
+
+const drafts = useQuery({
+  queryKey: computed(() => ["reports", "drafts-home", me.value?.id ?? "anon"]),
+  enabled: computed(() => me.value !== null),
+  queryFn: () =>
+    api.request<Page<ReportResponse>>("/reports", {
+      query: { author_user_id: me.value?.id, status: "draft", limit: 1, offset: 0 },
+    }),
+});
+
+// The week's figures are a second request, so they can be missing on their own. Missing
+// is not zero and the panel says which.
+const thisWeekActivity = useQuery({
+  queryKey: computed(() => ["activity", "home", leadRepo.value?.id ?? "none", week.value]),
+  enabled: computed(() => leadRepo.value !== null),
+  queryFn: () =>
+    api.request<ActivityResponse>("/activity/me", {
+      query: { since: week.value, repo_id: leadRepo.value?.id },
+    }),
+});
+
+const thisWeekReport = computed(
+  () =>
+    (mine.data.value?.items ?? []).find(
+      (r) => r.repo_id === leadRepo.value?.id && r.week_start === week.value,
+    ) ?? null,
+);
+
+const scope = ref<"waiting" | "mine">("waiting");
+
+const tabs = computed<TabItem[]>(() => [
+  { id: "waiting", label: "Waiting on you", hint: String(queue.data.value?.total ?? 0) },
+  { id: "mine", label: "Yours", hint: String(mine.data.value?.total ?? 0) },
+]);
+
+const rows = computed(() =>
+  scope.value === "waiting" ? queue.data.value?.items ?? [] : mine.data.value?.items ?? [],
+);
+
+const listPending = computed(() =>
+  scope.value === "waiting" ? queue.isPending.value : mine.isPending.value,
+);
+const listError = computed(() =>
+  scope.value === "waiting" ? queue.error.value : mine.error.value,
+);
+
+const firstName = computed(() => me.value?.first_name ?? "Hello");
+const deptLabel = computed(() => me.value?.memberships?.[0]?.dept_name ?? "unplaced");
+const roleLabel = computed(
+  () => me.value?.memberships?.[0]?.role ?? (me.value?.is_platform_admin ? "platform admin" : "member"),
+);
+
+const COUNT_META = [
+  { key: "commits", label: "Commits" },
+  { key: "pull_requests", label: "Pull requests" },
+  { key: "reviews", label: "Reviews" },
+  { key: "issues", label: "Issues" },
+] as const;
 </script>
 
 <template>
-  <div class="mx-auto max-w-6xl px-4 py-8">
-    <header class="mb-6">
-      <h1 class="text-2xl font-semibold">
-        {{ viewingSelf ? "Your GitHub activity" : `${subjectName}'s GitHub activity` }}
+  <PulseShell :readout="`week of ${formatDate(week)}`">
+    <section class="pb-9">
+      <Eyebrow class="sec">Pulse · overview</Eyebrow>
+
+      <h1
+        class="sec mt-3 max-w-[20ch] text-[clamp(1.7rem,3.6vw,2.5rem)] font-semibold leading-[1.02] tracking-[-0.035em]"
+        style="animation-delay: 40ms"
+      >
+        {{ firstName }}, here is<br />
+        <span class="text-ink-muted">the week so far.</span>
       </h1>
-      <p class="mt-1 text-sm text-gray-500">
-        Synced from GitHub on a daily schedule, attributed to CypherCrescent accounts.
+
+      <p
+        :class="[MONO_LABEL, 'sec mt-6 flex flex-wrap items-baseline gap-x-2.5 gap-y-1 text-ink-muted']"
+        style="animation-delay: 80ms"
+      >
+        <span class="text-ink">{{ queue.data.value?.total ?? "—" }}</span> awaiting your decision
+        <span aria-hidden="true">·</span>
+        <span class="text-ink">{{ drafts.data.value?.total ?? "—" }}</span>
+        draft{{ drafts.data.value?.total === 1 ? "" : "s" }}
+        <span aria-hidden="true">·</span>
+        <span class="text-ink">{{ mine.data.value?.total ?? "—" }}</span> reports yours
+        <span aria-hidden="true">·</span>
+        week of {{ formatDate(week) }}
       </p>
-    </header>
 
-    <div
-      v-if="connectResult"
-      class="mb-6 flex items-start justify-between gap-4 rounded-lg border p-4 text-sm"
-      :class="
-        connectResult.ok
-          ? 'border-green-200 bg-green-50 text-green-800'
-          : 'border-red-200 bg-red-50 text-red-700'
-      "
-    >
-      <p>{{ connectResult.text }}</p>
-      <button class="shrink-0 text-xs underline" @click="connectResult = null">Dismiss</button>
-    </div>
+      <p class="sec mt-5 max-w-[54ch] text-[13.5px] leading-relaxed text-ink-muted" style="animation-delay: 100ms">
+        One report per repository per week, drafted from what the repository actually did and
+        decided by that repository's lead. Nothing here is a score.
+      </p>
+    </section>
 
-    <section class="mb-6 flex flex-wrap items-end gap-4">
-      <div>
-        <label for="who" class="mb-1 block text-xs font-medium text-gray-600">Whose activity</label>
-        <select
-          id="who"
-          v-model="selectedUserId"
-          class="w-56 rounded-md border border-gray-300 bg-white px-3 py-2 text-sm"
-        >
-          <option :value="null">{{ selfLabel }}</option>
-          <option v-for="mate in teammates" :key="mate.user_id" :value="mate.user_id">
-            {{ mate.first_name }} {{ mate.last_name }}
-          </option>
-        </select>
-        <p v-if="!hasDepartment" class="mt-1 text-xs text-gray-500">
-          You're not in a department yet, so there's nobody else to look at.
+    <!-- This week, for the repository you are answerable for. -->
+    <section class="sec border-t border-line-subtle pt-7" style="animation-delay: 140ms" aria-labelledby="this-week">
+      <div class="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-2">
+        <h2 id="this-week" class="text-[15px] font-medium tracking-tight">This week</h2>
+        <p :class="[MONO_LABEL, 'text-ink-muted']">
+          {{ leadRepo ? leadRepo.full_name : "no repository names you" }} · week of {{ formatDate(week) }}
         </p>
       </div>
 
-      <div>
-        <label for="repo" class="mb-1 block text-xs font-medium text-gray-600">Repository</label>
-        <select
-          id="repo"
-          v-model="selectedRepoId"
-          class="w-64 rounded-md border border-gray-300 bg-white px-3 py-2 text-sm"
-        >
-          <option :value="null">All repositories</option>
-          <option v-for="repo in repositories" :key="repo.id" :value="repo.id">
-            {{ repo.full_name }}
-          </option>
-        </select>
+      <p v-if="!leadRepo" class="mt-4 max-w-[62ch] border-t border-line-subtle pt-5 text-[13px] leading-relaxed text-ink-muted">
+        No repository names you as its lead or deputy, so there is no week here that is yours to
+        answer for. Reports you write still go to whoever is named on their repository.
+      </p>
+
+      <div v-else class="mt-4 grid gap-x-10 gap-y-6 border-t border-line-subtle pt-5 lg:grid-cols-[minmax(0,1fr)_260px]">
+        <div class="min-w-0">
+          <template v-if="thisWeekReport">
+            <div class="flex flex-wrap items-center gap-2.5">
+              <span
+                :class="[MONO_LABEL, 'inline-flex items-center rounded px-2 py-0.5', statusClass(thisWeekReport.status)]"
+              >
+                {{ statusLabel(thisWeekReport.status) }}
+              </span>
+              <span class="mono text-[11px] text-ink-muted">report #{{ thisWeekReport.id }}</span>
+              <span v-if="thisWeekReport.generated_at" class="mono text-[11px] text-ink-muted">
+                AI-drafted · {{ thisWeekReport.prompt_version ?? "no version" }}
+              </span>
+            </div>
+            <p class="mt-3.5 max-w-[58ch] text-[13.5px] leading-relaxed text-ink">
+              {{ thisWeekReport.summary_exec ?? "Nothing written yet." }}
+            </p>
+            <NuxtLink
+              :to="`/reports/${thisWeekReport.id}`"
+              :class="[FOCUS, 'group/tw mt-4 inline-flex items-center gap-1.5 rounded text-[12.5px] font-medium text-ink transition-colors hover:text-ink-muted']"
+            >
+              Open the report
+              <Icon name="arrow" class="h-3.5 w-3.5 transition-transform group-hover/tw:translate-x-0.5" />
+            </NuxtLink>
+          </template>
+
+          <template v-else-if="mine.isPending.value">
+            <p class="text-[13px] text-ink-muted">Reading your reports…</p>
+          </template>
+
+          <template v-else>
+            <p class="max-w-[58ch] text-[13px] leading-relaxed text-ink-muted">
+              No report filed for {{ leadRepo.full_name }} this week yet.
+            </p>
+            <NuxtLink :to="`/reports/new?repo=${leadRepo.id}&week=${week}`" class="mt-4 inline-block">
+              <Btn size="sm">Write it</Btn>
+            </NuxtLink>
+          </template>
+        </div>
+
+        <dl class="grid grid-cols-2 gap-x-6 gap-y-4 lg:border-l lg:border-line-subtle lg:pl-8">
+          <div v-for="meta in COUNT_META" :key="meta.key">
+            <dt :class="[MONO_LABEL, 'text-ink-faint']">{{ meta.label }}</dt>
+            <dd class="mono mt-1 text-[28px] font-medium leading-none tracking-[-0.02em] text-ink">
+              <template v-if="thisWeekActivity.isPending.value">
+                <span class="inline-block h-6 w-9 animate-pulse rounded bg-surface" />
+              </template>
+              <template v-else-if="thisWeekActivity.data.value">
+                {{ thisWeekActivity.data.value.counts[meta.key] }}
+              </template>
+              <template v-else>—</template>
+            </dd>
+          </div>
+        </dl>
       </div>
 
-      <div>
-        <label for="range" class="mb-1 block text-xs font-medium text-gray-600">Period</label>
-        <select
-          id="range"
-          v-model="rangeDays"
-          class="w-40 rounded-md border border-gray-300 bg-white px-3 py-2 text-sm"
+      <p
+        v-if="leadRepo && thisWeekActivity.isError.value"
+        role="alert"
+        class="mt-5 flex items-start gap-2.5 rounded-md bg-warn-surface px-3.5 py-2.5 text-[12px] leading-relaxed text-ink"
+      >
+        <span class="mt-px shrink-0 text-warn"><Icon name="alert" class="h-3.5 w-3.5" /></span>
+        The week's activity is a separate request, and it did not come back — the figures above
+        are missing rather than zero.
+        {{ apiMessage(thisWeekActivity.error.value, "") }}
+      </p>
+    </section>
+
+    <!-- Recent reports. -->
+    <section class="sec mt-10" style="animation-delay: 180ms" aria-labelledby="recent-reports">
+      <h2 id="recent-reports" class="sr-only">Recent reports</h2>
+      <Tabs id="home-scope" v-model="scope" label="Which reports to list" variant="mono" :items="tabs" has-panel>
+        <span class="flex items-center gap-4">
+          <NuxtLink to="/reports/new" :class="[FOCUS, 'rounded text-[12.5px] text-ink-muted transition-colors hover:text-ink']">
+            New report
+          </NuxtLink>
+          <NuxtLink to="/reports" :class="[FOCUS, 'group/all rounded text-[12.5px] text-ink-muted transition-colors hover:text-ink']">
+            All reports
+            <Icon name="arrow" class="ml-1 inline h-3 w-3 transition-transform group-hover/all:translate-x-0.5" />
+          </NuxtLink>
+        </span>
+      </Tabs>
+
+      <TabPanel id="home-scope" :tab="scope" class="mt-1">
+        <p
+          v-if="scope === 'mine' && meUnavailable"
+          role="alert"
+          class="border-b border-line-subtle px-1 py-8 text-[12.5px] leading-relaxed text-ink-muted"
         >
-          <option v-for="range in RANGES" :key="range.days" :value="range.days">
-            {{ range.label }}
-          </option>
-        </select>
+          Identity did not answer when Pulse asked who you are, so this list cannot be narrowed
+          to what you wrote.
+        </p>
+
+        <p v-else-if="listPending" class="border-b border-line-subtle px-1 py-8 text-[12.5px] text-ink-muted">
+          Loading…
+        </p>
+
+        <p
+          v-else-if="listError"
+          role="alert"
+          class="border-b border-line-subtle px-1 py-8 text-[12.5px] leading-relaxed text-bad"
+        >
+          {{ apiMessage(listError, "Could not reach the Pulse API. Check that the service is running.") }}
+        </p>
+
+        <ul v-else-if="rows.length" :key="scope" class="xfade">
+          <li v-for="row in rows" :key="row.id" class="border-b border-line-subtle">
+            <NuxtLink
+              :to="`/reports/${row.id}`"
+              :class="[FOCUS, 'flex w-full flex-wrap items-center gap-x-4 gap-y-1.5 px-1 py-3 text-left transition-colors hover:bg-surface-hover/40']"
+            >
+              <span class="mono w-[92px] shrink-0 text-[11px] text-ink-muted">#{{ row.id }}</span>
+              <span class="mono min-w-0 flex-1 truncate text-[12.5px] text-ink">{{ repoName(row.repo_id) }}</span>
+              <span class="mono hidden w-[104px] shrink-0 text-[11px] text-ink-muted sm:block">
+                {{ formatDate(row.week_start) }}
+              </span>
+              <span class="hidden w-[150px] shrink-0 truncate text-[12px] text-ink-muted md:block">
+                {{ row.author_user_id === me?.id ? "You" : personName(row.author, row.author_user_id) }}
+              </span>
+              <StatusDot :tone="statusTone(row.status)" quiet class="mono w-[150px] shrink-0 uppercase tracking-[0.08em]">
+                {{ statusLabel(row.status) }}
+              </StatusDot>
+              <span class="mono hidden w-[74px] shrink-0 text-right text-[11px] text-ink-muted lg:block">
+                {{ relativeTime(row.updated_at) }}
+              </span>
+            </NuxtLink>
+          </li>
+        </ul>
+
+        <p v-else :key="`${scope}-empty`" class="xfade border-b border-line-subtle px-1 py-8 text-[12.5px] leading-relaxed text-ink-muted">
+          <template v-if="scope === 'waiting'">
+            Nothing is waiting on your decision. Reports you wrote never appear here, so an empty
+            list does not mean nobody filed.
+          </template>
+          <template v-else>You have not written a report yet.</template>
+        </p>
+      </TabPanel>
+    </section>
+
+    <!-- The two doors out of here. -->
+    <section class="mt-10 grid border-t border-line-subtle sm:grid-cols-2" aria-label="Elsewhere in Pulse">
+      <div class="sec relative border-b border-line-subtle" style="animation-delay: 220ms">
+        <Cross class="absolute -bottom-[5px] -right-[5px] hidden sm:block" />
+        <NuxtLink
+          to="/activity"
+          :class="[FOCUS, 'group/door flex h-full w-full flex-col items-start px-0 py-6 text-left transition-colors hover:bg-surface-hover/40 sm:px-5']"
+        >
+          <span class="flex items-center gap-2.5">
+            <span class="grid h-8 w-8 shrink-0 place-items-center rounded-md bg-sunken text-ink-muted ring-1 ring-inset ring-line-subtle transition-colors group-hover/door:text-ink">
+              <Icon name="pulse" class="h-[15px] w-[15px]" />
+            </span>
+            <span class="text-[15px] font-medium tracking-tight">Activity</span>
+            <Icon name="arrow" class="h-3.5 w-3.5 text-ink-faint transition-transform group-hover/door:translate-x-0.5" />
+          </span>
+          <span class="mt-3.5 block max-w-[42ch] text-[12.5px] leading-relaxed text-ink-muted">
+            Commits, pull requests, reviews and issues for a person, a repository and a window.
+          </span>
+          <span :class="[MONO_LABEL, 'mt-4 block text-ink-faint']">four counts · four capped lists</span>
+        </NuxtLink>
+      </div>
+
+      <div class="sec relative border-b border-line-subtle sm:border-l" style="animation-delay: 280ms">
+        <Cross class="absolute -bottom-[5px] -right-[5px] hidden sm:block" />
+        <NuxtLink
+          to="/reports"
+          :class="[FOCUS, 'group/door flex h-full w-full flex-col items-start px-0 py-6 text-left transition-colors hover:bg-surface-hover/40 sm:px-5']"
+        >
+          <span class="flex items-center gap-2.5">
+            <span class="grid h-8 w-8 shrink-0 place-items-center rounded-md bg-sunken text-ink-muted ring-1 ring-inset ring-line-subtle transition-colors group-hover/door:text-ink">
+              <Icon name="doc" class="h-[15px] w-[15px]" />
+            </span>
+            <span class="text-[15px] font-medium tracking-tight">Reports</span>
+            <Icon name="arrow" class="h-3.5 w-3.5 text-ink-faint transition-transform group-hover/door:translate-x-0.5" />
+          </span>
+          <span class="mt-3.5 block max-w-[42ch] text-[12.5px] leading-relaxed text-ink-muted">
+            Everything you wrote, and everything waiting on your decision, in one place.
+          </span>
+          <span :class="[MONO_LABEL, 'mt-4 block text-ink-faint']">
+            {{ mine.data.value?.total ?? 0 }} yours · {{ queue.data.value?.total ?? 0 }} awaiting review
+          </span>
+        </NuxtLink>
       </div>
     </section>
 
-    <p v-if="isPending" class="text-sm text-gray-500">Loading activity…</p>
-
-    <p v-else-if="isError" class="text-sm text-red-600">
-      {{ apiMessage(error, "Could not reach the Pulse API. Check that the service is running.") }}
-    </p>
-
-    <template v-else-if="activity">
-      <section class="mb-8 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-        <div class="rounded-lg border border-gray-200 bg-white p-5">
-          <p class="text-sm text-gray-500">Commits</p>
-          <p class="mt-1 text-2xl font-semibold">{{ activity.counts.commits }}</p>
-        </div>
-        <div class="rounded-lg border border-gray-200 bg-white p-5">
-          <p class="text-sm text-gray-500">Pull requests</p>
-          <p class="mt-1 text-2xl font-semibold">{{ activity.counts.pull_requests }}</p>
-        </div>
-        <div class="rounded-lg border border-gray-200 bg-white p-5">
-          <p class="text-sm text-gray-500">Reviews</p>
-          <p class="mt-1 text-2xl font-semibold">{{ activity.counts.reviews }}</p>
-        </div>
-        <div class="rounded-lg border border-gray-200 bg-white p-5">
-          <p class="text-sm text-gray-500">Issues</p>
-          <p class="mt-1 text-2xl font-semibold">{{ activity.counts.issues }}</p>
-        </div>
-      </section>
-
-      <section
-        v-if="isEmpty"
-        class="mb-8 rounded-lg border border-gray-200 bg-white p-6"
-      >
-        <h2 class="text-base font-semibold">Nothing here yet</h2>
-
-        <template v-if="!viewingSelf">
-          <p class="mt-1 text-sm text-gray-500">
-            Either {{ subjectName }} has no synced activity in this period, or none of it
-            is in a repository you oversee. Pulse shows you a person's work only through
-            the repos you lead, deputise, or whose department you administer.
-          </p>
-        </template>
-
-        <template v-else-if="githubChecked && !githubAccount">
-          <p class="mt-1 text-sm text-gray-500">
-            Your GitHub account isn't connected, so nothing can be attributed to you.
-            Connect it and the next sync will pick up your work.
-          </p>
-          <button
-            :disabled="connecting"
-            class="mt-3 rounded-md bg-gray-900 px-3 py-2 text-sm font-medium text-white hover:bg-gray-800 disabled:opacity-60"
-            @click="connectGitHub"
-          >
-            {{ connecting ? "Opening GitHub…" : "Connect GitHub" }}
-          </button>
-          <p v-if="connectError" class="mt-2 text-sm text-red-600">{{ connectError }}</p>
-        </template>
-
-        <template v-else>
-          <p class="mt-1 text-sm text-gray-500">
-            <template v-if="githubAccount">
-              GitHub is connected as <span class="font-medium">@{{ githubAccount.github_login }}</span>.
-            </template>
-            No commits, pull requests, reviews or issues were synced for this period
-            {{ selectedRepoId ? "in this repository" : "" }}. Widen the period, or check
-            the last sync below.
-          </p>
-
-          <div v-if="syncRuns && syncRuns.items.length" class="mt-4">
-            <p class="mb-2 text-xs font-medium text-gray-600">Recent sync passes</p>
-            <ul class="space-y-1 text-sm text-gray-600">
-              <li v-for="run in syncRuns.items" :key="run.id">
-                <span class="font-medium">{{ run.repo_full_name ?? "All repositories" }}</span>
-                · {{ run.status }} · {{ formatDateTime(run.started_at) }}
-                <span v-if="run.detail" class="text-gray-500">· {{ run.detail }}</span>
-              </li>
-            </ul>
-          </div>
-          <p v-else class="mt-4 text-sm text-gray-500">
-            No sync has run yet for any repository you can see.
-          </p>
-        </template>
-      </section>
-
-      <section v-else class="grid gap-6 lg:grid-cols-2">
-        <div class="rounded-lg border border-gray-200 bg-white">
-          <h2 class="border-b border-gray-200 px-4 py-3 text-sm font-semibold">Recent commits</h2>
-          <p v-if="!activity.recent_commits.length" class="px-4 py-3 text-sm text-gray-500">
-            No commits in this period.
-          </p>
-          <ul v-else class="divide-y divide-gray-100">
-            <li v-for="commit in activity.recent_commits" :key="commit.sha" class="px-4 py-3">
-              <a
-                v-if="commit.url"
-                :href="commit.url"
-                target="_blank"
-                rel="noopener"
-                class="block truncate text-sm font-medium text-gray-900 hover:underline"
-              >
-                {{ (commit.message ?? "(no message)").split("\n")[0] }}
-              </a>
-              <p v-else class="truncate text-sm font-medium text-gray-900">
-                {{ (commit.message ?? "(no message)").split("\n")[0] }}
-              </p>
-              <p class="mt-0.5 text-xs text-gray-500">
-                {{ repoName(commit.repo_id) }} · {{ commit.sha.slice(0, 7) }} ·
-                {{ formatDateTime(commit.committed_at) }}
-              </p>
-            </li>
-          </ul>
-        </div>
-
-        <div class="rounded-lg border border-gray-200 bg-white">
-          <h2 class="border-b border-gray-200 px-4 py-3 text-sm font-semibold">
-            Recent pull requests
-          </h2>
-          <p v-if="!activity.recent_pull_requests.length" class="px-4 py-3 text-sm text-gray-500">
-            No pull requests in this period.
-          </p>
-          <ul v-else class="divide-y divide-gray-100">
-            <li
-              v-for="pr in activity.recent_pull_requests"
-              :key="`${pr.repo_id}-${pr.number}`"
-              class="px-4 py-3"
-            >
-              <a
-                v-if="pr.url"
-                :href="pr.url"
-                target="_blank"
-                rel="noopener"
-                class="block truncate text-sm font-medium text-gray-900 hover:underline"
-              >
-                #{{ pr.number }} {{ pr.title ?? "(no title)" }}
-              </a>
-              <p v-else class="truncate text-sm font-medium text-gray-900">
-                #{{ pr.number }} {{ pr.title ?? "(no title)" }}
-              </p>
-              <p class="mt-0.5 text-xs text-gray-500">
-                {{ repoName(pr.repo_id) }} · {{ pr.merged ? "merged" : pr.state }} ·
-                {{ formatDateTime(pr.gh_created_at) }}
-              </p>
-            </li>
-          </ul>
-        </div>
-
-        <div class="rounded-lg border border-gray-200 bg-white">
-          <h2 class="border-b border-gray-200 px-4 py-3 text-sm font-semibold">Recent reviews</h2>
-          <p v-if="!activity.recent_reviews.length" class="px-4 py-3 text-sm text-gray-500">
-            No reviews in this period.
-          </p>
-          <ul v-else class="divide-y divide-gray-100">
-            <li
-              v-for="(review, index) in activity.recent_reviews"
-              :key="`${review.pull_request_id}-${index}`"
-              class="px-4 py-3"
-            >
-              <a
-                v-if="review.url"
-                :href="review.url"
-                target="_blank"
-                rel="noopener"
-                class="text-sm font-medium text-gray-900 hover:underline"
-              >
-                Review on pull request #{{ review.pull_request_id }}
-              </a>
-              <p v-else class="text-sm font-medium text-gray-900">
-                Review on pull request #{{ review.pull_request_id }}
-              </p>
-              <p class="mt-0.5 text-xs text-gray-500">
-                {{ review.state }} · {{ formatDateTime(review.submitted_at) }}
-              </p>
-            </li>
-          </ul>
-        </div>
-
-        <div class="rounded-lg border border-gray-200 bg-white">
-          <h2 class="border-b border-gray-200 px-4 py-3 text-sm font-semibold">Recent issues</h2>
-          <p v-if="!activity.recent_issues.length" class="px-4 py-3 text-sm text-gray-500">
-            No issues in this period.
-          </p>
-          <ul v-else class="divide-y divide-gray-100">
-            <li
-              v-for="issue in activity.recent_issues"
-              :key="`${issue.repo_id}-${issue.number}`"
-              class="px-4 py-3"
-            >
-              <a
-                v-if="issue.url"
-                :href="issue.url"
-                target="_blank"
-                rel="noopener"
-                class="block truncate text-sm font-medium text-gray-900 hover:underline"
-              >
-                #{{ issue.number }} {{ issue.title ?? "(no title)" }}
-              </a>
-              <p v-else class="truncate text-sm font-medium text-gray-900">
-                #{{ issue.number }} {{ issue.title ?? "(no title)" }}
-              </p>
-              <p class="mt-0.5 text-xs text-gray-500">
-                {{ repoName(issue.repo_id) }} · {{ issue.state }} ·
-                {{ formatDateTime(issue.gh_created_at) }}
-              </p>
-            </li>
-          </ul>
-        </div>
-      </section>
-    </template>
-  </div>
+    <div class="flex flex-wrap items-center justify-between gap-3 pt-6">
+      <NuxtLink to="/sync" :class="[FOCUS, 'rounded text-[12px] text-ink-muted transition-colors hover:text-ink']">
+        Sync and run history
+      </NuxtLink>
+      <p :class="[MONO_LABEL, 'text-ink-muted']">
+        user_id {{ me?.id ?? "—" }} · {{ deptLabel }} · {{ roleLabel }}
+      </p>
+    </div>
+  </PulseShell>
 </template>

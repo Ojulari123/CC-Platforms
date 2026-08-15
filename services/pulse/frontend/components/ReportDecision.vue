@@ -1,84 +1,89 @@
 <script setup lang="ts">
-import { useMutation, useQueryClient } from "@tanstack/vue-query";
-import type { ReportResponse } from "~/types/api";
+import { computed, ref } from "vue";
+import Btn from "@crescent/ui/components/Btn.vue";
+import Eyebrow from "@crescent/ui/components/Eyebrow.vue";
+import { FOCUS } from "@crescent/ui/utils/ui";
 
-const props = defineProps<{ reportId: number }>();
-const emit = defineEmits<{ decided: [] }>();
+// Presentational on purpose: the queue row and the report page both own their own
+// mutation and their own cache invalidation, and this only has to collect the note and
+// say which of the three the user pressed.
+export type Decision = "approve" | "request-changes" | "reject";
 
-const api = useApi();
-const queryClient = useQueryClient();
+const props = withDefaults(
+  defineProps<{
+    reportId: number;
+    /** Mirrors _can_approve. False disables the three buttons and shows `reason`. */
+    allowed: boolean;
+    reason?: string | null;
+    authorName?: string;
+    busy?: boolean;
+    /** Off while a collapsed panel is clipped: clipped controls are still tabbable. */
+    active?: boolean;
+  }>(),
+  { reason: null, authorName: "the author", busy: false, active: true },
+);
+
+const emit = defineEmits<{ decide: [decision: Decision, note: string] }>();
 
 const note = ref("");
 const errorMessage = ref<string | null>(null);
 
-type Decision = "approve" | "reject" | "request-changes";
+const blocked = computed(() => !props.allowed || props.busy || !props.active);
 
-const decide = useMutation({
-  mutationFn: (decision: Decision) =>
-    api.request<ReportResponse>(`/reports/${props.reportId}/${decision}`, {
-      method: "POST",
-      body: { note: note.value.trim() || null },
-    }),
-  onSuccess: () => {
-    note.value = "";
-    queryClient.invalidateQueries({ queryKey: ["reports"] });
-    queryClient.invalidateQueries({ queryKey: ["review-queue"] });
-    queryClient.invalidateQueries({ queryKey: ["report", String(props.reportId)] });
-    emit("decided");
-  },
-  onError: (err) => {
-    errorMessage.value = apiMessage(err, "Could not record that decision.");
-  },
-});
-
-// The API accepts a decision with no note; the requirement is ours, not its.
+// The API accepts a decision with no note. Asking for one on the two that send work
+// back is ours, not its: "changes requested" with no words is a dead end for the author.
 function submit(decision: Decision) {
   errorMessage.value = null;
   if (decision !== "approve" && !note.value.trim()) {
     errorMessage.value = "Say what needs to change: a note is required to reject or send back.";
     return;
   }
-  decide.mutate(decision);
+  emit("decide", decision, note.value.trim());
+  note.value = "";
 }
 </script>
 
 <template>
-  <div>
-    <label :for="`note-${reportId}`" class="mb-1 block text-xs font-medium text-gray-600">
-      Note to the author
-    </label>
-    <textarea
-      :id="`note-${reportId}`"
-      v-model="note"
-      rows="3"
-      class="w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-gray-500 focus:outline-none"
-      placeholder="Optional when approving, required when rejecting or asking for changes."
-    />
+  <div class="min-w-0 rounded-md bg-sunken p-3.5 ring-1 ring-inset ring-line-subtle">
+    <Eyebrow>Your decision</Eyebrow>
 
-    <div class="mt-3 flex flex-wrap gap-2">
-      <button
-        :disabled="decide.isPending.value"
-        class="rounded-md bg-green-700 px-3 py-2 text-sm font-medium text-white hover:bg-green-800 disabled:opacity-60"
-        @click="submit('approve')"
-      >
-        Approve
-      </button>
-      <button
-        :disabled="decide.isPending.value"
-        class="rounded-md border border-gray-300 px-3 py-2 text-sm font-medium hover:bg-gray-100 disabled:opacity-60"
-        @click="submit('request-changes')"
-      >
-        Request changes
-      </button>
-      <button
-        :disabled="decide.isPending.value"
-        class="rounded-md border border-red-300 px-3 py-2 text-sm font-medium text-red-700 hover:bg-red-50 disabled:opacity-60"
-        @click="submit('reject')"
-      >
+    <p v-if="!allowed && reason" class="mt-2.5 max-w-[54ch] text-[12px] leading-relaxed text-ink-muted">
+      {{ reason }}
+    </p>
+
+    <label class="mt-2.5 block">
+      <span class="block text-[12px] text-ink-muted">Note to {{ authorName }}</span>
+      <textarea
+        :id="`decision-note-${reportId}`"
+        v-model="note"
+        :disabled="blocked"
+        rows="3"
+        placeholder="What should change, or why this is fine as it stands."
+        :class="[
+          FOCUS,
+          'mt-1.5 w-full resize-y rounded-md bg-app px-2.5 py-2 text-[12.5px] leading-relaxed text-ink ring-1 ring-inset ring-line-subtle transition-[box-shadow] placeholder:text-ink-faint hover:ring-line disabled:opacity-60',
+        ]"
+      />
+    </label>
+
+    <!-- Three on one line: "Request changes" wrapped "Reject" onto its own row, which
+         is the worst possible place for a layout accident. -->
+    <div class="mt-2.5 flex flex-wrap gap-1.5">
+      <Btn size="sm" :disabled="blocked" @click="submit('approve')">Approve</Btn>
+      <Btn size="sm" variant="secondary" :disabled="blocked" @click="submit('request-changes')">
+        Changes
+      </Btn>
+      <Btn size="sm" variant="destructive" :disabled="blocked" @click="submit('reject')">
         Reject
-      </button>
+      </Btn>
     </div>
 
-    <p v-if="errorMessage" class="mt-2 text-sm text-red-600">{{ errorMessage }}</p>
+    <p v-if="errorMessage" role="alert" class="mt-2.5 text-[12px] leading-relaxed text-bad">
+      {{ errorMessage }}
+    </p>
+
+    <p v-else class="mt-2.5 text-[11px] leading-relaxed text-ink-muted">
+      Deciding takes the report out of your queue and emails {{ authorName }}.
+    </p>
   </div>
 </template>
