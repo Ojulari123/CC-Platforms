@@ -158,19 +158,32 @@ aim one at another user. The cost is a second public-key verify on those routes
 falls back to the address, never to a shared or empty key.
 
 ### What revokes what
-`token_version` (the `tv` claim) is **per user**, so bumping it signs the person out
-of every device on their next request.
+There are two levers, and the difference between them is the refresh token.
 
-- **Logout one device** (`revoke_refresh_token`) deliberately does *not* bump it.
-  That device's access token stays alive until it expires (≤15 min); anything more
-  would sign the person out everywhere just because they closed one browser.
-- **Refresh-token reuse** (a revoked token presented again) *does* bump it, on top of
-  revoking the whole token family. Revoking the family only stops new pairs being
-  minted, and the access token already in the thief's hands would keep reading data
-  until it expired. Reuse is a theft signal, and under-revoking on one is the worse
-  failure than the person losing their other sessions.
-- Password change/reset, deactivation, and platform-admin grant/revoke all bump it
-  too, the last two because the old token's claims are now wrong.
+`token_version` (the `tv` claim) is **per user**. Bumping it kills every access token
+that account is holding, on their next request, everywhere. It does **not** touch the
+refresh tokens: `rotate_refresh_token` never reads `token_version`, so the client's next
+refresh succeeds and mints a token with current claims. Nobody sees a login screen.
+
+Revoking the refresh tokens is the other lever, and that one really is a sign-out.
+`revoke_all_for_user` does both.
+
+- **Authorisation changed** (`bump_token_version`) bumps and nothing else: added to or
+  removed from a department, role changed, moved between departments, team or team
+  lead changed, an existing account accepting an invite. The old token is asserting a
+  department or a role they no longer have, and products read authority straight out of
+  it, so waiting out the ≤15 minutes means someone keeps approval power they have lost.
+  Their session survives it.
+- **Logout one device** (`revoke_refresh_token`) deliberately does *not* bump. That
+  device's access token stays alive until it expires (≤15 min); anything more would sign
+  the person out everywhere just because they closed one browser.
+- **Refresh-token reuse** (a revoked token presented again) bumps *and* revokes the whole
+  family. Revoking the family only stops new pairs being minted, and the access token
+  already in the thief's hands would keep reading data until it expired. Reuse is a theft
+  signal, and under-revoking on one is the worse failure than the person losing their
+  other sessions.
+- **Password change/reset, email change, deactivation, and platform-admin grant/revoke**
+  bump and revoke: the credential itself, or the trust in the account, has changed.
 
 ### Why `users.onboarded_at` exists (the delete guard)
 `DELETE /platform/users/{id}` needs durable, identity-side evidence that an account

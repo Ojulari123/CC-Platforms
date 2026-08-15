@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, Boolean, TIMESTAMP, ForeignKey, UniqueConstraint, func
+from sqlalchemy import Column, Integer, String, Boolean, TIMESTAMP, ForeignKey, Index, UniqueConstraint, func
 from sqlalchemy.orm import relationship
 from app.db import Base
 
@@ -39,6 +39,14 @@ class Department(Base):
 
     teams = relationship("Team", back_populates="department", cascade="all, delete-orphan")
     memberships = relationship("Membership", back_populates="department", cascade="all, delete-orphan")
+
+    # Two departments cannot share a name. Case-insensitive, because "Software Dev" and
+    # "software dev" are the same department to everyone reading the list; the slug alone
+    # only stopped exact-string repeats, which is how a third "Software Dev" ended up as
+    # software-dev-3. Surrounding whitespace is stripped by the schema on the way in
+    # rather than by the index: Postgres renders trim() as TRIM(BOTH FROM name), which
+    # never matches what SQLAlchemy renders, and alembic reads that as permanent drift.
+    __table_args__ = (Index("uq_departments_name_lower", func.lower(name), unique=True),)
 
 class Team(Base):
     __tablename__ = "teams"
@@ -120,6 +128,25 @@ class PasswordResetToken(Base):
     id = Column(Integer, primary_key=True)
     user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
     token_hash = Column(String(64), unique=True, index=True, nullable=False)
+    expires_at = Column(TIMESTAMP(timezone=True), nullable=False)
+    used_at = Column(TIMESTAMP(timezone=True), nullable=True)
+    created_at = Column(TIMESTAMP(timezone=True), server_default=func.now(), nullable=False)
+
+    user = relationship("User")
+
+class EmailChangeToken(Base):
+    """The pending address lives here, not on users: nothing about the account moves
+    until someone proves control of the new mailbox by returning this token."""
+    __tablename__ = "email_change_tokens"
+
+    id = Column(Integer, primary_key=True)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    new_email = Column(String(255), nullable=False)
+    token_hash = Column(String(64), unique=True, index=True, nullable=False)
+    # The account's token_version when the link was issued. Anything that revokes the
+    # account wholesale bumps that counter, so changing the password or signing out
+    # everywhere also kills a link already sitting in someone else's inbox.
+    user_token_version = Column(Integer, nullable=False, server_default="0", default=0)
     expires_at = Column(TIMESTAMP(timezone=True), nullable=False)
     used_at = Column(TIMESTAMP(timezone=True), nullable=True)
     created_at = Column(TIMESTAMP(timezone=True), server_default=func.now(), nullable=False)

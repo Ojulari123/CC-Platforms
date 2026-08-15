@@ -32,7 +32,11 @@ class TokenPayload(dict):
     def leads(self) -> list[int]:
         return self.get("leads", [])
 
-def create_access_token(*, user_id: int, email: str, memberships: list[dict], is_platform_admin: bool, token_version: int, leads: list[int] | None = None) -> str:
+    @property
+    def session_id(self) -> str | None:
+        return self.get("sid")
+
+def create_access_token(*, user_id: int, email: str, memberships: list[dict], is_platform_admin: bool, token_version: int, leads: list[int] | None = None, session_id: str | None = None) -> str:
     now = datetime.now(timezone.utc)
     payload = {
         "sub": str(user_id),
@@ -47,6 +51,11 @@ def create_access_token(*, user_id: int, email: str, memberships: list[dict], is
         "exp": int((now + timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)).timestamp()),
         "jti": str(uuid.uuid4()),
     }
+    if session_id is not None:
+        # Names the refresh-token family this access token was minted with, so
+        # /me/sessions can point at the caller's own row. Not a credential: it is
+        # a one-way digest of family_id, and nothing accepts it as proof.
+        payload["sid"] = session_id
     headers = {"kid": get_key_id()}
     return jwt.encode(payload, get_private_key_pem(), algorithm=settings.JWT_ALGORITHM, headers=headers)
 

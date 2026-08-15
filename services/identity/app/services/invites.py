@@ -11,15 +11,14 @@ from app.models import Invite, Membership, Department, Team, User
 from app.schemas.auth import TokenPair
 from app.schemas.departments import InviteAccept, InviteCreate, InvitePreview
 from app.services import email as email_service
-from app.services.auth import _build_pair_response, _issue_token_pair
+from app.services.auth import _build_pair_response, _issue_token_pair, bump_token_version
 from app.security import hash_password, validate_password
 
 def _hash_token(token: str) -> str:
     return hashlib.sha256(token.encode()).hexdigest()
 
 def create_invite(db: Session, dept_id: int, inviter: User, payload: InviteCreate) -> Invite:
-    # A platform admin passes the dept_id guard without a membership lookup, so
-    # nothing upstream has proved the department exists.
+    # A platform admin passes the dept_id guard without a membership lookup, so nothing upstream has proved the department exists.
     department = db.get(Department, dept_id)
     if not department:
         raise HTTPException(status_code=404, detail="Department not found")
@@ -102,18 +101,22 @@ def preview_invite(db: Session, raw_token: str) -> InvitePreview:
     department = db.get(Department, invite.dept_id)
     team = db.get(Team, invite.team_id) if invite.team_id else None
     existing_user = db.scalar(select(User).where(User.email == invite.email))
+    inviter = db.get(User, invite.invited_by) if invite.invited_by else None
     return InvitePreview(
         email=invite.email,
         dept_name=department.name if department else "",
         team_name=team.name if team else None,
         role=invite.role,
         needs_account=existing_user is None,
+        invited_by_name=f"{inviter.first_name} {inviter.last_name}" if inviter and inviter.is_active else None,
+        expires_at=invite.expires_at,
     )
 
 def accept_invite(db: Session, payload: InviteAccept) -> TokenPair:
     invite = _load_valid_invite(db, payload.token)
 
     user = db.scalar(select(User).where(User.email == invite.email))
+    had_account = user is not None
     if user is None:
         if not (payload.first_name and payload.last_name and payload.password):
             raise HTTPException(status_code=400, detail="first_name, last_name and password are required to create your account")
@@ -149,6 +152,12 @@ def accept_invite(db: Session, payload: InviteAccept) -> TokenPair:
         db.rollback()
         raise HTTPException(status_code=409, detail="You're already a member of this department.")
 
+    # An existing account can accept an invite to a second department, and its other
+    # sessions are holding tokens that don't know about it. Bumped *before* the pair is
+    # minted so the one handed back below carries the new version and stays valid. An
+    # account created right here has no other sessions, so bumping it would be churn.
+    if had_account:
+        bump_token_version(db, user.id)
     access, refresh = _issue_token_pair(db, user)
     db.commit()
     db.refresh(user)

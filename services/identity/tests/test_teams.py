@@ -1,5 +1,5 @@
 import pytest
-from tests.conftest import auth
+from tests.conftest import auth, refreshed
 
 @pytest.fixture
 def dept(registered_user):
@@ -362,6 +362,9 @@ class TestOneLeadManyTeams:
         client.put(f"/departments/{dept}/teams/{a}/manager/{mgr_id}", headers=admin)
         client.put(f"/departments/{dept}/teams/{b}/manager/{mgr_id}", headers=admin)
         eng_id = client.get("/me", headers=auth(engineer_user)).json()["id"]
+        # Being handed the teams changed their leads claim, so the token they had before
+        # is spent; their client refreshes into one that names both teams.
+        mgr = refreshed(client, mgr)
 
         assert client.put(f"/departments/{dept}/teams/{a}/members/{eng_id}", headers=auth(mgr)).status_code == 200
         assert client.put(f"/departments/{dept}/teams/{b}/members/{eng_id}", headers=auth(mgr)).status_code == 200

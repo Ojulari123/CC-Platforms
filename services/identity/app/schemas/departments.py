@@ -1,14 +1,18 @@
 from datetime import datetime
-from typing import Literal
-from pydantic import BaseModel, ConfigDict, EmailStr, Field
+from typing import Annotated, Literal
+from pydantic import BaseModel, ConfigDict, EmailStr, Field, StringConstraints
 
 Role = Literal["admin", "manager", "engineer"]
 
+# Stripped before the length check, so " Data " and "Data" are the same request and
+# cannot both get past the unique name index, which only folds case.
+DepartmentName = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=200)]
+
 class DepartmentCreate(BaseModel):
-    name: str = Field(min_length=1, max_length=200)
+    name: DepartmentName
 
 class DepartmentUpdate(BaseModel):
-    name: str = Field(min_length=1, max_length=200)
+    name: DepartmentName
 
 class DepartmentResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
@@ -71,6 +75,11 @@ class MemberUpdate(BaseModel):
     role: Role | None = None
     team_id: int | None = None
 
+class MemberTransfer(BaseModel):
+    # Where they are going. Their role travels with them; team membership does not,
+    # since a team belongs to the department being left behind.
+    dept_id: int
+
 class InviteCreate(BaseModel):
     email: EmailStr
     role: Role
@@ -91,6 +100,10 @@ class InvitePreview(BaseModel):
     team_name: str | None = None
     role: str
     needs_account: bool
+    # Preview is served to whoever holds the link, so the inviter is named and
+    # nothing else about their account is exposed. Null once they're gone or deactivated.
+    invited_by_name: str | None = None
+    expires_at: datetime
 
 class InviteAccept(BaseModel):
     token: str

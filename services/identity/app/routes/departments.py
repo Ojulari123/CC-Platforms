@@ -1,9 +1,9 @@
-from fastapi import APIRouter, Depends, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.orm import Session
 from app.db import get_db
 from app.models import User
-from app.schemas.departments import DepartmentCreate, DepartmentResponse, DepartmentUpdate, InviteCreate, InviteResponse, MemberAdd, MemberListResponse, MemberResponse, MemberUpdate, Role
-from app.security import get_current_user, require_dept_role, require_platform_admin
+from app.schemas.departments import DepartmentCreate, DepartmentResponse, DepartmentUpdate, InviteCreate, InviteResponse, MemberAdd, MemberListResponse, MemberResponse, MemberTransfer, MemberUpdate, Role
+from app.security import get_current_user, get_membership, require_dept_role, require_platform_admin
 from app.services import departments as dept_service
 from app.services import invites as invites_service
 
@@ -66,8 +66,25 @@ def update_member(dept_id: int, member_user_id: int, payload: MemberUpdate, repl
         allow_unled=allow_unled,
     )
 
+@router.patch("/{dept_id}/members/{member_user_id}/department", response_model=MemberResponse)
+def transfer_member(dept_id: int, member_user_id: int, payload: MemberTransfer, replacement_user_id: int | None = Query(default=None, description="Hand any team(s)/headship the move costs them to this person"),
+                    allow_unled: bool = Query(default=False, description="Move them anyway, leaving those without anyone in charge"), user: User = Depends(dept_admin), db: Session = Depends(get_db)) -> MemberResponse:
+    # A move is add-to-target plus remove-from-source, so it needs what both of those
+    # need: admin of the department they leave and of the one they join. Platform
+    # admins clear dept_admin outright, so this only bites department admins.
+    if not user.is_platform_admin:
+        target = get_membership(db, user, payload.dept_id)
+        if not target or target.role != "admin":
+            raise HTTPException(status_code=403, detail="Requires the admin role in the department they are moving to")
+    return dept_service.transfer_member(
+        db, dept_id, member_user_id, payload.dept_id,
+        replacement_user_id=replacement_user_id,
+        allow_unled=allow_unled,
+    )
+
 @router.delete("/{dept_id}/members/{member_user_id}", status_code=status.HTTP_204_NO_CONTENT)
-def remove_member(dept_id: int, member_user_id: int, replacement_user_id: int | None = Query(default=None, description="Hand their team(s)/headship to this person instead of leaving them empty"), allow_unled: bool = Query(default=False, description="Proceed even though teams or the department will be left without a lead"), _: User = Depends(dept_admin), db: Session = Depends(get_db)) -> None:
+def remove_member(dept_id: int, member_user_id: int, replacement_user_id: int | None = Query(default=None, description="Hand their team(s)/headship to this person instead of leaving them empty"),
+                  allow_unled: bool = Query(default=False, description="Proceed even though teams or the department will be left without a lead"), _: User = Depends(dept_admin), db: Session = Depends(get_db)) -> None:
     dept_service.remove_member(
         db, dept_id, member_user_id,
         replacement_user_id=replacement_user_id,

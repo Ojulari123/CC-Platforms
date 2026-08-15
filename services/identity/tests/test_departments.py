@@ -1,4 +1,5 @@
-from tests.conftest import auth
+import pytest
+from tests.conftest import auth, refreshed
 
 class TestListAndGet:
     def test_member_can_read_own_department(self, client, registered_user):
@@ -30,11 +31,51 @@ class TestCreateAndDelete:
         assert r.json()["name"] == "Finance Ops"
         assert r.json()["slug"] == "finance-ops"
 
-    def test_duplicate_name_gets_suffixed_slug(self, client, registered_user):
+    def test_different_names_that_slugify_alike_get_a_suffixed_slug(self, client, registered_user):
         tokens = registered_user["tokens"]
-        client.post("/departments", json={"name": "Data"}, headers=auth(tokens))
-        r = client.post("/departments", json={"name": "Data"}, headers=auth(tokens))
+        client.post("/departments", json={"name": "Data!"}, headers=auth(tokens))
+        r = client.post("/departments", json={"name": "Data?"}, headers=auth(tokens))
+        assert r.status_code == 201
         assert r.json()["slug"] == "data-2"
+
+    def test_duplicate_name_is_refused(self, client, registered_user, second_dept):
+        r = client.post("/departments", json={"name": "Data"}, headers=auth(registered_user["tokens"]))
+        assert r.status_code == 409
+        assert r.json()["detail"] == 'A department called "Data" already exists'
+
+    def test_duplicate_name_is_refused_case_and_space_insensitively(self, client, registered_user, second_dept):
+        for variant in ("data", "DATA", "  Data  ", "dAtA"):
+            r = client.post("/departments", json={"name": variant}, headers=auth(registered_user["tokens"]))
+            assert r.status_code == 409, variant
+        assert {d["name"] for d in client.get("/departments", headers=auth(registered_user["tokens"])).json()} == {"Engineering", "Data"}
+
+    def test_the_database_refuses_a_duplicate_the_service_check_missed(self, client, registered_user, second_dept, db_session):
+        # The index, not the pre-check, is what actually guarantees this — two admins
+        # submitting the same name at once both pass the check.
+        from sqlalchemy.exc import IntegrityError
+        from app.models import Department
+
+        db_session.add(Department(name="dATA", slug="data-clash"))
+        with pytest.raises(IntegrityError):
+            db_session.commit()
+        db_session.rollback()
+
+    def test_a_lost_race_on_create_is_a_409_not_a_500(self, client, registered_user, second_dept, monkeypatch):
+        # Stand in for the other request having committed between the check and ours.
+        from app.services import departments as dept_service
+        monkeypatch.setattr(dept_service, "_assert_name_free", lambda *a, **k: None)
+
+        r = client.post("/departments", json={"name": "data"}, headers=auth(registered_user["tokens"]))
+        assert r.status_code == 409
+        assert r.json()["detail"] == "A department with that name already exists"
+
+    def test_a_lost_race_on_rename_is_a_409_not_a_500(self, client, registered_user, second_dept, monkeypatch):
+        from app.services import departments as dept_service
+        monkeypatch.setattr(dept_service, "_assert_name_free", lambda *a, **k: None)
+
+        r = client.patch(f"/departments/{second_dept}", json={"name": "engineering"}, headers=auth(registered_user["tokens"]))
+        assert r.status_code == 409
+        assert r.json()["detail"] == "A department with that name already exists"
 
     def test_engineer_cannot_create_department(self, client, registered_user, engineer_user):
         r = client.post("/departments", json={"name": "Shadow IT"}, headers=auth(engineer_user))
@@ -71,6 +112,23 @@ class TestRename:
     def test_engineer_cannot_rename(self, client, registered_user, engineer_user):
         r = client.patch(f"/departments/{registered_user['dept_id']}", json={"name": "Hijacked"}, headers=auth(engineer_user))
         assert r.status_code == 403
+
+    def test_rename_onto_an_existing_name_is_refused(self, client, registered_user, second_dept):
+        r = client.patch(f"/departments/{second_dept}", json={"name": "Engineering"}, headers=auth(registered_user["tokens"]))
+        assert r.status_code == 409
+        assert r.json()["detail"] == 'A department called "Engineering" already exists'
+        assert client.get(f"/departments/{second_dept}", headers=auth(registered_user["tokens"])).json()["name"] == "Data"
+
+    def test_rename_onto_an_existing_name_is_refused_case_insensitively(self, client, registered_user, second_dept):
+        r = client.patch(f"/departments/{second_dept}", json={"name": " engineering "}, headers=auth(registered_user["tokens"]))
+        assert r.status_code == 409
+
+    def test_recasing_its_own_name_is_allowed(self, client, registered_user):
+        # exclude_id again: a department is never in its own way.
+        dept_id = registered_user["dept_id"]
+        r = client.patch(f"/departments/{dept_id}", json={"name": "ENGINEERING"}, headers=auth(registered_user["tokens"]))
+        assert r.status_code == 200
+        assert r.json()["name"] == "ENGINEERING"
 
 class TestMembers:
     def test_list_members_paginated_shape(self, client, registered_user):
@@ -160,6 +218,208 @@ class TestRemoveMember:
         admin_id = client.get("/me", headers=auth(registered_user["tokens"])).json()["id"]
         r = client.delete(f"/departments/{registered_user['dept_id']}/members/{admin_id}", headers=auth(engineer_user))
         assert r.status_code == 403
+
+class TestEmptyingADepartment:
+    """The last admin can be neither removed nor demoted, so the only way to empty a
+    department for deletion is to move its people somewhere else."""
+
+    def _dept_with_one_admin(self, client, registered_user, invite_user, second_dept) -> tuple[int, int]:
+        bob = invite_user(registered_user["tokens"], second_dept, "bob@example.com", "admin")
+        return second_dept, client.get("/me", headers=auth(bob)).json()["id"]
+
+    def test_the_last_admin_blocks_removal_demotion_and_the_delete(self, client, registered_user, invite_user, second_dept):
+        dept_id, bob_id = self._dept_with_one_admin(client, registered_user, invite_user, second_dept)
+        tokens = registered_user["tokens"]
+        assert client.delete(f"/departments/{dept_id}/members/{bob_id}", headers=auth(tokens)).status_code == 400
+        assert client.patch(f"/departments/{dept_id}/members/{bob_id}", json={"role": "engineer"}, headers=auth(tokens)).status_code == 400
+        assert client.delete(f"/departments/{dept_id}", headers=auth(tokens)).status_code == 400
+
+    def test_allow_last_admin_no_longer_buys_anything(self, client, registered_user, invite_user, second_dept):
+        # The flag is gone; an old caller still sending it gets the guard, not the escape hatch.
+        dept_id, bob_id = self._dept_with_one_admin(client, registered_user, invite_user, second_dept)
+        tokens = registered_user["tokens"]
+        r = client.delete(f"/departments/{dept_id}/members/{bob_id}?allow_last_admin=true", headers=auth(tokens))
+        assert r.status_code == 400
+        assert "only admin" in r.json()["detail"]
+        assert client.get(f"/departments/{dept_id}/members", headers=auth(tokens)).json()["total"] == 1
+
+    def test_moving_the_last_admin_out_empties_it_and_the_delete_goes_through(self, client, registered_user, invite_user, second_dept):
+        dept_id, bob_id = self._dept_with_one_admin(client, registered_user, invite_user, second_dept)
+        tokens, eng_dept = registered_user["tokens"], registered_user["dept_id"]
+        r = client.patch(f"/departments/{dept_id}/members/{bob_id}/department", json={"dept_id": eng_dept}, headers=auth(tokens))
+        assert r.status_code == 200
+        assert client.delete(f"/departments/{dept_id}", headers=auth(tokens)).status_code == 204
+        assert {d["name"] for d in client.get("/departments", headers=auth(tokens)).json()} == {"Engineering"}
+
+    def test_the_move_does_not_skip_the_leadership_handover(self, client, registered_user, invite_user, second_dept):
+        dept_id, bob_id = self._dept_with_one_admin(client, registered_user, invite_user, second_dept)
+        tokens = registered_user["tokens"]
+        team_id = client.post(f"/departments/{dept_id}/teams", json={"name": "Data Infra"}, headers=auth(tokens)).json()["id"]
+        client.put(f"/departments/{dept_id}/teams/{team_id}/manager/{bob_id}", headers=auth(tokens))
+
+        r = client.patch(f"/departments/{dept_id}/members/{bob_id}/department", json={"dept_id": registered_user["dept_id"]}, headers=auth(tokens))
+        assert r.status_code == 409
+        assert "leads Data Infra" in r.json()["detail"]
+
+class TestTransferMember:
+    def _bob_in(self, client, registered_user, invite_user, dept_id, role="engineer", email="bob@example.com") -> int:
+        bob = invite_user(registered_user["tokens"], dept_id, email, role)
+        return client.get("/me", headers=auth(bob)).json()["id"]
+
+    def test_move_lands_them_in_the_target_with_their_role(self, client, registered_user, invite_user, second_dept):
+        tokens, eng_dept = registered_user["tokens"], registered_user["dept_id"]
+        bob_id = self._bob_in(client, registered_user, invite_user, eng_dept, "manager")
+
+        r = client.patch(f"/departments/{eng_dept}/members/{bob_id}/department", json={"dept_id": second_dept}, headers=auth(tokens))
+        assert r.status_code == 200
+        assert r.json()["role"] == "manager"
+        assert r.json()["user_id"] == bob_id
+
+        assert bob_id not in [m["user_id"] for m in client.get(f"/departments/{eng_dept}/members", headers=auth(tokens)).json()["items"]]
+        landed = next(m for m in client.get(f"/departments/{second_dept}/members", headers=auth(tokens)).json()["items"] if m["user_id"] == bob_id)
+        assert landed["role"] == "manager"
+
+    def test_the_team_does_not_travel_with_them(self, client, registered_user, invite_user, second_dept):
+        tokens, eng_dept = registered_user["tokens"], registered_user["dept_id"]
+        team = client.post(f"/departments/{eng_dept}/teams", json={"name": "Platform"}, headers=auth(tokens)).json()["id"]
+        bob_id = self._bob_in(client, registered_user, invite_user, eng_dept)
+        client.patch(f"/departments/{eng_dept}/members/{bob_id}", json={"team_id": team}, headers=auth(tokens))
+
+        r = client.patch(f"/departments/{eng_dept}/members/{bob_id}/department", json={"dept_id": second_dept}, headers=auth(tokens))
+        assert r.status_code == 200
+        assert r.json()["team_id"] is None
+
+    def test_moving_the_last_admin_is_refused_while_others_remain(self, client, registered_user, invite_user, second_dept, engineer_user):
+        tokens, eng_dept = registered_user["tokens"], registered_user["dept_id"]
+        me_id = client.get("/me", headers=auth(tokens)).json()["id"]
+
+        r = client.patch(f"/departments/{eng_dept}/members/{me_id}/department", json={"dept_id": second_dept}, headers=auth(tokens))
+        assert r.status_code == 409
+        assert "only admin of Engineering" in r.json()["detail"]
+        assert "1 member(s)" in r.json()["detail"]
+        assert "Move the others out first, or promote another admin" in r.json()["detail"]
+        assert client.get(f"/departments/{eng_dept}/members", headers=auth(tokens)).json()["total"] == 2
+
+    def test_moving_the_last_admin_works_once_they_are_the_last_member(self, client, registered_user, invite_user, second_dept, engineer_user):
+        tokens, eng_dept = registered_user["tokens"], registered_user["dept_id"]
+        me_id = client.get("/me", headers=auth(tokens)).json()["id"]
+        eng_id = client.get("/me", headers=auth(engineer_user)).json()["id"]
+
+        assert client.patch(f"/departments/{eng_dept}/members/{eng_id}/department", json={"dept_id": second_dept}, headers=auth(tokens)).status_code == 200
+        assert client.patch(f"/departments/{eng_dept}/members/{me_id}/department", json={"dept_id": second_dept}, headers=auth(tokens)).status_code == 200
+        # Moving themselves bumped their own token_version, so their client refreshes
+        # before carrying on. The move is what invalidated the token, not a sign-out.
+        tokens = refreshed(client, tokens)
+        assert client.delete(f"/departments/{eng_dept}", headers=auth(tokens)).status_code == 204
+
+    def test_moving_the_head_is_refused_until_the_headship_is_dealt_with(self, client, registered_user, invite_user, second_dept):
+        tokens, eng_dept = registered_user["tokens"], registered_user["dept_id"]
+        head_id = self._bob_in(client, registered_user, invite_user, eng_dept, "admin", "head@example.com")
+        client.put(f"/departments/{eng_dept}/head/{head_id}", headers=auth(tokens))
+
+        r = client.patch(f"/departments/{eng_dept}/members/{head_id}/department", json={"dept_id": second_dept}, headers=auth(tokens))
+        assert r.status_code == 409
+        assert "heads Engineering" in r.json()["detail"]
+        assert "Moving them to another department" in r.json()["detail"]
+
+        assert client.delete(f"/departments/{eng_dept}/head", headers=auth(tokens)).status_code == 200
+        assert client.patch(f"/departments/{eng_dept}/members/{head_id}/department", json={"dept_id": second_dept}, headers=auth(tokens)).status_code == 200
+
+    def test_a_replacement_takes_over_the_headship_and_the_move_goes_through(self, client, registered_user, invite_user, second_dept):
+        tokens, eng_dept = registered_user["tokens"], registered_user["dept_id"]
+        head_id = self._bob_in(client, registered_user, invite_user, eng_dept, "admin", "head@example.com")
+        client.put(f"/departments/{eng_dept}/head/{head_id}", headers=auth(tokens))
+        successor_id = client.get("/me", headers=auth(tokens)).json()["id"]
+
+        r = client.patch(f"/departments/{eng_dept}/members/{head_id}/department?replacement_user_id={successor_id}", json={"dept_id": second_dept}, headers=auth(tokens))
+        assert r.status_code == 200
+        assert client.get(f"/departments/{eng_dept}", headers=auth(tokens)).json()["head_user_id"] == successor_id
+
+    def test_already_a_member_of_the_target_is_a_409(self, client, registered_user, invite_user, second_dept):
+        tokens, eng_dept = registered_user["tokens"], registered_user["dept_id"]
+        bob_id = self._bob_in(client, registered_user, invite_user, eng_dept)
+        invite_user(tokens, second_dept, "bob@example.com", "manager")
+
+        r = client.patch(f"/departments/{eng_dept}/members/{bob_id}/department", json={"dept_id": second_dept}, headers=auth(tokens))
+        assert r.status_code == 409
+        assert "already a member" in r.json()["detail"]
+        roles = {m["dept_id"]: m["role"] for m in client.get("/me", headers=auth(client.post("/auth/login", json={"email": "bob@example.com", "password": "Test123!password"}).json())).json()["memberships"]}
+        assert roles == {eng_dept: "engineer", second_dept: "manager"}
+
+    def test_moving_into_the_same_department_is_a_400(self, client, registered_user, invite_user):
+        tokens, eng_dept = registered_user["tokens"], registered_user["dept_id"]
+        bob_id = self._bob_in(client, registered_user, invite_user, eng_dept)
+        r = client.patch(f"/departments/{eng_dept}/members/{bob_id}/department", json={"dept_id": eng_dept}, headers=auth(tokens))
+        assert r.status_code == 400
+        assert "already a member of that department" in r.json()["detail"]
+
+    def test_unknown_target_department_is_a_404(self, client, registered_user, invite_user):
+        tokens, eng_dept = registered_user["tokens"], registered_user["dept_id"]
+        bob_id = self._bob_in(client, registered_user, invite_user, eng_dept)
+        r = client.patch(f"/departments/{eng_dept}/members/{bob_id}/department", json={"dept_id": 9999}, headers=auth(tokens))
+        assert r.status_code == 404
+        assert r.json()["detail"] == "Target department not found"
+
+    def test_admin_of_only_the_source_cannot_move_someone_out(self, client, registered_user, invite_user, second_dept):
+        tokens, eng_dept = registered_user["tokens"], registered_user["dept_id"]
+        self._bob_in(client, registered_user, invite_user, eng_dept, "admin")
+        victim_id = self._bob_in(client, registered_user, invite_user, eng_dept, "engineer", "victim@example.com")
+        bob = client.post("/auth/login", json={"email": "bob@example.com", "password": "Test123!password"}).json()
+
+        r = client.patch(f"/departments/{eng_dept}/members/{victim_id}/department", json={"dept_id": second_dept}, headers=auth(bob))
+        assert r.status_code == 403
+        assert "admin role in the department they are moving to" in r.json()["detail"]
+
+    def test_admin_of_both_departments_can_move_someone(self, client, registered_user, invite_user, second_dept):
+        tokens, eng_dept = registered_user["tokens"], registered_user["dept_id"]
+        self._bob_in(client, registered_user, invite_user, eng_dept, "admin")
+        invite_user(tokens, second_dept, "bob@example.com", "admin")
+        victim_id = self._bob_in(client, registered_user, invite_user, eng_dept, "engineer", "victim@example.com")
+        bob = client.post("/auth/login", json={"email": "bob@example.com", "password": "Test123!password"}).json()
+
+        r = client.patch(f"/departments/{eng_dept}/members/{victim_id}/department", json={"dept_id": second_dept}, headers=auth(bob))
+        assert r.status_code == 200
+
+    def test_engineer_cannot_move_anyone(self, client, registered_user, invite_user, second_dept, engineer_user):
+        eng_dept = registered_user["dept_id"]
+        eng_id = client.get("/me", headers=auth(engineer_user)).json()["id"]
+        r = client.patch(f"/departments/{eng_dept}/members/{eng_id}/department", json={"dept_id": second_dept}, headers=auth(engineer_user))
+        assert r.status_code == 403
+
+    def test_a_move_does_not_sign_them_out(self, client, registered_user, invite_user, second_dept):
+        tokens, eng_dept = registered_user["tokens"], registered_user["dept_id"]
+        bob = invite_user(tokens, eng_dept, "bob@example.com", "engineer")
+        bob_id = client.get("/me", headers=auth(bob)).json()["id"]
+
+        client.patch(f"/departments/{eng_dept}/members/{bob_id}/department", json={"dept_id": second_dept}, headers=auth(tokens))
+
+        # The token he was holding claims the department he just left, so it is dead the
+        # moment the move lands rather than for the rest of its 15 minutes.
+        assert client.get("/me", headers=auth(bob)).status_code == 401
+        # His refresh token is untouched, which is what keeps this from being a sign-out:
+        # no password, no login screen, and the new token names the new department.
+        moved = refreshed(client, bob)
+        from app.security import decode_access_token
+        assert [m["dept_id"] for m in decode_access_token(moved["access_token"])["memberships"]] == [second_dept]
+        me = client.get("/me", headers=auth(moved))
+        assert me.status_code == 200
+        assert [m["dept_id"] for m in me.json()["memberships"]] == [second_dept]
+
+    def test_consolidating_two_departments_end_to_end(self, client, registered_user, invite_user, second_dept):
+        tokens, survivor = registered_user["tokens"], registered_user["dept_id"]
+        admin_id = self._bob_in(client, registered_user, invite_user, second_dept, "admin", "dup-admin@example.com")
+        mgr_id = self._bob_in(client, registered_user, invite_user, second_dept, "manager", "dup-mgr@example.com")
+        eng_id = self._bob_in(client, registered_user, invite_user, second_dept, "engineer", "dup-eng@example.com")
+
+        # The admin has to go last: while anyone is behind them the department would be left adminless.
+        assert client.patch(f"/departments/{second_dept}/members/{admin_id}/department", json={"dept_id": survivor}, headers=auth(tokens)).status_code == 409
+        for user_id in (mgr_id, eng_id, admin_id):
+            assert client.patch(f"/departments/{second_dept}/members/{user_id}/department", json={"dept_id": survivor}, headers=auth(tokens)).status_code == 200
+
+        assert client.get(f"/departments/{second_dept}/members", headers=auth(tokens)).json()["total"] == 0
+        assert client.delete(f"/departments/{second_dept}", headers=auth(tokens)).status_code == 204
+        landed = {m["user_id"]: m["role"] for m in client.get(f"/departments/{survivor}/members", headers=auth(tokens)).json()["items"]}
+        assert landed[admin_id] == "admin" and landed[mgr_id] == "manager" and landed[eng_id] == "engineer"
 
 class TestCrossDepartmentRoles:
     def test_admin_in_one_department_is_only_an_engineer_in_another(self, client, registered_user, second_dept, invite_user):

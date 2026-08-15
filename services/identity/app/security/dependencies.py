@@ -4,9 +4,16 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 from app.db import get_db
 from app.models import Membership, Team, User
-from app.security.jwt import decode_access_token, decode_service_token
+from app.security.jwt import TokenPayload, decode_access_token, decode_service_token
 
 _bearer = HTTPBearer(auto_error=False)
+
+def get_token_payload(creds: HTTPAuthorizationCredentials | None = Depends(_bearer)) -> TokenPayload:
+    """Claims only. Pair it with get_current_user, which is what actually checks the
+    account is live and the token version current."""
+    if not creds or not creds.credentials:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Not authenticated", headers={"WWW-Authenticate": "Bearer"})
+    return decode_access_token(creds.credentials)
 
 def get_current_user(creds: HTTPAuthorizationCredentials | None = Depends(_bearer), db: Session = Depends(get_db)) -> User:
     if not creds or not creds.credentials:

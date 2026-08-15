@@ -6,6 +6,7 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session, aliased
 from app.models import Department, Membership, Team, User
 from app.schemas.departments import MemberResponse, TeamCreate, TeamListItem, TeamResponse, TeamUpdate
+from app.services.auth import bump_token_version
 
 def _slugify(name: str) -> str:
     slug = re.sub(r"[^a-z0-9]+", "-", name.lower()).strip("-")
@@ -90,9 +91,12 @@ def set_manager(db: Session, dept_id: int, team_id: int, manager_user_id: int | 
         if membership.role not in ("manager", "admin"):
             raise HTTPException(status_code=400, detail="The team lead must have the manager or admin role")
 
+    previous_manager_id = team.manager_user_id
     team.manager_user_id = manager_user_id
     db.commit()
     db.refresh(team)
+    # Both ends move: the leads claim is what a product checks for team leadership.
+    bump_token_version(db, previous_manager_id, manager_user_id)
     return _to_team_response(db, team)
 
 def update_team(db: Session, dept_id: int, team_id: int, payload: TeamUpdate) -> TeamResponse:
@@ -105,8 +109,13 @@ def update_team(db: Session, dept_id: int, team_id: int, payload: TeamUpdate) ->
 
 def delete_team(db: Session, dept_id: int, team_id: int) -> None:
     team = get_team(db, dept_id, team_id)
+    # The FK is ON DELETE SET NULL, so everyone on it silently loses their team_id claim,
+    # and the lead loses the team from their leads claim.
+    affected = list(db.scalars(select(Membership.user_id).where(Membership.team_id == team_id)))
+    affected.append(team.manager_user_id)
     db.delete(team)
     db.commit()
+    bump_token_version(db, *affected)
 
 def list_team_members(db: Session, dept_id: int, team_id: int) -> list[MemberResponse]:
     get_team(db, dept_id, team_id)  # 404s if the team isn't in this department
@@ -135,6 +144,7 @@ def add_team_member(db: Session, dept_id: int, team_id: int, user_id: int) -> Me
     membership.team_id = team_id
     db.commit()
     db.refresh(membership)
+    bump_token_version(db, user_id)
     user = db.get(User, user_id)
     return MemberResponse(
         user_id=user.id, email=user.email, first_name=user.first_name, last_name=user.last_name,
@@ -148,6 +158,7 @@ def remove_team_member(db: Session, dept_id: int, team_id: int, user_id: int) ->
         raise HTTPException(status_code=404, detail="That person is not on this team")
     membership.team_id = None
     db.commit()
+    bump_token_version(db, user_id)
 
 def get_team_response(db: Session, dept_id: int, team_id: int) -> TeamResponse:
     return _to_team_response(db, get_team(db, dept_id, team_id))

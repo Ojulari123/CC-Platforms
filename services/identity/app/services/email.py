@@ -77,3 +77,32 @@ def send_password_reset(to: str, raw_token: str) -> None:
             "password stays the same.</p>"
         ),
     )
+
+def send_email_change_verification(to: str, raw_token: str) -> None:
+    link = f"{settings.FRONTEND_URL}/confirm-email-change?token={raw_token}"
+    send(
+        to=to,
+        subject="Confirm your new CypherCrescent Platforms email address",
+        html=(
+            "<p>Someone asked to use this address to sign in to CypherCrescent Platforms. "
+            f'<a href="{link}">Confirm this address</a> '
+            f"(link expires in {settings.EMAIL_CHANGE_EXPIRE_MINUTES} minutes).</p>"
+            "<p>Until you confirm, nothing changes. If this wasn't you, ignore this email.</p>"
+        ),
+    )
+
+def send_email_change_notice(to: str, new_email: str) -> None:
+    """Goes to the address currently on the account. This is the part that makes the
+    flow safe against a stolen session: the real owner hears about it either way."""
+    send(
+        to=to,
+        subject="A change to your CypherCrescent Platforms sign-in email was requested",
+        html=(
+            f"<p>We got a request to change the sign-in email on your account to "
+            f"<strong>{new_email}</strong>. It only takes effect once that address is "
+            "confirmed, and your current address keeps working until then.</p>"
+            "<p>If this wasn't you, change your password now and sign out of every "
+            f'session from <a href="{settings.FRONTEND_URL}/account">your account page</a>. '
+            "That cancels the request.</p>"
+        ),
+    )

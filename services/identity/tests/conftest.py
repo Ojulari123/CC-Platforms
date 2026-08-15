@@ -143,6 +143,15 @@ def auth(tokens: dict) -> dict:
     return {"Authorization": f"Bearer {tokens['access_token']}"}
 
 
+def refreshed(client: TestClient, tokens: dict) -> dict:
+    """What a client does for itself after a 401: swap the refresh token for a new pair.
+    A membership change bumps token_version and kills the access token, and this is the
+    step that picks the corrected claims up without anyone logging in again."""
+    r = client.post("/auth/refresh", json={"refresh_token": tokens["refresh_token"]})
+    assert r.status_code == 200, r.text
+    return r.json()
+
+
 @pytest.fixture
 def registered_user(client: TestClient) -> dict:
     password = "Test123!password"

@@ -1,5 +1,5 @@
 from app.config import settings
-from tests.conftest import auth
+from tests.conftest import auth, refreshed
 
 def _signup(client, email="newbie@example.com", password="Test123!password", first="New", last="Bie"):
     return client.post("/auth/signup", json={
@@ -121,9 +121,10 @@ class TestPlacement:
             json={"user_id": user_id, "role": "engineer"},
             headers=auth(registered_user["tokens"]),
         )
-        # The placed user re-reads /me. A stale token still has no membership
-        # claim, but /me reads live from the DB, so it shows up immediately.
-        me = client.get("/me", headers=auth(tokens)).json()
+        # Being placed bumps token_version, so the token they were holding is done and
+        # their client refreshes into one that knows about the department.
+        assert client.get("/me", headers=auth(tokens)).status_code == 401
+        me = client.get("/me", headers=auth(refreshed(client, tokens))).json()
         assert len(me["memberships"]) == 1
         assert me["memberships"][0]["dept_id"] == registered_user["dept_id"]
         assert me["memberships"][0]["role"] == "engineer"
@@ -199,5 +200,5 @@ class TestPlacement:
             headers=auth(registered_user["tokens"]),
         )
         assert r.status_code == 201, r.text
-        me = client.get("/me", headers=auth(eng)).json()
+        me = client.get("/me", headers=auth(refreshed(client, eng))).json()
         assert {m["dept_id"] for m in me["memberships"]} == {registered_user["dept_id"], second_dept}

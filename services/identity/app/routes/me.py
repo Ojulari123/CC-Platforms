@@ -1,10 +1,12 @@
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 from app.db import get_db
 from app.models import Department, Membership, Team, User
-from app.schemas.auth import MembershipResponse, ProfileUpdate, UserMeResponse
-from app.security import get_current_user
+from app.schemas.auth import MembershipResponse, ProfileUpdate, SessionResponse, UserMeResponse
+from app.security import get_current_user, get_token_payload
+from app.security.jwt import TokenPayload
+from app.services import auth as auth_service
 
 router = APIRouter(tags=["me"])
 
@@ -49,3 +51,23 @@ def update_me(payload: ProfileUpdate, user: User = Depends(get_current_user), db
     db.commit()
     db.refresh(user)
     return _me_response(db, user)
+
+@router.get("/me/sessions", response_model=list[SessionResponse])
+def my_sessions(token: TokenPayload = Depends(get_token_payload), user: User = Depends(get_current_user), db: Session = Depends(get_db)) -> list[SessionResponse]:
+    return auth_service.list_sessions(db, user.id, token.session_id)
+
+@router.delete("/me/sessions/current", status_code=status.HTTP_204_NO_CONTENT)
+def end_current_session(token: TokenPayload = Depends(get_token_payload), user: User = Depends(get_current_user), db: Session = Depends(get_db)) -> None:
+    """Sign out this device. A product only ever holds an access token, so it names its
+    own session through the sid claim rather than by sending a refresh token it has
+    never seen."""
+    if not token.session_id:
+        raise HTTPException(status_code=400, detail="This access token doesn't name a session; use /auth/logout-all")
+    auth_service.revoke_session(db, user.id, token.session_id)
+
+@router.delete("/me/sessions/{session_id}", status_code=status.HTTP_204_NO_CONTENT)
+def end_session(session_id: str, user: User = Depends(get_current_user), db: Session = Depends(get_db)) -> None:
+    """Sign out one of the caller's other devices, listed by GET /me/sessions. Anything
+    that isn't one of theirs is a 404, including a session that exists but belongs to
+    someone else: a 403 there would confirm whose it is."""
+    auth_service.revoke_session(db, user.id, session_id)

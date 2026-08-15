@@ -1,12 +1,15 @@
 from datetime import datetime
-from pydantic import BaseModel, ConfigDict, EmailStr, Field
+from typing import Annotated
+from pydantic import BaseModel, ConfigDict, EmailStr, Field, StringConstraints
 
 class RegisterRequest(BaseModel):
     email: EmailStr
     password: str = Field(min_length=8, max_length=72)
     first_name: str = Field(min_length=1, max_length=100)
     last_name: str = Field(min_length=1, max_length=100)
-    dept_name: str = Field(min_length=1, max_length=200)
+    # Stripped before the length check, to match the unique department name index,
+    # which only folds case.
+    dept_name: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=200)]
 
 class SignupRequest(BaseModel):
     email: EmailStr
@@ -34,6 +37,13 @@ class ForgotPasswordRequest(BaseModel):
 class ResetPasswordRequest(BaseModel):
     token: str
     new_password: str = Field(min_length=8, max_length=72)
+
+class ChangeEmailRequest(BaseModel):
+    new_email: EmailStr
+    current_password: str
+
+class ConfirmEmailChangeRequest(BaseModel):
+    token: str
 
 class UserResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
@@ -63,6 +73,18 @@ class UserMeResponse(BaseModel):
     is_platform_admin: bool = False
     created_at: datetime
     memberships: list[MembershipResponse] = []
+
+class SessionResponse(BaseModel):
+    # One login/device, not one token: a refresh-token family covers every rotation
+    # of the same session. session_id is a digest of the family id, so it names the
+    # row without handing back a value the database stores.
+    session_id: str
+    started_at: datetime
+    last_used_at: datetime
+    rotations: int
+    expires_at: datetime
+    is_revoked: bool
+    is_current: bool
 
 class ProfileUpdate(BaseModel):
     first_name: str | None = Field(default=None, min_length=1, max_length=100)

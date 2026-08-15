@@ -18,7 +18,7 @@ class Settings(BaseSettings):
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 15
     SERVICE_TOKEN_EXPIRE_MINUTES: int = 10
     REFRESH_TOKEN_EXPIRE_DAYS: int = 7
-    CORS_ORIGINS: str = "http://localhost:3000,http://localhost:3001"
+    CORS_ORIGINS: str = "http://localhost:3000,http://localhost:3001,http://localhost:3002"
     RATE_LIMIT_ENABLED: bool = True
     REDIS_URL: str = "redis://redis:6379/0"
     # Only turn on when identity really is behind proxies we control. See .env.example.
@@ -26,9 +26,14 @@ class Settings(BaseSettings):
     TRUSTED_PROXY_COUNT: int = 1
     BREVO_API_KEY: str = ""
     EMAIL_FROM: str = ""
-    FRONTEND_URL: str = "http://localhost:3000"
+    # Identity's own frontend, not a product's: /confirm-email-change and /account only
+    # exist there. /invites/accept and /reset-password come from the shared packages/ui
+    # layer, so they resolve in any app and pointing them at Forge (3000) worked by
+    # accident. Dev ports: Forge 3000, Pulse 3001, identity 3002.
+    FRONTEND_URL: str = "http://localhost:3002"
     INVITE_EXPIRE_DAYS: int = 7
     PASSWORD_RESET_EXPIRE_MINUTES: int = 30
+    EMAIL_CHANGE_EXPIRE_MINUTES: int = 30
     SIGNUP_ALLOWED_DOMAINS: str = ""
     PULSE_CLIENT_ID: str = "pulse"
     PULSE_CLIENT_SECRET: str = ""

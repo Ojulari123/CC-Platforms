@@ -1,3 +1,6 @@
+from datetime import datetime, timezone
+from sqlalchemy import select
+from app.models import Invite, User
 from tests.conftest import auth
 
 def _invite(client, tokens, dept_id, email="dami@example.com", role="engineer", team_id=None):
@@ -181,6 +184,36 @@ class TestInvitePreview:
 
     def test_preview_rejects_bogus_token(self, client):
         assert client.get("/invites/preview?token=nonsense").status_code == 400
+
+    def test_preview_names_the_inviter_and_the_deadline(self, client, registered_user, sent_emails):
+        _invite(client, registered_user["tokens"], registered_user["dept_id"])
+        body = client.get(f"/invites/preview?token={sent_emails[0]['raw_token']}").json()
+        assert body["invited_by_name"] == "Alice Anderson"
+        # INVITE_EXPIRE_DAYS is 7 in the test env
+        expires = datetime.fromisoformat(body["expires_at"]).replace(tzinfo=None)
+        assert 6 <= (expires - datetime.now(timezone.utc).replace(tzinfo=None)).days <= 7
+
+    def test_preview_survives_a_deleted_inviter(self, client, registered_user, sent_emails, db_session):
+        _invite(client, registered_user["tokens"], registered_user["dept_id"])
+        invite = db_session.scalar(select(Invite).where(Invite.email == "dami@example.com"))
+        invite.invited_by = None  # what the FK's ON DELETE SET NULL leaves behind
+        db_session.commit()
+        body = client.get(f"/invites/preview?token={sent_emails[0]['raw_token']}").json()
+        assert body["invited_by_name"] is None
+        assert body["dept_name"] == "Engineering"
+
+    def test_preview_hides_a_deactivated_inviter(self, client, registered_user, sent_emails, db_session):
+        _invite(client, registered_user["tokens"], registered_user["dept_id"])
+        inviter = db_session.scalar(select(User).where(User.email == registered_user["email"]))
+        inviter.is_active = False
+        db_session.commit()
+        assert client.get(f"/invites/preview?token={sent_emails[0]['raw_token']}").json()["invited_by_name"] is None
+
+    def test_preview_leaks_nothing_else_about_the_inviter(self, client, registered_user, sent_emails):
+        _invite(client, registered_user["tokens"], registered_user["dept_id"])
+        r = client.get(f"/invites/preview?token={sent_emails[0]['raw_token']}")
+        assert registered_user["email"] not in r.text  # the inviter's address, not the invitee's
+        assert set(r.json()) == {"email", "dept_name", "team_name", "role", "needs_account", "invited_by_name", "expires_at"}
 
 class TestInviteStraightOntoATeam:
     def test_email_and_preview_name_the_team(self, client, registered_user, sent_emails):

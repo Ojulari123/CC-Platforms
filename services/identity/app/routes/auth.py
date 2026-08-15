@@ -3,7 +3,7 @@ from sqlalchemy.orm import Session
 from app.db import get_db
 from app.models import User
 from app.rate_limit import limiter, user_or_address_key
-from app.schemas.auth import ChangePasswordRequest, ForgotPasswordRequest, LoginRequest, LogoutRequest, RefreshRequest, RegisterRequest, ResetPasswordRequest, SignupRequest, TokenPair
+from app.schemas.auth import ChangeEmailRequest, ChangePasswordRequest, ConfirmEmailChangeRequest, ForgotPasswordRequest, LoginRequest, LogoutRequest, RefreshRequest, RegisterRequest, ResetPasswordRequest, SignupRequest, TokenPair
 from app.security import get_current_user
 from app.services import auth as auth_service
 
@@ -51,3 +51,13 @@ def forgot_password(request: Request, payload: ForgotPasswordRequest, db: Sessio
 @limiter.limit("5/minute")
 def reset_password(request: Request, payload: ResetPasswordRequest, db: Session = Depends(get_db)) -> None:
     auth_service.reset_password(db, payload.token, payload.new_password)
+
+@router.post("/change-email", status_code=status.HTTP_204_NO_CONTENT)
+@limiter.limit("5/minute", key_func=user_or_address_key)
+def change_email(request: Request, payload: ChangeEmailRequest, user: User = Depends(get_current_user), db: Session = Depends(get_db)) -> None:
+    auth_service.request_email_change(db, user, payload.new_email, payload.current_password)
+
+@router.post("/confirm-email-change", status_code=status.HTTP_204_NO_CONTENT)
+@limiter.limit("5/minute")
+def confirm_email_change(request: Request, payload: ConfirmEmailChangeRequest, db: Session = Depends(get_db)) -> None:
+    auth_service.confirm_email_change(db, payload.token)

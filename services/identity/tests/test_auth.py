@@ -157,6 +157,19 @@ class TestRefresh:
             assert r.status_code == 401
             assert "revoked" in r.json()["detail"].lower()
 
+    def test_a_signed_out_token_replayed_is_not_treated_as_theft(self, client, registered_user):
+        # It was revoked without ever being rotated away, so nobody else can be holding
+        # it. Reading that as reuse would bump token_version and sign the person out of
+        # every other device, which is what per-device sign-out exists to avoid.
+        first = client.post("/auth/login", json={"email": registered_user["email"], "password": registered_user["password"]}).json()
+        assert client.post("/auth/logout", json={"refresh_token": first["refresh_token"]}).status_code == 204
+
+        again = client.post("/auth/refresh", json={"refresh_token": first["refresh_token"]})
+        assert again.status_code == 401
+        assert again.json()["detail"] == "Session ended. Please log in again."
+        assert client.get("/me", headers={"Authorization": f"Bearer {registered_user['tokens']['access_token']}"}).status_code == 200
+        assert client.post("/auth/refresh", json={"refresh_token": registered_user["tokens"]["refresh_token"]}).status_code == 200
+
     def test_unknown_refresh_token_401(self, client):
         r = client.post("/auth/refresh", json={"refresh_token": "totally-bogus"})
         assert r.status_code == 401

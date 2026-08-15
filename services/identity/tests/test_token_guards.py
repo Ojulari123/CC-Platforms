@@ -92,11 +92,14 @@ class TestRefreshTokenGuards:
         assert r.status_code == 401
         assert "expired" in r.json()["detail"].lower()
 
-        # It was revoked on the way out, so a second attempt lands in the
-        # reuse-detection branch rather than the expiry one.
+        # It was revoked on the way out, so a second attempt lands in the dead-family
+        # branch rather than the expiry one. It was burned, never rotated away, so this
+        # is not a theft signal and the account is left alone — it used to read as
+        # reuse and sign the person out of every other device.
         again = client.post("/auth/refresh", json={"refresh_token": refresh})
         assert again.status_code == 401
-        assert "reuse" in again.json()["detail"].lower()
+        assert again.json()["detail"] == "Session ended. Please log in again."
+        assert client.get("/me", headers=auth(registered_user["tokens"])).status_code == 200
 
     def test_deactivated_user_cannot_refresh(self, client, registered_user, engineer_user, db_session):
         user = db_session.scalar(select(User).where(User.email == "eng@example.com"))
