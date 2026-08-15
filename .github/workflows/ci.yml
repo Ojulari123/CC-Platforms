@@ -223,8 +223,30 @@ jobs:
           alembic downgrade base
           alembic upgrade head
 
+  packages-ui:
+    name: packages/ui — install, typecheck, tests
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: packages/ui
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Typecheck (vue-tsc, strict mode)
+        run: npm run typecheck
+
+      - name: Run tests
+        run: npm test
+
   pulse-frontend:
-    name: pulse-frontend — install, typecheck, build
+    name: pulse-frontend — install, typecheck, tests, build
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -236,6 +258,15 @@ jobs:
         with:
           node-version: "22"
 
+      # The app extends packages/ui as a Nuxt layer, so typecheck follows into
+      # the layer's own sources. vue-router, vitest and @vue/test-utils are
+      # declared there, not here, and TypeScript resolves them from the layer's
+      # directory upward. Without this the layer's files fail to resolve and the
+      # job dies on TS2307 before it looks at any app code.
+      - name: Install shared UI layer dependencies
+        working-directory: packages/ui
+        run: npm ci
+
       - name: Install dependencies
         run: npm ci
 
@@ -245,11 +276,14 @@ jobs:
         # package.json: vue-tsc 2.x cannot load TypeScript 7's ./lib/tsc.
         run: npm run typecheck
 
+      - name: Run tests
+        run: npm test
+
       - name: Build (Nuxt)
         run: npm run build
 
   identity-frontend:
-    name: identity-frontend — install, typecheck, build
+    name: identity-frontend — install, typecheck, tests, build
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -261,6 +295,10 @@ jobs:
         with:
           node-version: "22"
 
+      - name: Install shared UI layer dependencies
+        working-directory: packages/ui
+        run: npm ci
+
       - name: Install dependencies
         run: npm ci
 
@@ -269,11 +307,14 @@ jobs:
         # without checking types, so this is the only thing that catches one.
         run: npm run typecheck
 
+      - name: Run tests
+        run: npm test
+
       - name: Build (Nuxt)
         run: npm run build
 
   forge-frontend:
-    name: forge-frontend — install, typecheck, build
+    name: forge-frontend — install, typecheck, tests, build
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -285,6 +326,10 @@ jobs:
         with:
           node-version: "22"
 
+      - name: Install shared UI layer dependencies
+        working-directory: packages/ui
+        run: npm ci
+
       - name: Install dependencies
         run: npm ci
 
@@ -293,6 +338,9 @@ jobs:
         # catches a type error. typescript and vue-tsc are pinned exactly in
         # package.json: vue-tsc 2.x cannot load TypeScript 7's ./lib/tsc.
         run: npm run typecheck
+
+      - name: Run tests
+        run: npm test
 
       - name: Build (Nuxt)
         run: npm run build
