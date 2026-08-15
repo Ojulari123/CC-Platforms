@@ -1,4 +1,5 @@
 import json
+import logging
 import pytest
 from app.services import llm
 from app.services.llm import LLMError, LLMResult
@@ -76,3 +77,24 @@ class TestRetry:
             llm.generate_summaries(PAYLOAD)
         assert fake.chat.completions.calls == 2
         assert no_sleep == [llm._RETRY_BACKOFF_SECONDS]
+
+class TestMissingKeyIsNotDescribedToTheCaller:
+    def test_the_error_does_not_name_the_variable_but_the_log_does(self, monkeypatch, caplog):
+        monkeypatch.setattr(llm.settings, "LLM_API_KEY", "")
+        with caplog.at_level(logging.ERROR, logger="app.services.llm"):
+            with pytest.raises(LLMError) as excinfo:
+                llm._build_client()
+        assert "LLM_API_KEY" not in str(excinfo.value)
+        assert "LLM_API_KEY" in caplog.text
+
+    def test_the_provider_error_stays_out_of_the_llmerror_the_route_sees(self, monkeypatch, no_sleep, caplog):
+        """The raw provider exception can carry request URLs and org ids. It belongs in
+        the log; routes/reports.py no longer puts LLMError text in a response at all."""
+        def _leaky():
+            raise RuntimeError("401 from https://api.openai.com/v1/chat/completions org-abc123")
+
+        _install_client(monkeypatch, [_leaky, _leaky])
+        with caplog.at_level(logging.WARNING, logger="app.services.llm"):
+            with pytest.raises(LLMError):
+                llm.generate_summaries(PAYLOAD)
+        assert "org-abc123" in caplog.text

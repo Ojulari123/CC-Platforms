@@ -27,10 +27,9 @@ class LLMResult:
 
 def _build_client():
     if not settings.LLM_API_KEY:
-        raise LLMError(
-            "LLM is not configured: LLM_API_KEY is empty. Set it in the environment to "
-            "enable report generation."
-        )
+        # The variable name is for whoever runs the service, not whoever called it.
+        logger.error("LLM is not configured: LLM_API_KEY is empty; report generation is disabled")
+        raise LLMError("The report generator is not set up on this server. Contact an admin.")
     from openai import OpenAI
 
     return OpenAI(api_key=settings.LLM_API_KEY, timeout=settings.LLM_TIMEOUT_SECONDS)

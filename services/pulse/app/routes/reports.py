@@ -37,8 +37,10 @@ def generate_report(request: Request, payload: GenerateRequest, user: TokenClaim
         raise HTTPException(status_code=422, detail=str(exc))
     except ReportConflictError as exc:
         raise HTTPException(status_code=409, detail=str(exc))
-    except LLMError as exc:
-        raise HTTPException(status_code=502, detail=f"Report generation is unavailable right now: {exc}")
+    except LLMError:
+        # Not interpolated: an LLMError carries the provider's own exception, which can
+        # name request URLs, models and org ids. llm.py already logs it.
+        raise HTTPException(status_code=502, detail="Report generation is unavailable right now. Please try again shortly.")
 
 @router.get("", response_model=Page[ReportResponse])
 def list_reports(repo_id: int | None = Query(default=None), dept_id: int | None = Query(default=None), author_user_id: int | None = Query(default=None), status: ReportStatus | None = Query(default=None, description="Filter by state; an unknown value is rejected with a 422"),

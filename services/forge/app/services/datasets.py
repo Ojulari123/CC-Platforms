@@ -1,6 +1,7 @@
 import csv
 import io
 import json
+import logging
 from fastapi import HTTPException
 from sqlalchemy import func, or_, select
 from sqlalchemy.exc import IntegrityError
@@ -9,6 +10,8 @@ from app.config import settings
 from app.models import Dataset
 from app.samples import SAMPLE_DATASETS
 from app.schemas.datasets import DatasetPreview
+
+logger = logging.getLogger(__name__)
 
 def _parse_csv(raw_bytes: bytes) -> tuple[str, list[str], int]:
     if len(raw_bytes) > settings.MAX_UPLOAD_MB * 1024 * 1024:
@@ -22,7 +25,11 @@ def _parse_csv(raw_bytes: bytes) -> tuple[str, list[str], int]:
     try:
         rows = list(csv.reader(io.StringIO(text)))
     except csv.Error as exc:
-        raise HTTPException(status_code=400, detail=f"Malformed CSV: {exc}")
+        # csv.Error text is written for whoever wrote the parser, not whoever uploaded
+        # the file: it names Python's field-size limit and file-mode flags. Keep it in
+        # the log where it helps, and tell the uploader something they can act on.
+        logger.warning("CSV parse failed (%s bytes): %s", len(raw_bytes), exc)
+        raise HTTPException(status_code=400, detail="File could not be read as CSV. Check it is a valid comma-separated file.")
     if not rows:
         raise HTTPException(status_code=400, detail="CSV has no header row")
     header = rows[0]

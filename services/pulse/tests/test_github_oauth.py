@@ -1,4 +1,5 @@
 import json
+import logging
 import time
 from urllib.parse import parse_qs, urlparse
 import httpx
@@ -52,6 +53,17 @@ class TestConnect:
 
     def test_connect_requires_a_login(self, client):
         assert client.get("/github/connect").status_code == 401
+
+    def test_connect_when_unconfigured_does_not_name_the_variables(self, client, act_as, monkeypatch, caplog):
+        """Which settings are missing is the operator's business, not the caller's."""
+        monkeypatch.setattr(settings, "GITHUB_CLIENT_SECRET", "")
+        act_as(**ADA)
+        with caplog.at_level(logging.ERROR, logger="app.services.github_oauth"):
+            r = client.get("/github/connect")
+        assert r.status_code == 503, r.text
+        assert "GITHUB_CLIENT_ID" not in r.text and "GITHUB_CLIENT_SECRET" not in r.text
+        assert r.json()["detail"] == "GitHub is not set up on this server. Contact an admin."
+        assert "GITHUB_CLIENT_ID" in caplog.text and "GITHUB_CLIENT_SECRET" in caplog.text
 
 class TestCallback:
     def test_callback_links_the_account_and_encrypts_the_token(self, client, act_as, db, fake_github):

@@ -70,7 +70,10 @@ def test_upload_malformed_csv_is_400(client, act_as):
     content = b'a\n"' + b"x" * 200000
     r = _upload(client, content=content)
     assert r.status_code == 400
-    assert "malformed csv" in r.json()["detail"].lower()
+    detail = r.json()["detail"]
+    assert "could not be read as csv" in detail.lower()
+    # csv.Error names Python's internal field-size limit; that belongs in the log only.
+    assert "field larger than field limit" not in detail.lower()
 
 def test_list_returns_own_datasets_plus_samples(client, act_as, db):
     seed_sample_datasets(db)

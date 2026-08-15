@@ -1,3 +1,4 @@
+import logging
 import secrets
 from urllib.parse import urlencode
 import httpx
@@ -9,13 +10,18 @@ from app import crypto
 from app.config import settings
 from app.models import GitHubAccount
 
+logger = logging.getLogger(__name__)
+
 STATE_MAX_AGE_SECONDS = 600
 
 def _require_oauth_configured() -> None:
     if not (settings.GITHUB_CLIENT_ID and settings.GITHUB_CLIENT_SECRET):
+        # Which variable is missing is an operator's problem, so it goes in the log. The
+        # caller gets something they can act on without learning how we're configured.
+        logger.error("GitHub OAuth is not configured: GITHUB_CLIENT_ID and GITHUB_CLIENT_SECRET must both be set")
         raise HTTPException(
             status_code=503,
-            detail="GitHub OAuth is not configured on the server (GITHUB_CLIENT_ID / GITHUB_CLIENT_SECRET)",
+            detail="GitHub is not set up on this server. Contact an admin.",
         )
 
 def build_authorize_url(user_id: int) -> str:

@@ -191,6 +191,24 @@ class TestGenerateGuards:
         assert "unavailable" in r.json()["detail"].lower()
         assert db.query(Report).count() == 0
 
+    def test_the_502_does_not_repeat_what_the_provider_said(self, client, act_as, db, monkeypatch):
+        """An LLMError carries the provider's own exception — request URLs, models, org
+        ids, and the LLM_API_KEY message when the key is unset. None of it is a caller's
+        business, so the route must not interpolate it."""
+        repo = _seed_repo(db)
+        _seed_week_activity(db, repo.id)
+
+        def _boom(activity_payload):
+            raise LLMError("LLM_API_KEY is empty; 401 from https://api.openai.com/v1 org-abc123 model=gpt-4o-mini")
+
+        monkeypatch.setattr(llm, "generate_summaries", _boom)
+        act_as(**ENGINEER)
+        r = client.post("/reports/generate", json={"repo_id": repo.id, "week_start": WEEK})
+        assert r.status_code == 502, r.text
+        body = r.text
+        for secret in ("LLM_API_KEY", "api.openai.com", "org-abc123", "gpt-4o-mini"):
+            assert secret not in body, body
+
     def test_ineligible_user_is_403(self, client, act_as, db, mock_llm):
         repo = _seed_repo(db)
         _seed_week_activity(db, repo.id)
