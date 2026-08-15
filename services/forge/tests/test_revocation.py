@@ -1,5 +1,6 @@
 import httpx
 from fastapi.routing import APIRoute
+from crescent_core import PublishedRevocations, published_revocations_from_url
 from crescent_core.revocation import Verdict
 from app import auth
 from app.config import settings
@@ -43,6 +44,19 @@ def test_checker_calls_identity_at_the_configured_url_with_forges_client_id(monk
     assert sent[0][1]["client_id"] == settings.FORGE_SERVICE_CLIENT_ID
     assert sent[1][0] == f"{settings.IDENTITY_API_URL}/internal/users/token-versions"
     assert sent[1][1] == {"user_ids": [5]}
+
+def test_current_user_closes_over_the_published_revocation_consumer():
+    assert "published_revocations" in auth.current_user.__code__.co_freevars
+
+def test_published_consumer_is_off_when_no_redis_is_configured():
+    # The test env blanks REDIS_URL, so Forge must fall back to the HTTP checker alone
+    # rather than build a client that would try to connect on every request.
+    assert not settings.REDIS_URL
+    assert auth.published_revocations is None
+
+def test_forge_builds_a_consumer_from_a_real_redis_url():
+    # from_url does not connect, so this stays offline.
+    assert isinstance(published_revocations_from_url("redis://redis:6379/0"), PublishedRevocations)
 
 def test_unconfigured_secret_does_not_reject_callers():
     auth.revocation_checker.clear()

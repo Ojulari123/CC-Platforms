@@ -62,7 +62,9 @@ manager rights in Data. Pass no roles to require membership only.
 - `token_type == "access"` (refresh tokens can't sneak through).
 
 Returns a `TokenClaims` object with `user_id`, `email`, `memberships`,
-`is_platform_admin`, `token_version`, `leads`, and the raw payload as `.raw`.
+`is_platform_admin`, `token_version`, `leads`, `session_id` (the `sid` claim, which
+names the session identity can revoke on its own — see below), and the raw payload
+as `.raw`.
 
 There is **no single `dept_id`/`role`**, because a person can be an admin in one
 department and an engineer in another, so `memberships` is a tuple of
@@ -92,6 +94,33 @@ answer, and reading it as one would log the whole platform out the moment identi
 blinked. So `UNAVAILABLE` is accepted, logged (throttled to one line per 30s) and
 backed off for 10s before the next attempt.
 
+### The Redis fast path
+Identity also publishes every revocation to Redis the moment it happens.
+`PublishedRevocations` reads those keys, which turns "dies within the TTL above" into
+"dies on the next request" — and for a *single-session* sign-out it is the only path
+that works at all, because that flow deliberately does not bump `token_version`, so
+the lookup above would keep answering `CURRENT`.
+
+```python
+from crescent_core import current_user_dep, published_revocations_from_url
+
+current_user = current_user_dep(jwks, issuer="cyphercrescent-identity",
+                                revocation_checker=RevocationChecker(identity),
+                                published_revocations=published_revocations_from_url(REDIS_URL))
+```
+
+Two keys, read-only, one `MGET` per request: `revoked:sid:{sid}` and
+`revoked:user:{uid}`. Never write or delete them — identity owns them, and they expire
+on their own once the access tokens they cover would have expired anyway.
+
+It is a fast path, **not** the authority, so it can only ever reject. Identity publishes
+best-effort, so a missing key proves nothing and `NOT_REVOKED` still falls through to the
+token-version lookup. A `tv` at or above the published value is current, not stale.
+`published_revocations_from_url` returns `None` without a URL or without `redis`
+installed (`pip install crescent-core[redis]`), and any Redis failure is `UNAVAILABLE`:
+logged at WARNING, throttled to one line per 30s, and decided by the HTTP path instead.
+Losing Redis costs speed, not correctness.
+
 `ServiceTokenClient` is how a product authenticates as *itself*: OAuth2
 client-credentials against identity's `/oauth/token`, the token cached in-process
 until just before it expires and re-minted once on a 401. `lookup(path, user_ids)`
@@ -106,5 +135,13 @@ never mistake a broken call for an answer.
   but at most once every 30s (`min_refresh_interval_seconds`). Otherwise anyone
   waving a token with a made-up `kid` could make us fetch once per request, and
   auth runs before the rate limiter. Worst case a rotated key takes that interval
-  to become usable.
+  to become usable. Callers who arrive while a fetch is already in flight wait for
+  it rather than returning early — returning early on a cold process meant reading
+  an empty cache and 401ing a perfectly good token. That 30s only applies once keys
+  are cached; while none are, a failed fetch is retried after
+  `cold_retry_interval_seconds` (1s), because there is no forged-`kid` amplification
+  to prevent when every request is failing anyway — only a recovering identity to
+  avoid stampeding. With nothing cached and identity unreachable, `get_key` raises
+  `JWKSUnavailable` and `current_user_dep` answers **503** (never 401: an identity
+  blip must not log anyone out, and the token was never judged).
 - Doesn't know or care what roles exist. That's the product's job.

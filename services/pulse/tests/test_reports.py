@@ -14,6 +14,7 @@ MANAGER_NOLEAD = dict(user_id=21, memberships=[{"dept_id": DEPT, "team_id": None
 DEPT_ADMIN = dict(user_id=30, memberships=[{"dept_id": DEPT, "team_id": None, "role": "admin"}])
 OUTSIDER = dict(user_id=40, memberships=[{"dept_id": 2, "team_id": None, "role": "engineer"}])
 PLATFORM = dict(user_id=99, memberships=[], is_platform_admin=True)
+UNPLACED = dict(user_id=42, memberships=[])
 MEMBER_NO_ACTIVITY = dict(user_id=12, memberships=[{"dept_id": DEPT, "team_id": None, "role": "engineer"}])
 
 def _this_monday() -> date:
@@ -555,6 +556,16 @@ class TestReviewQueue:
         act_as(**LEAD)
         client.post(f"/reports/{rid}/approve")
         assert client.get("/reports/review-queue").json()["total"] == 0
+
+    def test_a_user_with_no_memberships_gets_an_empty_queue(self, client, act_as, repo):
+        # Nothing to review is not a broken session: a 401 here would send shared API
+        # clients off to refresh a token that was fine.
+        _open_submitted(client, act_as, repo)
+        act_as(**UNPLACED)
+        response = client.get("/reports/review-queue")
+        assert response.status_code == 200
+        assert response.json()["items"] == []
+        assert response.json()["total"] == 0
 
     def test_requires_a_token(self, client, repo):
         assert client.get("/reports/review-queue").status_code == 401

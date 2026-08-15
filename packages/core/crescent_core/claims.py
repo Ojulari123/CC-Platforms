@@ -16,6 +16,10 @@ class TokenClaims:
     token_version: int
     raw: dict[str, Any]
     leads: tuple[int, ...] = ()
+    # Names the refresh-token family this token was minted with. Identity publishes the
+    # same value when a single session is revoked; absent on tokens minted before it
+    # existed, which just means the per-session check has nothing to match on.
+    session_id: str | None = None
 
     def role_in(self, dept_id: int) -> str | None:
         for m in self.memberships:
@@ -57,5 +61,6 @@ class TokenClaims:
             is_platform_admin=bool(payload.get("is_platform_admin", False)),
             token_version=int(payload.get("tv", 0)),
             leads=tuple(int(t) for t in (payload.get("leads") or [])),
+            session_id=payload.get("sid"),
             raw=payload,
         )

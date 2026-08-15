@@ -25,6 +25,9 @@ def test_a_real_identity_token_verifies_in_a_product(mint, jwks_client, issuer):
 
 def test_every_claim_survives_the_round_trip(mint, jwks_client, issuer):
     """Field-by-field, so a rename or type change fails loudly and specifically."""
+    from app.services.auth import session_id_for_family
+
+    session_id = session_id_for_family("fam")
     token = mint(
         user_id=42,
         email="lead@cyphercrescent.com",
@@ -35,9 +38,13 @@ def test_every_claim_survives_the_round_trip(mint, jwks_client, issuer):
         is_platform_admin=True,
         token_version=5,
         leads=[3, 8],
+        session_id=session_id,
     )
     claims = verify_access_token(token, jwks_client, issuer)
 
+    # Revocation reads this and nothing else: if identity renames `sid`, or stops
+    # putting it on the token, per-device sign-out goes silently dead in every product.
+    assert claims.session_id == session_id
     assert claims.user_id == 42
     assert claims.email == "lead@cyphercrescent.com"
     assert claims.token_version == 5

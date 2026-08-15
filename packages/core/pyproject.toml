@@ -15,7 +15,10 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-dev = ["pytest>=8.3,<9.0"]
+# Not a hard dependency: published_revocations imports redis lazily and returns None
+# without it, which leaves a product on the identity HTTP lookup alone.
+redis = ["redis>=5.0,<7.0"]
+dev = ["pytest>=8.3,<9.0", "redis>=5.0,<7.0"]
 
 [tool.setuptools.packages.find]
 where = ["."]
