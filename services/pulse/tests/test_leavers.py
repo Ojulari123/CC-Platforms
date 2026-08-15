@@ -286,7 +286,7 @@ class TestTheSyncPassIsWhereItHappens:
 
         runs = sync_service.run_full_sync(db)
 
-        assert [r.detail for r in runs] == ["no repos configured (set GITHUB_REPOS)"]
+        assert [r.detail for r in runs] == ["no repositories are configured to sync"]
         assert db.scalar(select(SyncRun).where(SyncRun.detail.like("%departed%"))) is None
 
     def test_a_later_sync_does_not_erase_the_leavers_attribution(self, db, monkeypatch):

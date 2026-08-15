@@ -15,10 +15,23 @@ logger = logging.getLogger(__name__)
 STATE_MAX_AGE_SECONDS = 600
 
 def _require_oauth_configured() -> None:
-    if not (settings.GITHUB_CLIENT_ID and settings.GITHUB_CLIENT_SECRET):
+    # GITHUB_TOKEN_ENC_KEY is checked here too: both entry points sign or read a `state`
+    # with it, and without this the missing key surfaced as an unhandled 500 from crypto
+    # instead of a handled "this server isn't set up".
+    missing = [
+        name for name, value in (
+            ("GITHUB_CLIENT_ID", settings.GITHUB_CLIENT_ID),
+            ("GITHUB_CLIENT_SECRET", settings.GITHUB_CLIENT_SECRET),
+            ("GITHUB_TOKEN_ENC_KEY", settings.GITHUB_TOKEN_ENC_KEY),
+        ) if not value
+    ]
+    if missing:
         # Which variable is missing is an operator's problem, so it goes in the log. The
         # caller gets something they can act on without learning how we're configured.
-        logger.error("GitHub OAuth is not configured: GITHUB_CLIENT_ID and GITHUB_CLIENT_SECRET must both be set")
+        logger.error(
+            "GitHub is not configured: GITHUB_CLIENT_ID, GITHUB_CLIENT_SECRET and GITHUB_TOKEN_ENC_KEY must all be set (missing: %s)",
+            ", ".join(missing),
+        )
         raise HTTPException(
             status_code=503,
             detail="GitHub is not set up on this server. Contact an admin.",

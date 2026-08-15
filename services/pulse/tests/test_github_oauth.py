@@ -65,6 +65,18 @@ class TestConnect:
         assert r.json()["detail"] == "GitHub is not set up on this server. Contact an admin."
         assert "GITHUB_CLIENT_ID" in caplog.text and "GITHUB_CLIENT_SECRET" in caplog.text
 
+    def test_connect_without_an_encryption_key_is_a_handled_503(self, client, act_as, monkeypatch, caplog):
+        """A missing key used to escape crypto as an unhandled 500. It is a server
+        configuration problem, so it answers like one and names the variable only in the log."""
+        monkeypatch.setattr(settings, "GITHUB_TOKEN_ENC_KEY", "")
+        act_as(**ADA)
+        with caplog.at_level(logging.ERROR):
+            r = client.get("/github/connect")
+        assert r.status_code == 503, r.text
+        assert "GITHUB_TOKEN_ENC_KEY" not in r.text and "Fernet" not in r.text
+        assert r.json()["detail"] == "GitHub is not set up on this server. Contact an admin."
+        assert "GITHUB_TOKEN_ENC_KEY" in caplog.text
+
 class TestCallback:
     def test_callback_links_the_account_and_encrypts_the_token(self, client, act_as, db, fake_github):
         assert _outcome(_callback(client, uid=42)) == "connected"
@@ -135,6 +147,18 @@ class TestCallback:
     def test_oauth_not_configured_lands_back_in_pulse(self, client, monkeypatch, fake_github):
         monkeypatch.setattr(settings, "GITHUB_CLIENT_SECRET", "")
         assert _outcome(_callback(client, uid=42)) == "not_configured"
+
+    def test_a_missing_encryption_key_lands_back_in_pulse(self, client, db, monkeypatch, fake_github, caplog):
+        """Signed while the key was there, read back after it went missing: the callback
+        redirects like every other outcome instead of raising a 500 out of crypto."""
+        state = crypto.sign_state({"uid": 42, "nonce": "n"})
+        monkeypatch.setattr(settings, "GITHUB_TOKEN_ENC_KEY", "")
+        with caplog.at_level(logging.ERROR):
+            r = _raw_callback(client, code="abc", state=state)
+        assert _outcome(r) == "not_configured"
+        assert "GITHUB_TOKEN_ENC_KEY" not in r.headers["location"]
+        assert "GITHUB_TOKEN_ENC_KEY" in caplog.text
+        assert db.query(GitHubAccount).count() == 0
 
     def test_one_github_account_cannot_link_to_two_users(self, client, db, fake_github):
         fake_github("shared-gh", 555)

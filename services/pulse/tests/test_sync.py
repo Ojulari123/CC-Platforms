@@ -1,3 +1,4 @@
+import logging
 import time
 import httpx
 from sqlalchemy import func, select
@@ -160,11 +161,93 @@ def test_a_repo_never_synced_before_is_not_treated_as_untracked(db, monkeypatch)
     runs = sync_service.run_full_sync(db, make_client=lambda t: _rich_fake())
     assert runs[0].status == "success", runs[0].detail
 
-def test_no_repos_configured_records_a_no_op(db, monkeypatch):
+def test_no_repos_configured_records_a_no_op(db, monkeypatch, caplog):
     monkeypatch.setattr(settings, "GITHUB_REPOS", "")
-    runs = sync_service.run_full_sync(db)
+    with caplog.at_level(logging.WARNING, logger="app.services.sync"):
+        runs = sync_service.run_full_sync(db)
     assert len(runs) == 1 and runs[0].status == "success"
-    assert "no repos" in runs[0].detail
+    assert runs[0].detail == "no repositories are configured to sync"
+    # The variable an operator has to set is the operator's business: log, not `detail`.
+    assert "GITHUB_REPOS" not in runs[0].detail
+    assert "GITHUB_REPOS" in caplog.text
+
+class _Exploding:
+    """Raises the kind of message a driver or HTTP library raises: hosts, credentials,
+    internal paths."""
+    BOOM = "connection to postgresql://admin:hunter2@pulse-db.internal:5432/pulse failed"
+
+    def __init__(self, at="get_repo"):
+        self._at = at
+
+    def get_repo(self, full_name):
+        if self._at == "get_repo":
+            raise RuntimeError(self.BOOM)
+        return REPO
+
+    def list_branches(self, full_name):
+        return []
+
+    def list_commits(self, full_name, since=None, sha=None):
+        raise RuntimeError(self.BOOM)
+
+    def close(self):
+        pass
+
+def test_a_failed_sync_keeps_the_exception_out_of_the_stored_detail(db, monkeypatch, caplog):
+    """`detail` is persisted and served over the API, so it carries the repo, the stage
+    and the run to look up. The exception itself belongs to the log."""
+    monkeypatch.setattr(settings, "GITHUB_REPOS", "org/alpha")
+    _connect_account(db)
+
+    with caplog.at_level(logging.ERROR, logger="app.services.sync"):
+        runs = sync_service.run_full_sync(db, make_client=lambda t: _Exploding())
+
+    run = runs[0]
+    assert run.status == "error"
+    assert "hunter2" not in run.detail and "postgresql" not in run.detail
+    assert run.detail == f"org/alpha: failed while connecting to GitHub; see the service log for sync run {run.id}"
+    assert _Exploding.BOOM in caplog.text
+    assert "org/alpha" in caplog.text and f"sync_run id={run.id}" in caplog.text
+
+def test_a_failed_sync_records_which_stage_it_reached(db, monkeypatch, caplog):
+    monkeypatch.setattr(settings, "GITHUB_REPOS", "org/alpha")
+    _connect_account(db)
+
+    with caplog.at_level(logging.ERROR, logger="app.services.sync"):
+        runs = sync_service.run_full_sync(db, make_client=lambda t: _Exploding(at="list_commits"))
+
+    assert runs[0].detail.startswith("org/alpha: failed while reading repository activity;")
+    assert "reading repository activity" in caplog.text
+
+def test_a_failed_syncs_detail_is_safe_to_serve(client, act_as, db, monkeypatch):
+    monkeypatch.setattr(settings, "GITHUB_REPOS", "org/alpha")
+    _connect_account(db)
+    sync_service.run_full_sync(db, make_client=lambda t: _Exploding())
+
+    act_as(user_id=99, memberships=[], is_platform_admin=True)
+    r = client.get("/github/sync-runs")
+
+    assert r.status_code == 200
+    body = r.text
+    assert "hunter2" not in body and "pulse-db.internal" not in body
+    served = [i for i in r.json()["items"] if i["status"] == "error"]
+    assert served and all("failed while connecting to GitHub" in i["detail"] for i in served)
+
+def test_an_inline_sync_without_the_encryption_key_is_a_handled_503(client, act_as, db, monkeypatch, caplog):
+    """The stored token can't be decrypted without the key. That is a server configuration
+    problem, and the app-level handler answers it as one rather than letting a 500 out."""
+    monkeypatch.setattr(settings, "GITHUB_REPOS", "org/alpha")
+    _connect_account(db)
+    monkeypatch.setattr(settings, "GITHUB_TOKEN_ENC_KEY", "")
+    act_as(user_id=99, memberships=[], is_platform_admin=True)
+
+    with caplog.at_level(logging.ERROR, logger="app.crypto"):
+        r = client.post("/github/sync?wait=true")
+
+    assert r.status_code == 503, r.text
+    assert "GITHUB_TOKEN_ENC_KEY" not in r.text and "Fernet" not in r.text
+    assert r.json()["detail"] == "GitHub is not set up on this server. Contact an admin."
+    assert "GITHUB_TOKEN_ENC_KEY" in caplog.text
 
 def test_no_connected_account_is_an_error(db, monkeypatch):
     monkeypatch.setattr(settings, "GITHUB_REPOS", "org/alpha")

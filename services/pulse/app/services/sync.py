@@ -221,7 +221,10 @@ def run_full_sync(db: Session, make_client: Callable[[str], object] | None = Non
 
     specs = settings.github_repos_list
     if not specs:
-        return runs + [_record(db, None, "success", "no repos configured (set GITHUB_REPOS)")]
+        # `detail` is served to platform admins over the API, so the variable an operator
+        # has to set is named in the log only.
+        logger.warning("sync had nothing to do: no repositories configured (set GITHUB_REPOS)")
+        return runs + [_record(db, None, "success", "no repositories are configured to sync")]
 
     accounts = list(db.scalars(select(GitHubAccount).order_by(GitHubAccount.id)))
     if not accounts:
@@ -240,8 +243,10 @@ def run_full_sync(db: Session, make_client: Callable[[str], object] | None = Non
         db.refresh(run)
         run_id = run.id
         client = None
+        stage = "connecting to GitHub"
         try:
             client, data = _client_and_repo(make_client, tokens, full_name)
+            stage = "reading repository activity"
             repo, counts = _sync_one_repo(db, client, data, login_map)
             run.repo_id = repo.id
             run.status = "success"
@@ -256,12 +261,16 @@ def run_full_sync(db: Session, make_client: Callable[[str], object] | None = Non
             run.detail = f"{full_name}: {exc}"[:1000]
             run.finished_at = datetime.now(timezone.utc)
             db.commit()
-        except Exception as exc:
-            logger.exception("sync failed for %s", full_name)
+        except Exception:
+            # Whatever was raised can carry URLs, driver internals and library detail, and
+            # this row is served to platform admins for as long as it is kept. The row keeps
+            # what someone can act on (which repo, which stage, which run to look up); the
+            # exception and its traceback go to the log.
+            logger.exception("sync failed for %s while %s (sync_run id=%s)", full_name, stage, run_id)
             db.rollback()
             run = db.get(SyncRun, run_id)
             run.status = "error"
-            run.detail = f"{full_name}: {exc}"[:1000]
+            run.detail = f"{full_name}: failed while {stage}; see the service log for sync run {run_id}"
             run.finished_at = datetime.now(timezone.utc)
             db.commit()
         finally:
