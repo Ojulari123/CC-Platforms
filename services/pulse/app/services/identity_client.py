@@ -42,7 +42,10 @@ def _fetch_service_token() -> str:
             timeout=HTTP_TIMEOUT,
         )
     except httpx.HTTPError as e:
-        raise IdentityResolutionError(f"Could not reach identity for a service token: {e}") from e
+        # A transport error can carry the internal identity URL and whatever proxy sits in
+        # front of it, so it stays in the log and out of the message.
+        logger.error("Could not reach identity for a service token: %s", e)
+        raise IdentityResolutionError("Could not reach the identity service for a service token") from e
     if resp.status_code >= 400:
         raise IdentityResolutionError(f"Identity rejected the service credentials (HTTP {resp.status_code})")
     body = resp.json()
@@ -77,7 +80,8 @@ def _lookup_body(path: str, what: str, user_ids: list[int]) -> dict:
             token = _get_service_token(force_refresh=True)
             resp = _post(path, token, user_ids)
     except httpx.HTTPError as e:
-        raise IdentityResolutionError(f"Could not reach identity to resolve {what}: {e}") from e
+        logger.error("Could not reach identity to resolve %s: %s", what, e)
+        raise IdentityResolutionError(f"Could not reach the identity service to resolve {what}") from e
     if resp.status_code >= 400:
         raise IdentityResolutionError(f"Identity {what} lookup failed (HTTP {resp.status_code})")
     return resp.json()
@@ -89,7 +93,8 @@ def resolve_emails(user_ids: list[int]) -> dict[int, str]:
     if not user_ids:
         return {}
     if not settings.PULSE_SERVICE_CLIENT_SECRET:
-        raise IdentityResolutionError("PULSE_SERVICE_CLIENT_SECRET is not set; cannot resolve emails")
+        logger.error("Identity lookups are not configured: PULSE_SERVICE_CLIENT_SECRET must be set (needed to resolve emails)")
+        raise IdentityResolutionError("Identity lookups are not configured on this server; cannot resolve emails")
     return {u["user_id"]: u["email"] for u in _lookup("/internal/users/emails", "email", user_ids)}
 
 _profile_lock = threading.Lock()
@@ -168,7 +173,8 @@ def resolve_profiles(user_ids: list[int]) -> dict[int, dict]:
     if not misses:
         return resolved
     if not settings.PULSE_SERVICE_CLIENT_SECRET:
-        raise IdentityResolutionError("PULSE_SERVICE_CLIENT_SECRET is not set; cannot resolve profiles")
+        logger.error("Identity lookups are not configured: PULSE_SERVICE_CLIENT_SECRET must be set (needed to resolve profiles)")
+        raise IdentityResolutionError("Identity lookups are not configured on this server; cannot resolve profiles")
 
     resolved.update(_fetch_profiles(misses, tolerate_chunk_failure=False).profiles)
     return resolved

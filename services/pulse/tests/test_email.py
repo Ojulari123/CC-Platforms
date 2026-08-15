@@ -1,6 +1,7 @@
 import logging
 from datetime import datetime, timezone
 from types import SimpleNamespace
+import httpx
 import pytest
 from app.config import settings
 from app.models import Commit, Repository
@@ -86,6 +87,33 @@ class TestSend:
         assert captured["url"] == "https://api.brevo.com/v3/smtp/email"
         assert captured["headers"]["api-key"] == "secret-key"
         assert captured["json"]["to"] == [{"email": "dest@x.com"}]
+
+    def test_unconfigured_message_does_not_name_the_variables(self, monkeypatch, caplog):
+        """Which settings are missing is the operator's business. Today every caller
+        swallows this, but the message must stay safe for the one that doesn't."""
+        monkeypatch.setattr(settings, "BREVO_API_KEY", "")
+        monkeypatch.setattr(settings, "EMAIL_FROM", "")
+        with caplog.at_level(logging.ERROR, logger="app.services.email"):
+            with pytest.raises(EmailNotConfigured) as exc:
+                send("who@x.com", "hi", "<p>hi</p>")
+        message = str(exc.value)
+        assert "BREVO_API_KEY" not in message and "EMAIL_FROM" not in message and ".env" not in message
+        assert message == "Email sending is not configured on this server"
+        assert "BREVO_API_KEY" in caplog.text and "EMAIL_FROM" in caplog.text
+
+    def test_transport_failure_message_does_not_carry_the_httpx_error(self, monkeypatch, caplog):
+        monkeypatch.setattr(settings, "BREVO_API_KEY", "secret-key")
+        monkeypatch.setattr(settings, "EMAIL_FROM", "noreply@cc.com")
+
+        def _boom(*a, **k):
+            raise httpx.ConnectError("proxy 10.0.0.9 refused api.brevo.com")
+
+        monkeypatch.setattr(email_mod.httpx, "post", _boom)
+        with caplog.at_level(logging.ERROR, logger="app.services.email"):
+            with pytest.raises(EmailSendError) as exc:
+                send("dest@x.com", "s", "<p>h</p>")
+        assert "10.0.0.9" not in str(exc.value) and "api.brevo.com" not in str(exc.value)
+        assert "10.0.0.9" in caplog.text
 
     def test_provider_error_raises_send_error(self, monkeypatch):
         monkeypatch.setattr(settings, "BREVO_API_KEY", "secret-key")

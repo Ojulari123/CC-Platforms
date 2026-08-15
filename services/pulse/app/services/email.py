@@ -15,7 +15,19 @@ class EmailSendError(Exception):
 
 def send(to: str, subject: str, html: str) -> None:
     if not settings.BREVO_API_KEY or not settings.EMAIL_FROM:
-        raise EmailNotConfigured("Set BREVO_API_KEY and EMAIL_FROM in .env")
+        missing = [
+            name for name, value in (
+                ("BREVO_API_KEY", settings.BREVO_API_KEY),
+                ("EMAIL_FROM", settings.EMAIL_FROM),
+            ) if not value
+        ]
+        # Which variable is missing is an operator's problem, so it goes in the log and
+        # not in a message a caller could one day pass on.
+        logger.error(
+            "Email sending is not configured: BREVO_API_KEY and EMAIL_FROM must both be set (missing: %s)",
+            ", ".join(missing),
+        )
+        raise EmailNotConfigured("Email sending is not configured on this server")
     try:
         resp = httpx.post(
             BREVO_URL,
@@ -29,8 +41,10 @@ def send(to: str, subject: str, html: str) -> None:
             timeout=10.0,
         )
     except httpx.HTTPError as e:
+        # The transport error can name the provider host and any proxy in front of it;
+        # it stays in the log line above.
         logger.error("Email transport failure to %s: %s", to, e)
-        raise EmailSendError(f"Failed to send email: {e}") from e
+        raise EmailSendError("Could not reach the email provider") from e
 
     if resp.status_code >= 400:
         # Log it so failures aren't opaque, but never log the API key.

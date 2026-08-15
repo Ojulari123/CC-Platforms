@@ -1,3 +1,4 @@
+import logging
 import httpx
 import pytest
 from app.config import settings
@@ -93,6 +94,46 @@ def test_missing_secret_raises_without_calling(monkeypatch):
     _install(monkeypatch, handler)
     with pytest.raises(IdentityResolutionError):
         resolve_emails([20])
+
+
+def test_missing_secret_message_does_not_name_the_variable(monkeypatch, caplog):
+    """Every caller swallows this today; the message has to stay safe for the one that won't."""
+    monkeypatch.setattr(settings, "PULSE_SERVICE_CLIENT_SECRET", "")
+    _install(monkeypatch, lambda url, kwargs: pytest.fail("should not call identity when unconfigured"))
+    with caplog.at_level(logging.ERROR, logger="app.services.identity_client"):
+        with pytest.raises(IdentityResolutionError) as exc:
+            resolve_emails([20])
+    message = str(exc.value)
+    assert "PULSE_SERVICE_CLIENT_SECRET" not in message and ".env" not in message
+    assert message == "Identity lookups are not configured on this server; cannot resolve emails"
+    assert "PULSE_SERVICE_CLIENT_SECRET" in caplog.text
+
+
+def test_transport_error_messages_do_not_carry_the_identity_url(monkeypatch, caplog):
+    def handler(url, kwargs):
+        raise httpx.ConnectError(f"connection to {url} refused")
+
+    _install(monkeypatch, handler)
+    with caplog.at_level(logging.ERROR, logger="app.services.identity_client"):
+        with pytest.raises(IdentityResolutionError) as exc:
+            resolve_emails([20])
+    assert "http://identity:8000" not in str(exc.value)
+    assert "http://identity:8000" in caplog.text
+
+
+def test_lookup_transport_error_message_does_not_carry_the_identity_url(monkeypatch, caplog):
+    def handler(url, kwargs):
+        if url == TOKEN_URL:
+            return httpx.Response(200, json={"access_token": "svc-tok", "expires_in": 600})
+        raise httpx.ConnectError(f"connection to {url} refused")
+
+    _install(monkeypatch, handler)
+    with caplog.at_level(logging.ERROR, logger="app.services.identity_client"):
+        with pytest.raises(IdentityResolutionError) as exc:
+            resolve_emails([20])
+    assert "http://identity:8000" not in str(exc.value)
+    assert str(exc.value) == "Could not reach the identity service to resolve email"
+    assert "http://identity:8000" in caplog.text
 
 
 def test_token_endpoint_rejection_raises(monkeypatch):
@@ -288,6 +329,17 @@ class TestResolveProfiles:
         _install(monkeypatch, handler)
         with pytest.raises(IdentityResolutionError):
             resolve_profiles([10])
+
+    def test_missing_secret_message_does_not_name_the_variable(self, monkeypatch, caplog):
+        monkeypatch.setattr(settings, "PULSE_SERVICE_CLIENT_SECRET", "")
+        _install(monkeypatch, lambda url, kwargs: pytest.fail("should not call identity when unconfigured"))
+        with caplog.at_level(logging.ERROR, logger="app.services.identity_client"):
+            with pytest.raises(IdentityResolutionError) as exc:
+                resolve_profiles([10])
+        message = str(exc.value)
+        assert "PULSE_SERVICE_CLIENT_SECRET" not in message and ".env" not in message
+        assert message == "Identity lookups are not configured on this server; cannot resolve profiles"
+        assert "PULSE_SERVICE_CLIENT_SECRET" in caplog.text
 
     def test_malformed_row_raises(self, monkeypatch):
         _install(monkeypatch, _token_only(lambda url, kwargs: httpx.Response(200, json={"users": [{"user_id": 10}]})))
