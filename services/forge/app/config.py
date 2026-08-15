@@ -25,7 +25,9 @@ class Settings(BaseSettings):
 
     JWT_ISSUER: str = "cyphercrescent-identity"
     JWKS_TTL_SECONDS: int = 3600
-    CORS_ORIGINS: str = "http://localhost:3000"
+    # Forge's own frontend 3000, plus identity's admin UI 3002 — identity's product picker
+    # reads live counts straight from Forge, so its origin has to be on the list.
+    CORS_ORIGINS: str = "http://localhost:3000,http://localhost:3002"
 
     RATE_LIMIT_ENABLED: bool = True
     REDIS_URL: str = "redis://redis:6379/0"

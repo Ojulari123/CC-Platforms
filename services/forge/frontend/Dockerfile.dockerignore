@@ -1,0 +1,15 @@
+# Applies to services/forge/frontend/Dockerfile only (BuildKit reads
+# <dockerfile>.dockerignore ahead of the context root's .dockerignore). Kept per-Dockerfile
+# so it cannot change what the Python service builds send, which share the same root context.
+#
+# node_modules is the important one twice over: it is ~300 MB per app, and the copies on this
+# machine hold macOS-native binaries that would break inside a Linux image.
+**/node_modules
+**/.nuxt
+**/.output
+**/dist
+.git
+.venv
+**/__pycache__
+**/.pytest_cache
+*.pdf

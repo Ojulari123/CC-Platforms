@@ -1,74 +1,92 @@
 <script setup lang="ts">
+import { MONO_LABEL } from "@crescent/ui/utils/ui";
 import { findLearningPath } from "~/constants/learningPaths";
 
 definePageMeta({ middleware: "auth" });
 
 const route = useRoute();
 const path = computed(() => findLearningPath(route.params.slug as string));
+
+const WEEK6_TAG = `${MONO_LABEL} inline-flex shrink-0 items-center rounded border border-dashed border-line px-2 py-[3px] text-ink-muted`;
 </script>
 
 <template>
-  <div class="mx-auto max-w-3xl px-4 py-8">
-    <header class="mb-6">
-      <NuxtLink to="/learning" class="text-sm text-gray-500 hover:underline">
-        &larr; All learning paths
-      </NuxtLink>
-    </header>
+  <div>
+    <NuxtLink
+      to="/learning"
+      class="mono inline-flex items-center gap-1.5 rounded text-[11px] uppercase tracking-[0.08em] text-ink-muted outline-none transition-colors hover:text-ink focus-visible:ring-2 focus-visible:ring-[var(--accent-ink)] focus-visible:ring-offset-2 focus-visible:ring-offset-app"
+    >
+      <Icon name="arrowLeft" class="h-3.5 w-3.5" />
+      All learning paths
+    </NuxtLink>
 
-    <p v-if="!path" class="text-sm text-gray-600">
-      There's no learning path by that name.
-    </p>
+    <section v-if="!path" class="mt-8">
+      <h1 class="text-[clamp(1.5rem,2.2vw,1.9rem)] font-semibold tracking-[-0.035em]">
+        No path by that name
+      </h1>
+      <p class="mt-3 max-w-[54ch] text-[13px] leading-relaxed text-ink-muted">
+        There are four: classification, regression, time series and the LLM playground.
+      </p>
+    </section>
 
-    <div v-else>
-      <h1 class="text-xl font-semibold">{{ path.title }}</h1>
-      <p class="mt-1 text-sm text-gray-500">{{ path.summary }}</p>
-
-      <div class="mt-6 rounded-lg border border-amber-200 bg-amber-50 p-4">
-        <p class="text-sm font-medium text-amber-900">Not built yet</p>
-        <p class="mt-1 text-sm text-amber-800">
-          This page describes the path so you know what's coming. The steps below aren't
-          clickable and nothing runs. That's Week 6 work. In the meantime you can upload
-          a CSV and preview it from
-          <NuxtLink to="/datasets" class="underline">Datasets</NuxtLink>.
+    <template v-else>
+      <section class="mt-6">
+        <Eyebrow>Forge · learning path</Eyebrow>
+        <div class="mt-3 flex flex-wrap items-center gap-3">
+          <h1 class="text-[clamp(1.5rem,2.2vw,1.9rem)] font-semibold tracking-[-0.035em]">{{ path.title }}</h1>
+          <span :class="WEEK6_TAG">Week 6 · not built</span>
+        </div>
+        <p class="mt-3 max-w-[64ch] text-[13px] leading-relaxed text-ink-muted">{{ path.summary }}</p>
+        <p :class="[MONO_LABEL, 'mt-5 border-y border-line-subtle py-3 text-ink-muted']">
+          specification only · nothing on this page runs · no run button exists
         </p>
-      </div>
-
-      <section class="mt-8">
-        <h2 class="text-sm font-semibold text-gray-800">The question it answers</h2>
-        <p class="mt-1 text-sm text-gray-600">{{ path.question }}</p>
-        <p class="mt-3 text-sm text-gray-500">{{ path.example }}</p>
       </section>
 
-      <section class="mt-8">
-        <h2 class="mb-3 text-sm font-semibold text-gray-800">How it will work</h2>
-        <ol class="space-y-4">
+      <section class="mt-10 grid gap-8 border-t border-line-subtle pt-8 lg:grid-cols-12 lg:gap-12">
+        <div class="lg:col-span-4">
+          <h2 class="text-[15px] font-semibold tracking-[-0.015em]">The question it answers</h2>
+        </div>
+        <div class="lg:col-span-8">
+          <p class="max-w-[60ch] text-[13.5px] leading-relaxed text-ink">{{ path.question }}</p>
+          <div class="mt-5 border-t border-line-subtle pt-4">
+            <p :class="[MONO_LABEL, 'text-ink-faint']">For example</p>
+            <p class="mt-1.5 max-w-[60ch] text-[12.5px] leading-relaxed text-ink-muted">{{ path.example }}</p>
+          </div>
+        </div>
+      </section>
+
+      <section class="mt-12 border-t border-line-subtle pt-8">
+        <div class="flex flex-wrap items-baseline justify-between gap-3">
+          <h2 class="text-[15px] font-semibold tracking-[-0.015em]">How it will work</h2>
+          <span :class="[MONO_LABEL, 'text-ink-muted']">{{ path.steps.length }} steps</span>
+        </div>
+        <ol class="mt-5">
           <li
-            v-for="(step, index) in path.steps"
+            v-for="(step, i) in path.steps"
             :key="step.title"
-            class="flex gap-3 rounded-lg border border-gray-200 bg-white p-4"
+            class="flex items-start gap-3.5 rounded-md border border-dashed border-line-subtle px-4 py-3.5 [&+li]:mt-2"
           >
-            <span
-              class="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-gray-100 text-xs font-medium text-gray-600"
-            >
-              {{ index + 1 }}
+            <span class="mono mt-[1px] grid h-5 w-5 shrink-0 place-items-center rounded border border-dashed border-line text-[11px] text-ink-faint">
+              {{ i + 1 }}
             </span>
-            <div>
-              <p class="text-sm font-medium">{{ step.title }}</p>
-              <p class="mt-0.5 text-sm text-gray-500">{{ step.detail }}</p>
-            </div>
+            <span class="min-w-0 flex-1">
+              <span class="block text-[13px] font-medium text-ink">{{ step.title }}</span>
+              <span class="mt-1 block max-w-[64ch] text-[12.5px] leading-relaxed text-ink-muted">
+                {{ step.detail }}
+              </span>
+            </span>
+            <span :class="[MONO_LABEL, 'hidden shrink-0 text-ink-faint sm:inline']">not runnable</span>
           </li>
         </ol>
       </section>
 
-      <section class="mt-8 rounded-lg border border-gray-200 bg-white p-5">
-        <p class="text-sm font-medium">These steps become canvas modules</p>
-        <p class="mt-1 text-sm text-gray-500">
-          Each step above is one block on the workflow canvas.
-          <NuxtLink to="/canvas" class="font-medium text-gray-900 hover:underline">
-            See the canvas sketch
-          </NuxtLink>
+      <section class="mt-12 border-t border-line-subtle pt-8">
+        <h2 class="text-[15px] font-semibold tracking-[-0.015em]">These steps become canvas modules</h2>
+        <p class="mt-2.5 max-w-[64ch] text-[13px] leading-relaxed text-ink-muted">
+          Each step above is one block on the workflow canvas, pre-filled so only the dataset and
+          the columns are left to pick. The canvas is a sketch too — see it under Canvas.
         </p>
       </section>
-    </div>
+    </template>
   </div>
 </template>
