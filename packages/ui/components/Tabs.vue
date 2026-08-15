@@ -134,7 +134,7 @@ function wired(item: TabItem): boolean {
       @click="emit('update:modelValue', item.id)"
     >
       {{ item.label }}
-      <span v-if="item.hint" class="mono ml-1.5 text-[11px] text-ink-faint">{{ item.hint }}</span>
+      <span v-if="item.hint" class="mono ml-1.5 text-[11px] text-ink-muted">{{ item.hint }}</span>
     </button>
     <div v-if="$slots.default" class="ml-auto pb-2.5">
       <slot />

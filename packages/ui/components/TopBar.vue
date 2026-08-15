@@ -103,7 +103,7 @@ const emit = defineEmits<{ signOut: [] }>();
           <button
             v-if="showSignOut"
             type="button"
-            :class="[FOCUS, TAP, 'rounded-md px-2.5 py-1.5 text-[13px] text-ink-faint transition-colors hover:bg-surface-hover hover:text-ink']"
+            :class="[FOCUS, TAP, 'rounded-md px-2.5 py-1.5 text-[13px] text-ink-muted transition-colors hover:bg-surface-hover hover:text-ink']"
             @click="emit('signOut')"
           >
             Sign out
