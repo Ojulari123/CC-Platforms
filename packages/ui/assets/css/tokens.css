@@ -1,0 +1,162 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;450;500;600&family=JetBrains+Mono:wght@400;500&display=swap');
+
+/* The design tokens, ported from the React prototype's index.css. The prototype is
+   Tailwind v4 and declares these inside `@theme inline`; the three Nuxt apps are on
+   Tailwind 3.4, so the custom properties live here and tailwind.config.js maps them
+   onto utility names. No `@layer` or `@apply` in this file: it is not the file that
+   carries the `@tailwind` directives, and Tailwind 3 rejects both outside it. */
+
+/* Dark is the designed default. A light theme exists in name only. */
+:root,
+.dark {
+  --font-body: 'Inter', ui-sans-serif, system-ui, sans-serif;
+  --font-heading: 'Inter', ui-sans-serif, system-ui, sans-serif;
+  --font-mono: 'JetBrains Mono', ui-monospace, SFMono-Regular, monospace;
+
+  /* Surfaces, on Radix's step roles: 1 app bg, 2 subtle, 3 raised, 4 hover,
+     5 selected. Depth comes from these, not from borders everywhere. */
+  --app: oklch(0.164 0.006 265);
+  --sunken: oklch(0.186 0.007 265);
+  --surface: oklch(0.213 0.008 265);
+  --surface-hover: oklch(0.243 0.009 265);
+  --surface-active: oklch(0.272 0.011 265);
+
+  /* Three weights of rule, split by job rather than by taste.
+
+     `--line-subtle` is decoration: the hairline between table rows and under section
+     headings. It draws no control and carries no state, so WCAG 1.4.11 does not apply
+     to it and it stays at 1.36:1 — raising it would put a visible cage around every
+     row and cost the editorial character for no compliance gain. It is load-bearing
+     that nothing interactive uses it: a control drawn in `--line-subtle` is a 1.4.11
+     failure that no token value can fix without caging all 190-odd row rules.
+
+     `--line` and `--line-strong` are structural: they are the only boundary some
+     controls have, so 1.4.11 asks 3:1 of them. The measurement that matters is not
+     3:1 against the page — it is 3:1 against every surface a control can land on,
+     because a ring is judged against the fill it encloses as much as the background
+     it sits in. Both now clear it on all five: `--line` runs 3.88 / 3.75 / 3.54 /
+     3.28 / 3.02 from `--app` to `--surface-active`, `--line-strong` 4.87 / 4.70 /
+     4.44 / 4.12 / 3.78. Anything that draws a control must use one of these two.
+
+     Both still sit below `--ink-faint` (5.96), so structure stays quieter than the
+     type it contains. That ordering is the point: raising a rule until it out-reads
+     the text is how a table turns into a spreadsheet. */
+  --line-subtle: oklch(0.29 0.011 265);
+  --line: oklch(0.545 0.013 265);
+  --line-strong: oklch(0.6 0.016 265);
+
+  /* The reading ladder, measured against the page: 17.83 / 8.37 / 5.96. Every level
+     clears AA at the 11–13.5px this platform actually sets, and still clears it on
+     `--surface-active`, the lightest thing any of them ever sits on (13.84 / 6.50 /
+     4.62). `--ink-faint` used to be 4.24:1 and failed at every size it was used.
+
+     `--ink-faint` is now legible everywhere, but its job has not changed: labels,
+     units, row chrome. What separates it from `--ink-muted` is meant to be the mono
+     face, the uppercase and the 11px — not a further drop in brightness. There is no
+     room in this palette for a third grey dim enough to be obviously tertiary and
+     light enough to be readable, so type carries that distinction instead. */
+  --ink: oklch(0.972 0.004 265);
+  --ink-muted: oklch(0.74 0.014 265);
+  --ink-faint: oklch(0.65 0.014 265);
+
+  /* Reserved for the focus ring and text selection, and essentially nothing else.
+     The primary CTA is near-white on near-black, never a coloured fill. */
+  --accent: oklch(0.585 0.19 274);
+  --accent-hover: oklch(0.645 0.19 274);
+  --accent-ink: oklch(0.79 0.13 274);
+  --accent-surface: oklch(0.585 0.19 274 / 14%);
+
+  /* Status sits below the data it annotates. The four hues used to run 6.09 (bad) to
+     10.15 (warn) against the page, which put a repeated amber word in a table above
+     `--ink-muted` at 7.64 — the decoration outranked the figures, and warn shouted
+     over bad even though bad is the one that needs answering. All four now measure
+     6.5:1: under `--ink-muted` (8.37), so a status word can never be the brightest
+     thing in a row, and level with each other, so no single state shouts.
+
+     Chroma comes down with lightness, because saturation reads as loudness at the
+     size these are set. The `-surface` tints keep the higher chroma: a 15% wash over
+     a near-black page needs it to register as a hue at all, and a large quiet field
+     is where colour is cheap. Text on its own tint measures 5.4:1 over the page and
+     4.8:1 over a card.
+
+     6.5 is a floor, not a preference: the chip is the binding case. A status word on
+     its own 15% tint over `--surface` is already only 4.74:1, so dropping these hues
+     any further to clear `--ink-faint` (5.96) would fail the chip outright. That
+     leaves one ordering the tokens cannot fix by themselves — a status word still
+     out-reads a token used at `--ink-faint`. The fix is on the other side: an id, an
+     email, a timestamp or a count is data and belongs in `--ink-muted` (8.37), which
+     outranks status comfortably. `--ink-faint` is for labels, units and row chrome,
+     and chrome sitting under a status word is the correct way round. */
+  --ok: oklch(0.66 0.11 155);
+  --ok-surface: oklch(0.66 0.16 155 / 15%);
+  --warn: oklch(0.675 0.1 78);
+  --warn-surface: oklch(0.675 0.15 78 / 15%);
+  --bad: oklch(0.69 0.15 22);
+  --bad-surface: oklch(0.69 0.19 22 / 15%);
+  --info: oklch(0.67 0.1 245);
+  --info-surface: oklch(0.67 0.14 245 / 15%);
+
+  /* The prototype's CSS declared 5/7/10/14 while the design rule stated 6px for
+     controls and 4px for chips. Resolved here in favour of the stated rule:
+     `rounded` is 4px, `rounded-md` is 6px. `rounded-full` is for 6px dots and
+     avatars only. lg/xl are kept so nothing that referenced them breaks. */
+  --radius-sm: 4px;
+  --radius-md: 6px;
+  --radius-lg: 10px;
+  --radius-xl: 14px;
+}
+
+/* Someone who has asked the OS for more contrast gets it, and — this is the part worth
+   guarding — the ladder holds at the higher setting too. Against the page: ink 17.82,
+   muted 11.04, faint 8.98, status 7.85–8.21. Status stays under every ink, exactly as
+   it does at the normal setting. An earlier pass raised the four hues to ~9.4 here,
+   which put them back above `--ink-faint` and reinstated the inversion this palette
+   exists to remove; turning the contrast up must not turn the hierarchy over.
+
+   Only the ramps move — hues, surfaces and radii stay where they are, so the platform
+   reads as the same product turned up rather than as a second theme. */
+@media (prefers-contrast: more) {
+  :root,
+  .dark {
+    --line-subtle: oklch(0.52 0.013 265);
+    --line: oklch(0.62 0.014 265);
+    --line-strong: oklch(0.68 0.016 265);
+
+    --ink-muted: oklch(0.82 0.012 265);
+    --ink-faint: oklch(0.76 0.012 265);
+
+    --ok: oklch(0.72 0.12 155);
+    --warn: oklch(0.73 0.11 78);
+    --bad: oklch(0.745 0.16 22);
+    --info: oklch(0.725 0.11 245);
+  }
+}
+
+html,
+body {
+  height: 100%;
+  margin: 0;
+  padding: 0;
+  overscroll-behavior-x: none;
+}
+
+body {
+  background-color: var(--app);
+  color: var(--ink);
+  font-family: var(--font-body);
+  -webkit-font-smoothing: antialiased;
+  /* Numbers line up in columns without hand-tuning. */
+  font-variant-numeric: tabular-nums;
+}
+
+/* Machine-readable values read as machine-readable: slashed zero. */
+code,
+kbd,
+.mono {
+  font-family: var(--font-mono);
+  font-feature-settings: 'zero' 1;
+}
+
+::selection {
+  background: var(--accent-surface);
+}

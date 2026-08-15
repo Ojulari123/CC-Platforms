@@ -1,0 +1,156 @@
+/* Motion, ported from the prototype's SiteStyles. Short on purpose: 200ms route
+   enter on content only, exits shorter than enters, and every keyframe finishes on
+   the resting state so turning motion off leaves the page whole rather than empty. */
+
+@keyframes cc-fade-up {
+  from { opacity: 0; transform: translateY(6px); }
+  to { opacity: 1; transform: none; }
+}
+
+@keyframes cc-draw-x {
+  from { transform: scaleX(0); }
+  to { transform: scaleX(1); }
+}
+
+@keyframes cc-fade-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes cc-route-in {
+  from { opacity: 0; transform: translateY(4px); }
+  to { opacity: 1; transform: none; }
+}
+
+/* `backwards`, never `both`. With `both` the final keyframe's `transform: none` is
+   retained as an identity matrix, which is still a transform, and a transform makes
+   the element a stacking context (and a containing block for fixed children) forever
+   — that trapped every row-action menu under whatever followed it in the DOM and made
+   them unclickable. `backwards` still applies the from-state before the animation
+   starts, so there is no flash, and lets the property return to its natural value. */
+.sec {
+  animation: cc-fade-up 420ms cubic-bezier(0.2, 0.65, 0.2, 1) backwards;
+}
+
+.rule-draw {
+  transform-origin: left center;
+  animation: cc-draw-x 600ms cubic-bezier(0.2, 0.7, 0.2, 1) backwards;
+}
+
+.xfade {
+  animation: cc-fade-in 240ms ease-out backwards;
+}
+
+/* Content settling after a navigation. The top bar and the ruler are the frame the
+   content moves inside, so they never wear this. */
+.route-enter {
+  animation: cc-route-in 200ms cubic-bezier(0.23, 1, 0.32, 1) backwards;
+}
+
+/* Touch: no 300ms tap delay, no grey flash, and controls a thumb can hit. Coarse
+   pointers only — a mouse does not need 44px. */
+a,
+button,
+input,
+select,
+textarea,
+label,
+[role='tab'],
+[role='option'],
+[role='combobox'] {
+  touch-action: manipulation;
+}
+
+html {
+  -webkit-tap-highlight-color: transparent;
+}
+
+@media (pointer: coarse) {
+  .tap {
+    min-height: 44px;
+    min-width: 44px;
+  }
+}
+
+/* Expand/collapse with no height measurement and a free exit: the grid row animates
+   0fr → 1fr and the child does the clipping. Named `sec-collapse` because Tailwind
+   owns `.collapse` — it is `visibility: collapse`. Do not rename it back. */
+.sec-collapse {
+  display: grid;
+  grid-template-rows: 0fr;
+  opacity: 0;
+  transition: grid-template-rows 240ms cubic-bezier(0.23, 1, 0.32, 1), opacity 160ms ease-out;
+}
+
+.sec-collapse[data-open='true'] {
+  grid-template-rows: 1fr;
+  opacity: 1;
+}
+
+.sec-collapse > * {
+  overflow: hidden;
+  min-height: 0;
+}
+
+/* Work in progress on a control, as a hairline rather than a spinner. */
+@keyframes cc-sweep {
+  from { transform: translateX(-100%); }
+  to { transform: translateX(100%); }
+}
+
+.btn-busy {
+  position: relative;
+  overflow: hidden;
+}
+
+.btn-busy::after {
+  content: '';
+  position: absolute;
+  inset-inline: 0;
+  bottom: 0;
+  height: 1px;
+  background: currentColor;
+  opacity: 0.5;
+  animation: cc-sweep 900ms linear infinite;
+}
+
+/* Modal: 200ms in, 150ms out. Exits are shorter than enters. */
+.cc-modal-enter-active,
+.cc-modal-leave-active {
+  transition: opacity 200ms cubic-bezier(0.23, 1, 0.32, 1);
+}
+
+.cc-modal-leave-active {
+  transition-duration: 150ms;
+}
+
+.cc-modal-enter-active .cc-modal-panel,
+.cc-modal-leave-active .cc-modal-panel {
+  transition: opacity 200ms cubic-bezier(0.23, 1, 0.32, 1), transform 200ms cubic-bezier(0.23, 1, 0.32, 1);
+}
+
+.cc-modal-leave-active .cc-modal-panel {
+  transition-duration: 150ms;
+}
+
+.cc-modal-enter-from,
+.cc-modal-leave-to {
+  opacity: 0;
+}
+
+.cc-modal-enter-from .cc-modal-panel,
+.cc-modal-leave-to .cc-modal-panel {
+  opacity: 0;
+  transform: scale(0.96) translateY(-8px);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-delay: 0ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}

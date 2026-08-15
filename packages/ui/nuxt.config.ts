@@ -18,6 +18,11 @@ export default defineNuxtConfig({
   alias: {
     "@crescent/ui": layerDir,
   },
+  // The design tokens and the motion rules, inherited by every product on this layer.
+  // `@nuxtjs/tailwindcss` only auto-loads the *app's* assets/css/tailwind.css, so a
+  // layer has to register its own stylesheets here. The tailwind.config.js next to this
+  // file is picked up from the layer automatically and maps the tokens onto utilities.
+  css: [`${layerDir}/assets/css/tokens.css`, `${layerDir}/assets/css/motion.css`],
   // This layer has no node_modules of its own, so `vue` doesn't resolve from a .vue
   // file living here and vue-tsc types every page in it as `{}`. Point at the
   // consuming app's copy; every product on this layer sits at services/*/frontend.

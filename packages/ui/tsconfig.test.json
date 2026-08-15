@@ -1,0 +1,31 @@
+{
+  "// note": "Named tsconfig.test.json, not tsconfig.json, so it is not auto-discovered by the apps' bundler when it walks up from a .vue file in this layer. Covers the parts of the layer that import everything explicitly; the pages, middleware and Nuxt-auto-import composables are typechecked by `nuxt typecheck` inside each app.",
+  "compilerOptions": {
+    "target": "ESNext",
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "lib": ["ESNext", "DOM", "DOM.Iterable"],
+    "types": ["vitest/globals"],
+    "strict": true,
+    "noEmit": true,
+    "skipLibCheck": true,
+    "resolveJsonModule": true,
+    "isolatedModules": true,
+    "esModuleInterop": true,
+    "verbatimModuleSyntax": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    "noFallthroughCasesInSwitch": true,
+    "jsx": "preserve"
+  },
+  "include": [
+    "components/**/*.vue",
+    "composables/useAnnounce.ts",
+    "composables/useReveal.ts",
+    "test/**/*.ts",
+    "types/**/*.ts",
+    "utils/**/*.ts",
+    "vitest.config.ts",
+    "vitest.shared.ts"
+  ]
+}
