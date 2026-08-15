@@ -31,10 +31,23 @@ Then edit `services/identity/.env` and set `DATABASE_URL` to your Neon connectio
 ```bash
 docker compose up --build
 ```
-- Identity API: <http://localhost:8001> (Swagger UI at `/docs`)
-- Pulse API: <http://localhost:8002> (Swagger UI at `/docs`)
-- Forge API: <http://localhost:8003> (Swagger UI at `/docs`)
-- Local Postgres: `localhost:5432` (sandbox; identity itself points at Neon by default)
+That brings up the whole platform — three APIs, three web front ends, Postgres, Redis and
+the Celery worker/scheduler. **Start at <http://localhost:3002>**: sign in there and the
+product picker takes you to the other two.
+
+| | Front end | API |
+|---|---|---|
+| Identity — accounts, departments, access | <http://localhost:3002> | <http://localhost:8001> |
+| Pulse — activity and reports | <http://localhost:3001> | <http://localhost:8002> |
+| Forge — datasets and learning | <http://localhost:3000> | <http://localhost:8003> |
+
+Each API also serves Swagger UI at `/docs`. Also up: Adminer on
+<http://localhost:8080> and the sandbox Postgres on `localhost:5432` (identity itself
+points at Neon by default).
+
+Those three front-end ports are not free to move. They are written into every service's
+`CORS_ORIGINS` and into the SSO return-URL allowlist, so changing one breaks sign-in
+across products.
 
 Stop with `Ctrl+C`. Wipe the local DB volume with `docker compose down -v`.
 
@@ -61,10 +74,31 @@ alembic upgrade head
 uvicorn app.main:app --reload --port 8003
 ```
 
-Forge's Nuxt frontend (login + datasets UI) is separate:
+### The frontends
+Three separate Nuxt apps, all three in Compose (above) and all three `extends` the shared
+layer in `packages/ui`, which owns login, token storage, refresh-on-401 and the route guard.
+
+In Compose each one is **built** (`nuxt build`) and served by its Nitro server, so there is
+no hot reload — a code change needs `docker compose up -d --build pulse-web`. For an inner
+loop, stop that container and run the app directly instead; it takes the same port back:
+
 ```bash
-cd services/forge/frontend  &&  npm install  &&  npm run dev
+docker compose stop forge-web  &&  cd services/forge/frontend     &&  npm install  &&  npm run dev   # 3000, datasets + learning
+docker compose stop pulse-web  &&  cd services/pulse/frontend     &&  npm install  &&  npm run dev   # 3001, activity + reports
+docker compose stop identity-web && cd services/identity/frontend &&  npm install  &&  npm run dev   # 3002, accounts + departments
 ```
+
+The addresses each app calls (identity's API, its own API, the SSO screen, the return-URL
+allowlist) are defaults in `nuxt.config.ts` and are overridden in `docker-compose.yml` with
+`NUXT_PUBLIC_*` variables, so a deploy can repoint them without editing the apps. They stay
+`http://localhost:…` rather than compose service names on purpose: this is *public* runtime
+config that the browser reads, and a browser on your laptop cannot resolve `identity`.
+
+Every origin a browser calls identity from has to be in identity's `CORS_ORIGINS`, or the
+request fails as a browser CORS error rather than a 4xx. Note that Compose reads
+`env_file` only when a container is **created**, so after editing `services/identity/.env`
+you need `docker compose up -d --force-recreate identity` — a `restart` keeps the old
+environment.
 
 ### Just the tests (no DB, no server: SQLite in-memory + ephemeral RSA keys)
 ```bash

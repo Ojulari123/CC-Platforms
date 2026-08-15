@@ -176,5 +176,99 @@ services:
     # the flags as a second command and uvicorn ran with no reloader at all.
     command: ["sh", "-c", "alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload --reload-dir app"]
 
+  # ---------------------------------------------------------------------------
+  # The three Nuxt front ends.
+  #
+  # Ports are pinned and must not move: Forge 3000, Pulse 3001, identity 3002.
+  # Those numbers are written into every service's CORS_ORIGINS and into the SSO
+  # return-URL allowlist, so renaming a port here silently breaks sign-in.
+  # Every image listens on 3000 internally (the way every API image listens on
+  # 8000); the mapping below is what makes them 3000/3001/3002 on the host.
+  #
+  # Build context is the repo ROOT, because each app does
+  # `extends: ["../../../packages/ui"]` — the shared Nuxt layer sits outside the
+  # service directory, so a context rooted at services/*/frontend cannot see it.
+  #
+  # NUXT_PUBLIC_* below overrides runtimeConfig.public at container start, which
+  # is what lets a deploy point these at real hostnames without editing
+  # nuxt.config.ts. Note these are *public* config: the browser reads them, so
+  # they must be addresses the browser can resolve. That is why they say
+  # http://localhost:8001 and not http://identity:8000 — "identity" is a name on
+  # the compose network that only the containers can resolve, and these calls are
+  # made from the user's laptop, not from inside the container.
+  #
+  # authStoragePrefix is deliberately not set here. It namespaces the
+  # localStorage token keys; changing it signs out every browser holding a
+  # session for that product, so it stays pinned in nuxt.config.ts.
+  # ---------------------------------------------------------------------------
+
+  forge-web:
+    build:
+      context: .
+      dockerfile: services/forge/frontend/Dockerfile
+    environment:
+      NUXT_PUBLIC_IDENTITY_URL: http://localhost:8001
+      NUXT_PUBLIC_FORGE_URL: http://localhost:8003
+      NUXT_PUBLIC_IDENTITY_WEB_URL: http://localhost:3002
+      NUXT_PUBLIC_SSO_AUTHORIZE_URL: http://localhost:3002/sso/authorize
+      NUXT_PUBLIC_SSO_RETURN_ALLOWLIST: http://localhost:3000/auth/callback
+    ports:
+      - "3000:3000"
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://127.0.0.1:3000/"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    depends_on:
+      forge:
+        condition: service_started
+
+  pulse-web:
+    build:
+      context: .
+      dockerfile: services/pulse/frontend/Dockerfile
+    environment:
+      NUXT_PUBLIC_IDENTITY_URL: http://localhost:8001
+      NUXT_PUBLIC_PULSE_URL: http://localhost:8002
+      NUXT_PUBLIC_IDENTITY_WEB_URL: http://localhost:3002
+      NUXT_PUBLIC_SSO_AUTHORIZE_URL: http://localhost:3002/sso/authorize
+      NUXT_PUBLIC_SSO_RETURN_ALLOWLIST: http://localhost:3001/auth/callback
+    ports:
+      - "3001:3000"
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://127.0.0.1:3000/"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    depends_on:
+      pulse:
+        condition: service_started
+
+  identity-web:
+    build:
+      context: .
+      dockerfile: services/identity/frontend/Dockerfile
+    # The product picker on this app reads Pulse's and Forge's APIs for the
+    # counts it shows, so it names all three APIs, not just identity's.
+    environment:
+      NUXT_PUBLIC_IDENTITY_URL: http://localhost:8001
+      NUXT_PUBLIC_IDENTITY_WEB_URL: http://localhost:3002
+      NUXT_PUBLIC_PULSE_URL: http://localhost:3001
+      NUXT_PUBLIC_FORGE_URL: http://localhost:3000
+      NUXT_PUBLIC_PULSE_API_URL: http://localhost:8002
+      NUXT_PUBLIC_FORGE_API_URL: http://localhost:8003
+      NUXT_PUBLIC_SSO_AUTHORIZE_URL: http://localhost:3002/sso/authorize
+      NUXT_PUBLIC_SSO_RETURN_ALLOWLIST: http://localhost:3000/auth/callback,http://localhost:3001/auth/callback,http://localhost:3002/auth/callback
+    ports:
+      - "3002:3000"
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://127.0.0.1:3000/"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    depends_on:
+      identity:
+        condition: service_started
+
 volumes:
   postgres_data:

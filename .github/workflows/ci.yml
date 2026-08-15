@@ -248,6 +248,30 @@ jobs:
       - name: Build (Nuxt)
         run: npm run build
 
+  identity-frontend:
+    name: identity-frontend — install, typecheck, build
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: services/identity/frontend
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Typecheck (vue-tsc, strict mode)
+        # Same reasoning as the other two frontends: the Nuxt build transpiles
+        # without checking types, so this is the only thing that catches one.
+        run: npm run typecheck
+
+      - name: Build (Nuxt)
+        run: npm run build
+
   forge-frontend:
     name: forge-frontend — install, typecheck, build
     runs-on: ubuntu-latest
