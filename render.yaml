@@ -1,0 +1,381 @@
+# Render Blueprint for the CypherCrescent platform back end.
+#
+# What lives here: the five long-running services (three APIs, Pulse's Celery worker
+# and its beat scheduler), three Postgres instances, and one Key Value (Redis) instance.
+# The three Nuxt front ends are NOT here — they deploy to Vercel. See DEPLOY.md.
+#
+# Two rules this file follows and you should keep following:
+#
+#   1. No secret has a value in this file. Anything sensitive is either `sync: false`
+#      (you type it into the Render dashboard once, and it is never in git) or
+#      `generateValue: true` (Render invents it and nobody ever sees it). Everything
+#      with a literal value here is safe to read in a public repo.
+#   2. One database per service, referenced by id only — CLAUDE.md rule 3. Identity
+#      cannot reach Pulse's rows and vice versa, because they hold different
+#      credentials to different instances. DEPLOY.md § "Three databases" covers the
+#      cheaper alternative and what it costs you in rule terms.
+#
+# Instance types: `starter` throughout rather than `free`, deliberately.
+#   - Background workers have no free instance type at all, so pulse-worker and
+#     pulse-beat could never be free.
+#   - preDeployCommand (the migration step below) is a paid-instance feature.
+#   - A free web service sleeps after 15 minutes idle and takes ~1 minute to wake.
+#     Identity is the front door for all three products; when it sleeps, nobody can
+#     sign in anywhere. DEPLOY.md § "Free tier" spells out what changes if you insist.
+
+services:
+  # ---------------------------------------------------------------------------
+  # Identity — the login service. Everything else trusts it, so it deploys first
+  # and it is the one service you do not let sleep.
+  # ---------------------------------------------------------------------------
+  - type: web
+    name: crescent-identity
+    runtime: docker
+    region: oregon
+    plan: starter
+    # Context is services/identity, not the repo root: identity is the one service
+    # that does not depend on packages/core, and its Dockerfile does `COPY . .`.
+    dockerContext: services/identity
+    dockerfilePath: services/identity/Dockerfile
+    healthCheckPath: /health
+    # Runs after the build, before the new instance takes traffic, on a throwaway
+    # instance. This is where migrations belong on Render — in the Docker command
+    # (as docker-compose.yml does it) every replica would race the same schema.
+    preDeployCommand: alembic upgrade head
+    autoDeployTrigger: commit
+    buildFilter:
+      paths:
+        - services/identity/**
+      ignoredPaths:
+        # The identity front end deploys to Vercel; editing a page there must not
+        # rebuild the API.
+        - services/identity/frontend/**
+    envVars:
+      - key: DATABASE_URL
+        fromDatabase:
+          name: crescent-identity-db
+          property: connectionString
+      - key: REDIS_URL
+        fromService:
+          type: keyvalue
+          name: crescent-keyvalue
+          property: connectionString
+      # Render serves uploaded secret files from /etc/secrets, flat — filenames
+      # cannot contain a directory. That is why the active keypair is uploaded with
+      # a .key extension and the retired-key directory is /etc/secrets itself:
+      # identity globs *.pem there, so ONLY retired public keys may end in .pem.
+      # Upload a private key named *.pem and identity refuses to boot.
+      # DEPLOY.md § "Signing keys" is the whole procedure; read it before uploading.
+      - key: JWT_PRIVATE_KEY_PATH
+        value: /etc/secrets/jwt-private.key
+      - key: JWT_PUBLIC_KEY_PATH
+        value: /etc/secrets/jwt-public.key
+      - key: JWT_RETIRED_PUBLIC_KEYS_DIR
+        value: /etc/secrets
+      # Products verify the `iss` claim against their own copy of this string. It is
+      # pinned in all four places on purpose: a mismatch rejects every token.
+      - key: JWT_ISSUER
+        value: cyphercrescent-identity
+      # Render terminates TLS and proxies to the instance, so X-Forwarded-For has
+      # exactly one hop we control. Both values are wrong if you put your own CDN
+      # in front — count the hops again if you do.
+      - key: TRUST_PROXY_HEADERS
+        value: "true"
+      - key: TRUSTED_PROXY_COUNT
+        value: "1"
+      # The three Vercel origins, comma-separated. Not secret, but not knowable
+      # until the Vercel projects exist, so it is filled in from the dashboard.
+      - key: CORS_ORIGINS
+        sync: false
+      # Identity's OWN front end. Invite, password-reset and email-change links are
+      # built from this; point it at a product and those emails lead nowhere useful.
+      - key: FRONTEND_URL
+        sync: false
+      # Empty means POST /auth/signup accepts any address on the internet. Identity
+      # warns loudly at boot when it is; set it before anyone can reach the service.
+      - key: SIGNUP_ALLOWED_DOMAINS
+        sync: false
+      - key: BREVO_API_KEY
+        sync: false
+      - key: EMAIL_FROM
+        sync: false
+      # Service-to-service credentials. Render generates them and Pulse and Forge
+      # read the generated value back out of this service (below), so the two ends
+      # cannot drift and no human ever handles the secret.
+      - key: PULSE_CLIENT_SECRET
+        generateValue: true
+      - key: FORGE_CLIENT_SECRET
+        generateValue: true
+      # Tells Render which port the container listens on. The image hardcodes
+      # uvicorn --port 8000 and EXPOSEs it; this removes the guesswork.
+      - key: PORT
+        value: "8000"
+
+  # ---------------------------------------------------------------------------
+  # Pulse — engineering reporting. Three processes off one image: the API, the
+  # Celery worker that runs the GitHub sync, and beat, which schedules it.
+  # ---------------------------------------------------------------------------
+  - type: web
+    name: crescent-pulse
+    runtime: docker
+    region: oregon
+    plan: starter
+    # Repo root: services/pulse/Dockerfile installs the shared packages/core.
+    dockerContext: .
+    dockerfilePath: services/pulse/Dockerfile
+    healthCheckPath: /health
+    # Only this service migrates the Pulse database. The worker and beat below share
+    # it and deliberately do not run alembic, so two Pulse processes can never apply
+    # the same migration at the same time.
+    preDeployCommand: alembic upgrade head
+    autoDeployTrigger: commit
+    buildFilter:
+      paths:
+        - services/pulse/**
+        - packages/core/**
+      ignoredPaths:
+        - services/pulse/frontend/**
+    envVars:
+      - key: DATABASE_URL
+        fromDatabase:
+          name: crescent-pulse-db
+          property: connectionString
+      - key: REDIS_URL
+        fromService:
+          type: keyvalue
+          name: crescent-keyvalue
+          property: connectionString
+      # Identity's public URL, not a private-network name: a free web service cannot
+      # receive private-network traffic, and this stays correct either way.
+      - key: IDENTITY_JWKS_URL
+        sync: false
+      - key: IDENTITY_API_URL
+        sync: false
+      - key: JWT_ISSUER
+        value: cyphercrescent-identity
+      - key: PULSE_SERVICE_CLIENT_ID
+        value: pulse
+      # The other half of identity's generated PULSE_CLIENT_SECRET. Copied by Render
+      # at sync time; if these two ever disagree, POST /oauth/token returns 401 and
+      # approver emails silently stop resolving.
+      - key: PULSE_SERVICE_CLIENT_SECRET
+        fromService:
+          type: web
+          name: crescent-identity
+          envVarKey: PULSE_CLIENT_SECRET
+      - key: CORS_ORIGINS
+        sync: false
+      # Pulse's own front end on Vercel. Report links in emails and the landing page
+      # after the GitHub OAuth callback are both built from it.
+      - key: FRONTEND_URL
+        sync: false
+      - key: TRUST_PROXY_HEADERS
+        value: "true"
+      - key: TRUSTED_PROXY_COUNT
+        value: "1"
+      # Must match the callback URL registered on the GitHub OAuth app character for
+      # character, and it points at THIS service, not the front end — only the API
+      # holds the client secret.
+      - key: GITHUB_OAUTH_REDIRECT_URI
+        sync: false
+      - key: GITHUB_CLIENT_ID
+        sync: false
+      - key: GITHUB_CLIENT_SECRET
+        sync: false
+      # Encrypts stored GitHub tokens at rest. Lose it and every connected GitHub
+      # account has to reconnect; change it and the same thing happens.
+      - key: GITHUB_TOKEN_ENC_KEY
+        sync: false
+      - key: GITHUB_REPOS
+        sync: false
+      - key: LLM_API_KEY
+        sync: false
+      - key: BREVO_API_KEY
+        sync: false
+      - key: EMAIL_FROM
+        sync: false
+      - key: PORT
+        value: "8000"
+
+  - type: worker
+    name: crescent-pulse-worker
+    runtime: docker
+    region: oregon
+    # Workers have no free instance type. This is a floor, not a choice.
+    plan: starter
+    dockerContext: .
+    dockerfilePath: services/pulse/Dockerfile
+    dockerCommand: celery -A app.celery_app.celery worker --loglevel=info
+    autoDeployTrigger: commit
+    # A GitHub sync can run for minutes. The 30s default would SIGKILL it mid-pass
+    # on every deploy, leaving the sync cursor where it was and the work redone.
+    maxShutdownDelaySeconds: 300
+    buildFilter:
+      paths:
+        - services/pulse/**
+        - packages/core/**
+      ignoredPaths:
+        - services/pulse/frontend/**
+    envVars:
+      - key: DATABASE_URL
+        fromDatabase:
+          name: crescent-pulse-db
+          property: connectionString
+      - key: REDIS_URL
+        fromService:
+          type: keyvalue
+          name: crescent-keyvalue
+          property: connectionString
+      - key: IDENTITY_JWKS_URL
+        sync: false
+      - key: IDENTITY_API_URL
+        sync: false
+      - key: JWT_ISSUER
+        value: cyphercrescent-identity
+      - key: PULSE_SERVICE_CLIENT_ID
+        value: pulse
+      - key: PULSE_SERVICE_CLIENT_SECRET
+        fromService:
+          type: web
+          name: crescent-identity
+          envVarKey: PULSE_CLIENT_SECRET
+      - key: GITHUB_CLIENT_ID
+        sync: false
+      - key: GITHUB_CLIENT_SECRET
+        sync: false
+      - key: GITHUB_TOKEN_ENC_KEY
+        sync: false
+      - key: GITHUB_REPOS
+        sync: false
+      - key: LLM_API_KEY
+        sync: false
+      - key: BREVO_API_KEY
+        sync: false
+      - key: EMAIL_FROM
+        sync: false
+      - key: FRONTEND_URL
+        sync: false
+
+  - type: worker
+    name: crescent-pulse-beat
+    runtime: docker
+    region: oregon
+    plan: starter
+    dockerContext: .
+    dockerfilePath: services/pulse/Dockerfile
+    dockerCommand: celery -A app.celery_app.celery beat --loglevel=info
+    autoDeployTrigger: commit
+    buildFilter:
+      paths:
+        - services/pulse/**
+        - packages/core/**
+      ignoredPaths:
+        - services/pulse/frontend/**
+    # Beat only puts tasks on the queue on a timer; it never touches Postgres or
+    # GitHub, so it gets the two variables it actually reads and nothing else.
+    envVars:
+      - key: DATABASE_URL
+        fromDatabase:
+          name: crescent-pulse-db
+          property: connectionString
+      - key: REDIS_URL
+        fromService:
+          type: keyvalue
+          name: crescent-keyvalue
+          property: connectionString
+      - key: SYNC_HOUR_UTC
+        value: "2"
+
+  # ---------------------------------------------------------------------------
+  # Forge — the ML workbench. No background jobs yet; Redis is rate-limit counters.
+  # ---------------------------------------------------------------------------
+  - type: web
+    name: crescent-forge
+    runtime: docker
+    region: oregon
+    plan: starter
+    dockerContext: .
+    dockerfilePath: services/forge/Dockerfile
+    healthCheckPath: /health
+    preDeployCommand: alembic upgrade head
+    autoDeployTrigger: commit
+    buildFilter:
+      paths:
+        - services/forge/**
+        - packages/core/**
+      ignoredPaths:
+        - services/forge/frontend/**
+    envVars:
+      - key: DATABASE_URL
+        fromDatabase:
+          name: crescent-forge-db
+          property: connectionString
+      - key: REDIS_URL
+        fromService:
+          type: keyvalue
+          name: crescent-keyvalue
+          property: connectionString
+      - key: IDENTITY_JWKS_URL
+        sync: false
+      - key: IDENTITY_API_URL
+        sync: false
+      - key: JWT_ISSUER
+        value: cyphercrescent-identity
+      - key: FORGE_SERVICE_CLIENT_ID
+        value: forge
+      - key: FORGE_SERVICE_CLIENT_SECRET
+        fromService:
+          type: web
+          name: crescent-identity
+          envVarKey: FORGE_CLIENT_SECRET
+      - key: CORS_ORIGINS
+        sync: false
+      - key: TRUST_PROXY_HEADERS
+        value: "true"
+      - key: TRUSTED_PROXY_COUNT
+        value: "1"
+      - key: PORT
+        value: "8000"
+
+  # ---------------------------------------------------------------------------
+  # Shared Key Value (Redis). Rate-limit counters for all three APIs, plus Pulse's
+  # Celery broker and result backend.
+  #
+  # This is shared on purpose and it does not break CLAUDE.md rule 3: no service
+  # reads another's keys, the data is counters and job payloads rather than domain
+  # data, and losing all of it costs a reset rate-limit window and a re-queued sync.
+  # Split it into three instances if you would rather not share at all.
+  #
+  # ipAllowList is empty, which blocks every connection from the public internet.
+  # Render services in the same region still reach it over the private network.
+  # ---------------------------------------------------------------------------
+  - type: keyvalue
+    name: crescent-keyvalue
+    region: oregon
+    plan: starter
+    ipAllowList: []
+    # Counters are the bulk of the keys and they all carry a TTL, so evict those
+    # first and leave the untimed Celery queues alone under memory pressure.
+    maxmemoryPolicy: volatile-ttl
+
+# One Postgres per service. Three instances, three sets of credentials, no shared
+# superuser — which is what makes "no service reads another service's database"
+# something the infrastructure enforces rather than something we promise.
+databases:
+  - name: crescent-identity-db
+    databaseName: identity
+    region: oregon
+    plan: basic-256mb
+    postgresMajorVersion: "16"
+
+  - name: crescent-pulse-db
+    databaseName: pulse
+    region: oregon
+    plan: basic-256mb
+    postgresMajorVersion: "16"
+
+  - name: crescent-forge-db
+    databaseName: forge
+    region: oregon
+    plan: basic-256mb
+    postgresMajorVersion: "16"

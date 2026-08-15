@@ -4,6 +4,12 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 # Counts hops from the RIGHT of X-Forwarded-For; below 1 reads a caller-supplied entry.
 MIN_TRUSTED_PROXY_COUNT = 1
 
+# Managed Postgres providers (Render's fromDatabase wiring, Heroku, Neon's copy
+# button) hand out URLs on these schemes. SQLAlchemy reads a bare postgresql://
+# as "use psycopg2", which is not in requirements.txt, so the app would fail to
+# boot on a URL nobody typed wrong. Rewritten to the psycopg 3 driver we ship.
+DRIVERLESS_POSTGRES_SCHEMES = ("postgresql://", "postgres://")
+
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", extra="ignore", validate_assignment=True)
 
@@ -49,6 +55,14 @@ class Settings(BaseSettings):
     BREVO_API_KEY: str = ""
     EMAIL_FROM: str = ""
     FRONTEND_URL: str = "http://localhost:3000"
+
+    @field_validator("DATABASE_URL")
+    @classmethod
+    def _pin_postgres_driver(cls, value: str) -> str:
+        for scheme in DRIVERLESS_POSTGRES_SCHEMES:
+            if value.startswith(scheme):
+                return f"postgresql+psycopg://{value[len(scheme):]}"
+        return value
 
     @field_validator("TRUSTED_PROXY_COUNT")
     @classmethod
