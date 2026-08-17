@@ -31,7 +31,6 @@ const props = withDefaults(
     open: boolean;
     departments: SelectOption[];
     roles: SelectOption[];
-    /** Fixed department: the detail screen already knows which one. */
     lockedDeptId?: number | null;
     busy?: boolean;
     /** Whatever the API said. Rendered under the fields, not swallowed. */
@@ -43,7 +42,6 @@ const props = withDefaults(
 const emit = defineEmits<{ close: []; submit: [payload: InvitePayload] }>();
 
 const email = ref("");
-// Seeded as well as watched: a dialog mounted already open never fires the watcher.
 const deptId = ref(props.lockedDeptId === null ? "" : String(props.lockedDeptId));
 const role = ref("engineer");
 const error = ref<string | null>(null);

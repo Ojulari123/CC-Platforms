@@ -11,14 +11,7 @@ export interface RowMenuItem {
 import { onBeforeUnmount, ref, watch } from "vue";
 import { FOCUS } from "@crescent/ui/utils/ui";
 
-/* The per-row ⋯ menu. Controlled from the table so only one row can be open at a time.
-
-   Two things this shape exists for. The wrapper ref covers the trigger as well as the
-   panel: with the panel alone, mousedown on the trigger counted as an outside click,
-   closed the menu, and the click that followed read the closed state and opened it
-   again. And the trigger is revealed on hover *and* focus-visible *and* on a coarse
-   pointer — a control that only appears on hover is unreachable by keyboard and on a
-   phone. */
+/* The per-row ⋯ menu. Controlled from the table so only one row can be open at a time. */
 const props = defineProps<{ open: boolean; label: string; items: RowMenuItem[] }>();
 
 const emit = defineEmits<{ "update:open": [value: boolean]; select: [id: string] }>();

@@ -3,17 +3,14 @@ import type { NavItem } from "@crescent/ui/types/ui";
 import type { UserMeResponse } from "~/types/api";
 
 /* The chrome every Identity console screen sits in. It exists because each screen also
-   has to make sure /me is populated: on a hard refresh the auth middleware restores the
-   tokens but nothing has asked identity who they belong to, and every screen here gates
-   on is_platform_admin and the membership roles. */
+   has to make sure /me is populated */
 withDefaults(defineProps<{ readout?: string }>(), {});
 
 const auth = useAuth();
 const router = useRouter();
 const { toast, clear } = useToast();
 
-// The directory lives at /users in this app, not the /people PRODUCT_NAV assumes; a nav
-// entry pointing at a route that does not exist is worse than a differently spelled one.
+// The directory lives at /users in this app, not the /people PRODUCT_NAV assumes
 const NAV: NavItem[] = [
   { label: "People", to: "/users" },
   { label: "Organisation", to: "/departments" },
@@ -33,7 +30,7 @@ onMounted(async () => {
     try {
       await auth.fetchMe();
     } catch {
-      // Non-fatal: the screen still renders, it just cannot label the signed-in person.
+      // the screen still renders, it just cannot label the signed-in person.
     }
   }
 });
