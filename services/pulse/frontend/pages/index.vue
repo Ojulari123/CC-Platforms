@@ -132,7 +132,7 @@ const COUNT_META = [
     <!-- This week, for the repository you are answerable for. -->
     <section class="sec border-t border-line-subtle pt-7" style="animation-delay: 140ms" aria-labelledby="this-week">
       <div class="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-2">
-        <h2 id="this-week" class="text-[15px] font-medium tracking-tight">This week</h2>
+        <h2 id="this-week" class="text-[18px] font-semibold leading-tight tracking-[-0.02em] text-ink">This week</h2>
         <p :class="[MONO_LABEL, 'text-ink-muted']">
           {{ leadRepo ? leadRepo.full_name : "no repository names you" }} · week of {{ formatDate(week) }}
         </p>
@@ -152,8 +152,8 @@ const COUNT_META = [
               >
                 {{ statusLabel(thisWeekReport.status) }}
               </span>
-              <span class="mono text-[11px] text-ink-muted">report #{{ thisWeekReport.id }}</span>
-              <span v-if="thisWeekReport.generated_at" class="mono text-[11px] text-ink-muted">
+              <span class="mono text-[12px] text-ink-muted">report #{{ thisWeekReport.id }}</span>
+              <span v-if="thisWeekReport.generated_at" class="mono text-[12px] text-ink-muted">
                 AI-drafted · {{ thisWeekReport.prompt_version ?? "no version" }}
               </span>
             </div>
@@ -213,18 +213,35 @@ const COUNT_META = [
 
     <!-- Recent reports. -->
     <section class="sec mt-10" style="animation-delay: 180ms" aria-labelledby="recent-reports">
-      <h2 id="recent-reports" class="sr-only">Recent reports</h2>
-      <Tabs id="home-scope" v-model="scope" label="Which reports to list" variant="mono" :items="tabs" has-panel>
-        <span class="flex items-center gap-4">
-          <NuxtLink to="/reports/new" :class="[FOCUS, 'rounded text-[12.5px] text-ink-muted transition-colors hover:text-ink']">
-            New report
+      <!-- The heading and the two links used to ride inside the tab rail's trailing slot.
+           A tablist cannot wrap without stranding its travelling indicator, so at 390px
+           four items on one no-wrap row overflowed their own underline. They are a header
+           above the rail now: the rail carries the two tabs and nothing else, and the row
+           above it is free to wrap. -->
+      <div class="flex flex-wrap items-end justify-between gap-x-6 gap-y-2">
+        <div class="min-w-0">
+          <h2 id="recent-reports" class="text-[18px] font-semibold leading-tight tracking-[-0.02em] text-ink">
+            Recent reports
+          </h2>
+          <p class="mt-1 text-[13px] leading-relaxed text-ink-muted">
+            The five most recent in each list.
+          </p>
+        </div>
+        <span class="flex flex-wrap items-center gap-x-5 gap-y-1">
+          <NuxtLink to="/reports/new" :class="[FOCUS, 'rounded text-[13px] text-ink-muted transition-colors hover:text-ink']">
+            New weekly report
           </NuxtLink>
-          <NuxtLink to="/reports" :class="[FOCUS, 'group/all rounded text-[12.5px] text-ink-muted transition-colors hover:text-ink']">
+          <NuxtLink to="/reports/adhoc" :class="[FOCUS, 'rounded text-[13px] text-ink-muted transition-colors hover:text-ink']">
+            New custom report
+          </NuxtLink>
+          <NuxtLink to="/reports" :class="[FOCUS, 'group/all rounded text-[13px] text-ink-muted transition-colors hover:text-ink']">
             All reports
             <Icon name="arrow" class="ml-1 inline h-3 w-3 transition-transform group-hover/all:translate-x-0.5" />
           </NuxtLink>
         </span>
-      </Tabs>
+      </div>
+
+      <Tabs id="home-scope" v-model="scope" label="Which reports to list" variant="mono" class="mt-4" :items="tabs" has-panel />
 
       <TabPanel id="home-scope" :tab="scope" class="mt-1">
         <p
@@ -254,18 +271,18 @@ const COUNT_META = [
               :to="`/reports/${row.id}`"
               :class="[FOCUS, 'flex w-full flex-wrap items-center gap-x-4 gap-y-1.5 px-1 py-3 text-left transition-colors hover:bg-surface-hover/40']"
             >
-              <span class="mono w-[92px] shrink-0 text-[11px] text-ink-muted">#{{ row.id }}</span>
-              <span class="mono min-w-0 flex-1 truncate text-[12.5px] text-ink">{{ repoName(row.repo_id) }}</span>
-              <span class="mono hidden w-[104px] shrink-0 text-[11px] text-ink-muted sm:block">
-                {{ formatDate(row.week_start) }}
+              <span class="mono w-[92px] shrink-0 text-[12px] text-ink-muted">#{{ row.id }}</span>
+              <span class="mono min-w-0 flex-1 truncate text-[12.5px] text-ink">{{ reportRepoLabel(row, repoName) }}</span>
+              <span class="mono hidden w-[104px] shrink-0 text-[12px] text-ink-muted sm:block">
+                {{ isAdhoc(row) ? formatDate(row.range_start) : formatDate(row.week_start) }}
               </span>
               <span class="hidden w-[150px] shrink-0 truncate text-[12px] text-ink-muted md:block">
                 {{ row.author_user_id === me?.id ? "You" : personName(row.author, row.author_user_id) }}
               </span>
-              <StatusDot :tone="statusTone(row.status)" quiet class="mono w-[150px] shrink-0 uppercase tracking-[0.08em]">
-                {{ statusLabel(row.status) }}
-              </StatusDot>
-              <span class="mono hidden w-[74px] shrink-0 text-right text-[11px] text-ink-muted lg:block">
+              <span
+                class="w-[150px] shrink-0"
+              ><span :class="['inline-flex items-center rounded px-2 py-1 text-[12px]', statusClass(row.status)]">{{ statusLabel(row.status) }}</span></span>
+              <span class="mono hidden w-[74px] shrink-0 text-right text-[12px] text-ink-muted lg:block">
                 {{ relativeTime(row.updated_at) }}
               </span>
             </NuxtLink>

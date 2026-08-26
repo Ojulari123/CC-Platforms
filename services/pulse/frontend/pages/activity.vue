@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { useQuery } from "@tanstack/vue-query";
 import type { SelectOption } from "@crescent/ui/types/ui";
-import type { ActivityResponse, GitHubAccountResponse, UserMeResponse } from "~/types/api";
+import type { ActivityResponse, ConnectedAccountResponse, UserMeResponse } from "~/types/api";
 
 definePageMeta({ middleware: "auth" });
 
@@ -68,21 +68,16 @@ const isEmpty = computed(() => {
   return !!c && c.commits === 0 && c.pull_requests === 0 && c.reviews === 0 && c.issues === 0;
 });
 
-// 404 on /github/account is the not-connected state, not an error. Only worth asking
-// when your own numbers are all zero, because that is the only time it explains them.
-const { data: account, isFetched: accountChecked } = useQuery({
+// Not connected is `account: null` inside a 200. Only worth asking when your own numbers
+// are all zero, because that is the only time it explains them.
+const { data: accountEnvelope, isFetched: accountChecked } = useQuery({
   queryKey: ["github-account"],
   enabled: computed(() => viewingSelf.value && isEmpty.value),
   retry: false,
-  queryFn: async () => {
-    try {
-      return await api.request<GitHubAccountResponse>("/github/account");
-    } catch (err: unknown) {
-      if (httpStatus(err) === 404) return null;
-      throw err;
-    }
-  },
+  queryFn: () => api.request<ConnectedAccountResponse>("/github/account"),
 });
+
+const account = computed(() => accountEnvelope.value?.account ?? null);
 
 watch([counts, period], () => {
   const c = counts.value;
@@ -168,7 +163,7 @@ function toggleOnly(kind: Kind) {
           <span class="mono">user_id {{ data?.user_id ?? subjectId ?? me?.id ?? "—" }}</span>
         </p>
       </div>
-      <p class="mono flex shrink-0 items-center gap-2 rounded-md bg-sunken px-2.5 py-2 text-[11px] ring-1 ring-inset ring-line-subtle">
+      <p class="mono flex shrink-0 items-center gap-2 rounded-md bg-sunken px-2.5 py-2 text-[12px] ring-1 ring-inset ring-line-subtle">
         <span :class="[MONO_LABEL, 'text-ink-faint']">get</span>
         <span class="text-ink">{{ viewingSelf ? "/activity/me" : `/activity/${subjectId}` }}</span>
         <span class="hidden text-ink-muted sm:inline">?since={{ since }}</span>
@@ -210,7 +205,7 @@ function toggleOnly(kind: Kind) {
         @update:model-value="repoId = $event === 'all' ? null : Number($event)"
       />
 
-      <p class="mono ml-auto text-[11px] text-ink-muted">window {{ since }} → today</p>
+      <p class="mono ml-auto text-[12px] text-ink-muted">window {{ since }} → today</p>
     </section>
 
     <p v-if="!hasDepartment" class="mt-3 text-[12px] text-ink-muted">
@@ -236,8 +231,9 @@ function toggleOnly(kind: Kind) {
           :disabled="isPending || !counts"
           :class="[
             FOCUS,
-            'mt-3 rounded text-[11px] transition-colors disabled:opacity-40',
-            only === meta.key ? 'text-ink' : 'text-ink-muted hover:text-ink',
+            DISABLED,
+            'mt-3 rounded text-[12px] transition-colors',
+            only === meta.key ? 'text-ink' : 'text-ink-muted enabled:hover:text-ink',
           ]"
           @click="toggleOnly(meta.key)"
         >
@@ -310,8 +306,8 @@ function toggleOnly(kind: Kind) {
     <div v-else-if="!isError" class="sec mt-6 grid gap-4 lg:grid-cols-2" style="animation-delay: 120ms">
       <section v-if="show('commits')" aria-labelledby="list-commits" class="rounded-md bg-surface/40 ring-1 ring-inset ring-line-subtle">
         <div class="flex items-baseline justify-between gap-3 border-b border-line-subtle px-4 py-3">
-          <h2 id="list-commits" class="text-[13px] font-medium tracking-tight">Commits</h2>
-          <p class="mono text-[11px] text-ink-muted">
+          <h2 id="list-commits" class="text-[18px] font-semibold leading-tight tracking-[-0.02em] text-ink">Commits</h2>
+          <p class="mono text-[12px] text-ink-muted">
             {{ data?.recent_commits.length ?? 0 }} of {{ counts?.commits ?? 0 }}
           </p>
         </div>
@@ -321,7 +317,7 @@ function toggleOnly(kind: Kind) {
         </p>
         <ul v-else class="divide-y divide-line-subtle">
           <li v-for="commit in data.recent_commits" :key="commit.sha" class="flex flex-wrap items-baseline gap-x-3 gap-y-1 px-4 py-2.5">
-            <span class="mono w-[68px] shrink-0 text-[11px] text-ink-muted">{{ commit.sha.slice(0, 7) }}</span>
+            <span class="mono w-[68px] shrink-0 text-[12px] text-ink-muted">{{ commit.sha.slice(0, 7) }}</span>
             <a
               v-if="commit.url"
               :href="commit.url"
@@ -333,13 +329,13 @@ function toggleOnly(kind: Kind) {
               {{ (commit.message ?? "(no message)").split("\n")[0] }}
             </span>
             <span
-              class="mono shrink-0 text-[11px]"
+              class="mono shrink-0 text-[12px]"
               :class="repoCell(commit.repo_id).resolved ? 'text-ink-muted' : 'italic text-ink-muted'"
             >{{ repoCell(commit.repo_id).label }}</span>
-            <span class="mono shrink-0 text-[11px] text-ink-muted">{{ formatStamp(commit.committed_at) }}</span>
+            <span class="mono shrink-0 text-[12px] text-ink-muted">{{ formatStamp(commit.committed_at) }}</span>
           </li>
         </ul>
-        <p v-if="counts && data && counts.commits > data.recent_commits.length" class="border-t border-line-subtle px-4 py-2.5 text-[11.5px] leading-relaxed text-ink-muted">
+        <p v-if="counts && data && counts.commits > data.recent_commits.length" class="border-t border-line-subtle px-4 py-2.5 text-[12.5px] leading-relaxed text-ink-muted">
           Only the ten most recent are returned — {{ counts.commits - data.recent_commits.length }}
           more are in the count but not in this list. The endpoint has no pagination.
         </p>
@@ -347,8 +343,8 @@ function toggleOnly(kind: Kind) {
 
       <section v-if="show('pull_requests')" aria-labelledby="list-prs" class="rounded-md bg-surface/40 ring-1 ring-inset ring-line-subtle">
         <div class="flex items-baseline justify-between gap-3 border-b border-line-subtle px-4 py-3">
-          <h2 id="list-prs" class="text-[13px] font-medium tracking-tight">Pull requests</h2>
-          <p class="mono text-[11px] text-ink-muted">
+          <h2 id="list-prs" class="text-[18px] font-semibold leading-tight tracking-[-0.02em] text-ink">Pull requests</h2>
+          <p class="mono text-[12px] text-ink-muted">
             {{ data?.recent_pull_requests.length ?? 0 }} of {{ counts?.pull_requests ?? 0 }}
           </p>
         </div>
@@ -358,7 +354,7 @@ function toggleOnly(kind: Kind) {
         </p>
         <ul v-else class="divide-y divide-line-subtle">
           <li v-for="pr in data.recent_pull_requests" :key="`${pr.repo_id}-${pr.number}`" class="flex flex-wrap items-baseline gap-x-3 gap-y-1 px-4 py-2.5">
-            <span class="mono w-[52px] shrink-0 text-[11px] text-ink-muted">#{{ pr.number }}</span>
+            <span class="mono w-[52px] shrink-0 text-[12px] text-ink-muted">#{{ pr.number }}</span>
             <a
               v-if="pr.url"
               :href="pr.url"
@@ -369,18 +365,18 @@ function toggleOnly(kind: Kind) {
             <span v-else class="min-w-0 flex-1 truncate text-[12.5px] text-ink">{{ pr.title ?? "(no title)" }}</span>
             <span :class="[MONO_LABEL, 'shrink-0 text-ink-muted']">{{ pr.merged ? "merged" : pr.state }}</span>
             <span
-              class="mono shrink-0 text-[11px]"
+              class="mono shrink-0 text-[12px]"
               :class="repoCell(pr.repo_id).resolved ? 'text-ink-muted' : 'italic text-ink-muted'"
             >{{ repoCell(pr.repo_id).label }}</span>
-            <span class="mono shrink-0 text-[11px] text-ink-muted">{{ formatStamp(pr.gh_created_at) }}</span>
+            <span class="mono shrink-0 text-[12px] text-ink-muted">{{ formatStamp(pr.gh_created_at) }}</span>
           </li>
         </ul>
       </section>
 
       <section v-if="show('reviews')" aria-labelledby="list-reviews" class="rounded-md bg-surface/40 ring-1 ring-inset ring-line-subtle">
         <div class="flex items-baseline justify-between gap-3 border-b border-line-subtle px-4 py-3">
-          <h2 id="list-reviews" class="text-[13px] font-medium tracking-tight">Reviews</h2>
-          <p class="mono text-[11px] text-ink-muted">
+          <h2 id="list-reviews" class="text-[18px] font-semibold leading-tight tracking-[-0.02em] text-ink">Reviews</h2>
+          <p class="mono text-[12px] text-ink-muted">
             {{ data?.recent_reviews.length ?? 0 }} of {{ counts?.reviews ?? 0 }}
           </p>
         </div>
@@ -401,11 +397,11 @@ function toggleOnly(kind: Kind) {
             <span v-else class="min-w-0 flex-1 truncate text-[12.5px] text-ink">
               Review on pull_request_id {{ review.pull_request_id }}
             </span>
-            <span class="mono shrink-0 text-[11px] italic text-ink-muted">no repo returned</span>
-            <span class="mono shrink-0 text-[11px] text-ink-muted">{{ formatStamp(review.submitted_at) }}</span>
+            <span class="mono shrink-0 text-[12px] italic text-ink-muted">no repo returned</span>
+            <span class="mono shrink-0 text-[12px] text-ink-muted">{{ formatStamp(review.submitted_at) }}</span>
           </li>
         </ul>
-        <p class="border-t border-line-subtle px-4 py-2.5 text-[11.5px] leading-relaxed text-ink-muted">
+        <p class="border-t border-line-subtle px-4 py-2.5 text-[12.5px] leading-relaxed text-ink-muted">
           A review comes back with an internal <span class="mono">pull_request_id</span> and nothing
           else — no repository, no GitHub pull request number. The id above is Pulse's own row id.
         </p>
@@ -413,8 +409,8 @@ function toggleOnly(kind: Kind) {
 
       <section v-if="show('issues')" aria-labelledby="list-issues" class="rounded-md bg-surface/40 ring-1 ring-inset ring-line-subtle">
         <div class="flex items-baseline justify-between gap-3 border-b border-line-subtle px-4 py-3">
-          <h2 id="list-issues" class="text-[13px] font-medium tracking-tight">Issues</h2>
-          <p class="mono text-[11px] text-ink-muted">
+          <h2 id="list-issues" class="text-[18px] font-semibold leading-tight tracking-[-0.02em] text-ink">Issues</h2>
+          <p class="mono text-[12px] text-ink-muted">
             {{ data?.recent_issues.length ?? 0 }} of {{ counts?.issues ?? 0 }}
           </p>
         </div>
@@ -424,7 +420,7 @@ function toggleOnly(kind: Kind) {
         </p>
         <ul v-else class="divide-y divide-line-subtle">
           <li v-for="issue in data.recent_issues" :key="`${issue.repo_id}-${issue.number}`" class="flex flex-wrap items-baseline gap-x-3 gap-y-1 px-4 py-2.5">
-            <span class="mono w-[52px] shrink-0 text-[11px] text-ink-muted">#{{ issue.number }}</span>
+            <span class="mono w-[52px] shrink-0 text-[12px] text-ink-muted">#{{ issue.number }}</span>
             <a
               v-if="issue.url"
               :href="issue.url"
@@ -435,10 +431,10 @@ function toggleOnly(kind: Kind) {
             <span v-else class="min-w-0 flex-1 truncate text-[12.5px] text-ink">{{ issue.title ?? "(no title)" }}</span>
             <span :class="[MONO_LABEL, 'shrink-0 text-ink-muted']">{{ issue.state }}</span>
             <span
-              class="mono shrink-0 text-[11px]"
+              class="mono shrink-0 text-[12px]"
               :class="repoCell(issue.repo_id).resolved ? 'text-ink-muted' : 'italic text-ink-muted'"
             >{{ repoCell(issue.repo_id).label }}</span>
-            <span class="mono shrink-0 text-[11px] text-ink-muted">{{ formatStamp(issue.gh_created_at) }}</span>
+            <span class="mono shrink-0 text-[12px] text-ink-muted">{{ formatStamp(issue.gh_created_at) }}</span>
           </li>
         </ul>
       </section>

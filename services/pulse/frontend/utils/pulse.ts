@@ -1,8 +1,10 @@
 import type { SelectOption, Tone } from "@crescent/ui/types/ui";
-import { personName } from "~/utils/format";
+import { formatDate, personName } from "~/utils/format";
 import type {
   ApproverCandidate,
+  ReportKind,
   ReportResponse,
+  ReportSubjectResponse,
   ReportStatus,
   RepositoryResponse,
   SyncRunResponse,
@@ -121,6 +123,17 @@ export function failedRuns(runs: SyncRunResponse[]): SyncRunResponse[] {
   return runs.filter((run) => run.status === "error" || run.status === "rate_limited");
 }
 
+/** Which runs are failing, as one string. The stale-sync notice is dismissible, and this
+    is what the dismissal is stored against: a different set of failing runs produces a
+    different fingerprint, so the next failure raises a fresh notice instead of inheriting
+    the last one's dismissal. Empty when nothing is failing. */
+export function failureFingerprint(runs: SyncRunResponse[]): string {
+  return failedRuns(runs)
+    .map((run) => run.id)
+    .sort((a, b) => a - b)
+    .join(".");
+}
+
 // The next 02:00 UTC, and how far off it is.
 export function nextScheduledRun(now: Date = new Date()): { iso: string; away: string } {
   const next = Date.UTC(
@@ -229,11 +242,17 @@ export function statusCounts(rows: ReportResponse[]): Record<string, number> {
   return out;
 }
 
+// A custom report has no week_start, so it sorts on the range it does have. Both are
+// ISO date strings, so one comparison covers the two.
+function coversFrom(report: ReportResponse): string {
+  return report.week_start ?? report.range_start ?? "";
+}
+
 export function sortByWeek(rows: ReportResponse[], dir: "asc" | "desc"): ReportResponse[] {
   return [...rows].sort((a, b) => {
     const week = dir === "desc"
-      ? b.week_start.localeCompare(a.week_start)
-      : a.week_start.localeCompare(b.week_start);
+      ? coversFrom(b).localeCompare(coversFrom(a))
+      : coversFrom(a).localeCompare(coversFrom(b));
     return week !== 0 ? week : b.id - a.id;
   });
 }
@@ -283,3 +302,72 @@ export function canAdminRepo(
     (user.memberships ?? []).some((m) => m.dept_id === repo.dept_id && m.role === "admin")
   );
 }
+
+/* ── custom reports ────────────────────────────────────────────────────────── */
+
+/* What each kind is called on screen. The API value is still "adhoc" and the route is
+   still /reports/adhoc — renaming either would break stored links and the contract with
+   the service — so the two names meet here and nowhere else. "Ad-hoc" was jargon; a
+   custom report is one you asked for, over people, repositories and dates of your own. */
+const KIND_LABEL: Record<ReportKind, string> = {
+  weekly: "Weekly report",
+  adhoc: "Custom report",
+};
+
+/** Short form, for a marker sitting next to a report's id in a list. */
+const KIND_SHORT: Record<ReportKind, string> = {
+  weekly: "weekly",
+  adhoc: "custom",
+};
+
+/* ReportResponse.kind is a bare string, because it is whatever the API sent. A kind this
+   build has never heard of falls through as itself rather than rendering "undefined". */
+export function reportKindLabel(report: ReportResponse | null | undefined): string {
+  const kind = report?.kind ?? "weekly";
+  return KIND_LABEL[kind as ReportKind] ?? kind;
+}
+
+export function reportKindShort(kind: string): string {
+  return KIND_SHORT[kind as ReportKind] ?? kind;
+}
+
+export function isAdhoc(report: ReportResponse | null | undefined): boolean {
+  return report?.kind === "adhoc";
+}
+
+/** The repository a report is about. A custom report on a repository Pulse does not
+    track has no repo_id at all, only the name it was asked for. */
+export function reportRepoLabel(
+  report: ReportResponse,
+  resolve: (repoId: number) => string,
+): string {
+  if (report.repo_id !== null) return resolve(report.repo_id);
+  return report.repo_full_name ?? "an unnamed repository";
+}
+
+/** The window a report covers, as one phrase. Weekly reports keep saying "week of". */
+export function reportRange(report: ReportResponse): string {
+  if (report.kind === "adhoc" && report.range_start && report.range_end) {
+    return `${formatDate(report.range_start)} → ${formatDate(report.range_end)}`;
+  }
+  return report.week_start ? `Week of ${formatDate(report.week_start)}` : "No range recorded";
+}
+
+export function subjectLabel(subject: ReportSubjectResponse): string {
+  if (subject.subject) return personName(subject.subject, subject.subject_user_id ?? 0);
+  if (subject.subject_github_login) return subject.subject_github_login;
+  return subject.subject_user_id === null ? "Unattributed" : `Unknown user (#${subject.subject_user_id})`;
+}
+
+/** Position is the order the sections were written in and is what the reader is owed;
+    the API returns them in it, and this makes that independent of the API's ordering. */
+export function orderedSubjects(report: ReportResponse | null | undefined): ReportSubjectResponse[] {
+  return [...(report?.subjects ?? [])].sort((a, b) => a.position - b.position);
+}
+
+/* GitHub credits a squash-merge to whoever pressed the button, not to whoever wrote the
+   change. Two people can therefore be described as having done the same work, and
+   nothing in the data can tell them apart. Saying so beside the sections is the only
+   honest way to publish them. */
+export const ATTRIBUTION_NOTE =
+  "Based on GitHub activity only. GitHub credits a merge to whoever merged it, not to whoever wrote it, so the same work can appear under more than one person here. This is a record of activity, not a measure of productivity.";

@@ -292,7 +292,7 @@ watch(filter, (next) => {
           approval flow.
         </p>
       </div>
-      <p class="mono flex shrink-0 items-center gap-2 rounded-md bg-sunken px-2.5 py-2 text-[11px] ring-1 ring-inset ring-line-subtle">
+      <p class="mono flex shrink-0 items-center gap-2 rounded-md bg-sunken px-2.5 py-2 text-[12px] ring-1 ring-inset ring-line-subtle">
         <span :class="[MONO_LABEL, 'text-ink-faint']">get</span>
         <span class="text-ink">/github/repositories</span>
         <span class="hidden text-ink-muted sm:inline">?limit=50&offset=0</span>
@@ -310,7 +310,7 @@ watch(filter, (next) => {
       <!-- An unread queue is not an empty one. When the call fails this used to count zero
            and then say every repository has a department, which is a claim the page has no
            standing to make. -->
-      <h2 id="unfiled-heading" class="mt-2 text-[14px] font-medium tracking-tight">
+      <h2 id="unfiled-heading" class="mt-2 text-[18px] font-semibold leading-tight tracking-[-0.02em] text-ink">
         <template v-if="unfiledFailed">The unfiled queue could not be read</template>
         <template v-else>
           {{ needsFiling.length }} {{ needsFiling.length === 1 ? "repository has" : "repositories have" }} no department
@@ -376,7 +376,7 @@ watch(filter, (next) => {
 
         <!-- One unbreakable token: without `break-all` the path spills out of the panel's
              padding at 390px, since normal wrapping has nowhere to break it. -->
-        <p class="mono mt-3 break-all text-[11px] text-ink-faint">
+        <p class="mono mt-3 break-all text-[12px] text-ink-faint">
           put /github/repositories/{repo_id}/department/{dept_id}
         </p>
       </template>
@@ -408,7 +408,7 @@ watch(filter, (next) => {
           <Icon name="x" class="h-3.5 w-3.5" />
         </button>
       </label>
-      <p class="mono text-[11px] text-ink-muted">{{ shown.length }} of {{ repositories.length }} shown</p>
+      <p class="mono text-[12px] text-ink-muted">{{ shown.length }} of {{ repositories.length }} shown</p>
     </div>
 
     <div class="sec mt-4" style="animation-delay: 80ms">
@@ -498,7 +498,7 @@ watch(filter, (next) => {
             <tr class="sec border-b border-line-subtle/70 align-top" :style="`animation-delay: ${Math.min(i, 3) * 40}ms`">
               <td class="py-3 pr-3">
                 <span class="mono text-[12.5px] text-ink">{{ repo.full_name }}</span>
-                <span class="mono mt-1 block text-[11px] text-ink-muted">
+                <span class="mono mt-1 block text-[12px] text-ink-muted">
                   repo_id {{ repo.id }} · {{ repo.default_branch ?? "no default branch" }} ·
                   {{ repo.private ? "private" : "public" }}
                 </span>
@@ -516,11 +516,11 @@ watch(filter, (next) => {
                 <template v-else>
                   <span v-if="repo.lead_user_id !== null" class="block text-ink">
                     {{ personName(repo.lead, repo.lead_user_id) }}
-                    <span class="mono text-[11px] text-ink-faint">lead</span>
+                    <span class="mono text-[12px] text-ink-faint">lead</span>
                   </span>
                   <span v-if="repo.deputy_user_id !== null" class="block text-ink-muted">
                     {{ personName(repo.deputy, repo.deputy_user_id) }}
-                    <span class="mono text-[11px] text-ink-faint">deputy</span>
+                    <span class="mono text-[12px] text-ink-faint">deputy</span>
                   </span>
                 </template>
               </td>
@@ -647,13 +647,13 @@ watch(filter, (next) => {
                               <span class="min-w-0 flex-1 truncate text-[12px] text-ink-muted">
                                 {{ personName(report.author, report.author_user_id) }}
                               </span>
-                              <StatusDot :tone="statusTone(report.status)" quiet>
+                              <span :class="['inline-flex items-center rounded px-2 py-1 text-[12px]', statusClass(report.status)]">
                                 {{ statusLabel(report.status) }}
-                              </StatusDot>
+                              </span>
                             </NuxtLink>
                           </li>
                         </ul>
-                        <p v-if="openRow === repo.id && (rowReports?.total ?? 0) > 5" class="mono mt-2.5 text-[11px] text-ink-muted">
+                        <p v-if="openRow === repo.id && (rowReports?.total ?? 0) > 5" class="mono mt-2.5 text-[12px] text-ink-muted">
                           5 of {{ rowReports?.total }} shown · get /reports?repo_id={{ repo.id }}
                         </p>
 

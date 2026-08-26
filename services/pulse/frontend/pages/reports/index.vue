@@ -136,7 +136,9 @@ const openReport = computed(() => rows.value.find((r) => r.id === open.value) ??
 // week it describes sit side by side.
 const { data: evidence, isError: evidenceFailed } = useQuery({
   queryKey: computed(() => ["activity", "queue-row", open.value ?? "none"]),
-  enabled: computed(() => openReport.value !== null),
+  // /activity is per author, per week, per tracked repository, so a custom row has no
+  // evidence to fetch — its sections are the evidence and they live on the report.
+  enabled: computed(() => openReport.value !== null && !isAdhoc(openReport.value) && openReport.value.repo_id !== null),
   retry: false,
   queryFn: () =>
     api.request<ActivityResponse>(`/activity/${openReport.value!.author_user_id}`, {
@@ -145,7 +147,7 @@ const { data: evidence, isError: evidenceFailed } = useQuery({
 });
 
 function repoOf(report: ReportResponse) {
-  return repositories.value.find((r) => r.id === report.repo_id) ?? null;
+  return repositories.value.find((r) => report.repo_id !== null && r.id === report.repo_id) ?? null;
 }
 
 function verdict(report: ReportResponse) {
@@ -270,20 +272,23 @@ const who = ref(false);
       <div class="min-w-0">
         <Eyebrow>Pulse · reports</Eyebrow>
         <h1 class="mt-3 text-[clamp(1.5rem,2.2vw,1.9rem)] font-semibold leading-[1.05] tracking-[-0.035em]">
-          Weekly reports
+          Reports
         </h1>
         <p class="mt-1.5 max-w-[68ch] text-[12.5px] leading-relaxed text-ink-muted">
-          One report per repository, per week. What you wrote sits on the left; what is waiting on
-          your decision sits on the right, and the two sets never overlap.
+          A weekly report covers your own work on one repository for one week. A custom report
+          covers anyone you name, on any repository, over any dates. What you wrote sits under
+          Yours; what is waiting on your decision sits under the review queue, and the two sets
+          never overlap.
         </p>
       </div>
       <div class="flex shrink-0 flex-wrap items-center gap-2">
-        <p class="mono flex items-center gap-2 rounded-md bg-sunken px-2.5 py-2 text-[11px] ring-1 ring-inset ring-line-subtle">
+        <p class="mono flex items-center gap-2 rounded-md bg-sunken px-2.5 py-2 text-[12px] ring-1 ring-inset ring-line-subtle">
           <span :class="[MONO_LABEL, 'text-ink-faint']">get</span>
           <span class="text-ink">{{ listQuery.path }}</span>
           <span class="hidden text-ink-muted sm:inline">?limit={{ PER_PAGE }}&offset={{ offset }}</span>
         </p>
-        <NuxtLink to="/reports/new"><Btn size="sm">New report</Btn></NuxtLink>
+        <NuxtLink to="/reports/adhoc"><Btn size="sm" variant="secondary">New custom report</Btn></NuxtLink>
+        <NuxtLink to="/reports/new"><Btn size="sm">New weekly report</Btn></NuxtLink>
       </div>
     </header>
 
@@ -350,7 +355,7 @@ const who = ref(false);
             ]"
             @click="status = 'all'"
           >
-            All <span class="mono ml-1 text-[11px] text-ink-muted">{{ scopeTotal }}</span>
+            All <span class="mono ml-1 text-[12px] text-ink-muted">{{ scopeTotal }}</span>
           </button>
 
           <button
@@ -361,11 +366,11 @@ const who = ref(false);
             :disabled="(totals?.[value] ?? 0) === 0 && status !== value"
             :class="[
               FOCUS,
+              DISABLED,
               'inline-flex items-center gap-1.5 rounded-md px-2.5 py-1.5 text-[12px] ring-1 ring-inset transition-colors',
               status === value
                 ? 'bg-surface-active font-medium text-ink ring-line'
                 : 'bg-sunken text-ink-muted ring-line-subtle enabled:hover:text-ink enabled:hover:ring-line',
-              (totals?.[value] ?? 0) === 0 && status !== value && 'cursor-default opacity-45',
             ]"
             @click="status = value"
           >
@@ -377,7 +382,7 @@ const who = ref(false);
               aria-hidden="true"
             />
             {{ statusLabel(value) }}
-            <span class="mono text-[11px] text-ink-muted">{{ totals?.[value] ?? 0 }}</span>
+            <span class="mono text-[12px] text-ink-muted">{{ totals?.[value] ?? 0 }}</span>
           </button>
         </div>
 
@@ -461,8 +466,9 @@ const who = ref(false);
           been drafted or written under
           <span class="mono text-[12px] text-ink-muted">user_id {{ me?.id ?? "—" }}</span> so far.
         </p>
-        <div class="mt-4 flex">
-          <NuxtLink to="/reports/new"><Btn size="sm">New report</Btn></NuxtLink>
+        <div class="mt-4 flex gap-2">
+          <NuxtLink to="/reports/new"><Btn size="sm">New weekly report</Btn></NuxtLink>
+          <NuxtLink to="/reports/adhoc"><Btn size="sm" variant="secondary">New custom report</Btn></NuxtLink>
         </div>
       </div>
 
@@ -478,7 +484,7 @@ const who = ref(false);
               <tr class="border-b border-line-subtle">
                 <!-- The list endpoint orders by week_start desc, id desc and takes no
                      sort parameter, so this states the order rather than offering one. -->
-                <th scope="col" aria-sort="descending" :class="[MONO_LABEL, 'py-2 pr-3 text-ink-faint']">Week</th>
+                <th scope="col" aria-sort="descending" :class="[MONO_LABEL, 'py-2 pr-3 text-ink-faint']">Covers</th>
                 <th scope="col" :class="[MONO_LABEL, 'hidden py-2 pr-3 text-ink-faint sm:table-cell']">Repository</th>
                 <th v-if="scope === 'queue'" scope="col" :class="[MONO_LABEL, 'hidden py-2 pr-3 text-ink-faint md:table-cell']">Author</th>
                 <th scope="col" :class="[MONO_LABEL, 'py-2 pr-3 text-ink-faint']">Status</th>
@@ -496,36 +502,50 @@ const who = ref(false);
                   ]"
                   :style="`animation-delay: ${Math.min(i, 3) * 40}ms`"
                 >
-                  <td class="py-2.5 pr-3 align-middle">
+                  <td class="py-3.5 pr-3 align-middle">
                     <NuxtLink :to="`/reports/${report.id}`" :class="[FOCUS, 'block rounded transition-colors hover:text-ink']">
-                      <span class="mono block text-[12px] text-ink">{{ formatDate(report.week_start) }}</span>
-                      <span class="mono block text-[11px] text-ink-muted">report {{ report.id }}</span>
+                      <span class="mono block text-[12px] text-ink" data-test="report-covers">
+                        {{ isAdhoc(report) ? `${formatDate(report.range_start)} → ${formatDate(report.range_end)}` : formatDate(report.week_start) }}
+                      </span>
+                      <span class="mono block text-[12px] text-ink-muted">
+                        report {{ report.id }} ·
+                        <span :class="isAdhoc(report) ? 'text-ink' : 'text-ink-muted'" data-test="report-kind">
+                          {{ reportKindShort(report.kind) }}
+                        </span>
+                      </span>
                     </NuxtLink>
                   </td>
-                  <td class="hidden py-2.5 pr-3 align-middle sm:table-cell">
+                  <td class="hidden py-3.5 pr-3 align-middle sm:table-cell">
                     <span
                       class="mono text-[12px]"
                       :class="repositories.some((r) => r.id === report.repo_id) ? 'text-ink-muted' : 'italic text-ink-muted'"
-                    >{{ repoName(report.repo_id) }}</span>
+                    >{{ reportRepoLabel(report, repoName) }}</span>
                   </td>
-                  <td v-if="scope === 'queue'" class="hidden py-2.5 pr-3 align-middle md:table-cell">
+                  <td v-if="scope === 'queue'" class="hidden py-3.5 pr-3 align-middle md:table-cell">
                     <span class="flex items-center gap-2">
                       <Avatar :name="personName(report.author, report.author_user_id)" size="sm" />
                       <span class="min-w-0">
                         <span class="block truncate text-[12px] text-ink-muted">
                           {{ personName(report.author, report.author_user_id) }}
                         </span>
-                        <span class="mono block text-[11px] text-ink-muted">user_id {{ report.author_user_id }}</span>
+                        <span class="mono block text-[12px] text-ink-muted">user_id {{ report.author_user_id }}</span>
                       </span>
                     </span>
                   </td>
-                  <td class="py-2.5 pr-3 align-middle">
-                    <StatusDot :tone="statusTone(report.status)" quiet>{{ statusLabel(report.status) }}</StatusDot>
+                  <!-- A tinted chip, not a 1.5px dot beside muted text. The dot carried the
+                       whole colour signal in a few pixels, which is why the status read as
+                       grey until you already knew what it said; the tint is an area, and an
+                       area is what makes a hue legible at this size. Same tokens, and the
+                       label stays `--ink` so it does not out-read the row. -->
+                  <td class="py-3.5 pr-3 align-middle">
+                    <span :class="['inline-flex items-center rounded px-2 py-1 text-[12px]', statusClass(report.status)]">
+                      {{ statusLabel(report.status) }}
+                    </span>
                   </td>
-                  <td class="mono hidden py-2.5 pr-3 align-middle text-[11px] text-ink-muted md:table-cell">
+                  <td class="mono hidden py-3.5 pr-3 align-middle text-[12px] text-ink-muted md:table-cell">
                     {{ relativeTime(report.updated_at) }}
                   </td>
-                  <td class="py-2.5 text-right align-middle">
+                  <td class="py-3.5 text-right align-middle">
                     <button
                       v-if="scope === 'queue'"
                       type="button"
@@ -556,7 +576,7 @@ const who = ref(false);
                           v-if="menu === report.id"
                           role="menu"
                           :aria-label="`Report ${report.id}`"
-                          class="xfade absolute right-0 top-full z-40 mt-1 block w-[190px] overflow-hidden rounded-md bg-surface p-1 text-left shadow-2xl ring-1 ring-line"
+                          class="xfade absolute right-0 top-full z-40 mt-1 block w-[190px] overflow-hidden rounded-md bg-surface p-1 text-left shadow-overlay ring-1 ring-line"
                         >
                           <NuxtLink
                             role="menuitem"
@@ -567,14 +587,14 @@ const who = ref(false);
                             type="button"
                             role="menuitem"
                             :disabled="report.status !== 'draft' && report.status !== 'changes_requested'"
-                            :class="[FOCUS, 'block w-full rounded-md px-2.5 py-2 text-left text-[12.5px] text-ink transition-colors enabled:hover:bg-surface-hover disabled:cursor-default disabled:opacity-40']"
+                            :class="[FOCUS, DISABLED, 'block w-full rounded-md px-2.5 py-2 text-left text-[12.5px] text-ink transition-colors enabled:hover:bg-surface-hover']"
                             @click="submitForReview(report)"
                           >Submit for review</button>
                           <button
                             type="button"
                             role="menuitem"
                             :disabled="report.status !== 'draft'"
-                            :class="[FOCUS, 'block w-full rounded-md px-2.5 py-2 text-left text-[12.5px] text-bad transition-colors enabled:hover:bg-bad-surface disabled:cursor-default disabled:opacity-40']"
+                            :class="[FOCUS, DISABLED, 'block w-full rounded-md px-2.5 py-2 text-left text-[12.5px] text-bad transition-colors enabled:hover:bg-bad-surface']"
                             @click="menu = null; confirmDelete = report"
                           >Delete draft</button>
                         </span>
@@ -610,7 +630,7 @@ const who = ref(false);
                                 <span><span class="mono text-ink">{{ evidence.counts.pull_requests }}</span> pull requests</span>
                                 <span><span class="mono text-ink">{{ evidence.counts.reviews }}</span> reviews</span>
                                 <span><span class="mono text-ink">{{ evidence.counts.issues }}</span> issues</span>
-                                <span class="mono">week of {{ formatDate(report.week_start) }}</span>
+                                <span class="mono">{{ reportRange(report) }}</span>
                               </div>
                               <p v-else-if="open === report.id && evidenceFailed" class="mt-1.5 text-[12px] italic text-ink-muted">
                                 The activity counts came back empty, so this report cannot be checked
@@ -640,7 +660,7 @@ const who = ref(false);
         </div>
 
         <div class="sec mt-4 flex flex-wrap items-center gap-3 border-t border-line-subtle pt-3" style="animation-delay: 120ms">
-          <p class="mono text-[11px] text-ink-muted">
+          <p class="mono text-[12px] text-ink-muted">
             {{ offset + 1 }}–{{ Math.min(offset + PER_PAGE, total) }} of {{ total }}
             <span v-if="filtering"> · filtered</span>
           </p>
@@ -648,14 +668,14 @@ const who = ref(false);
             <button
               type="button"
               :disabled="page === 0"
-              :class="[FOCUS, 'rounded-md px-2.5 py-1.5 text-[12px] text-ink-muted ring-1 ring-inset ring-line-subtle transition-colors enabled:hover:bg-surface-hover enabled:hover:text-ink disabled:opacity-40']"
+              :class="[FOCUS, DISABLED, 'rounded-md px-2.5 py-1.5 text-[12px] text-ink-muted ring-1 ring-inset ring-line-subtle transition-colors enabled:hover:bg-surface-hover enabled:hover:text-ink']"
               @click="page = Math.max(0, page - 1)"
             >Previous</button>
-            <span class="mono px-1 text-[11px] text-ink-muted">page {{ page + 1 }} of {{ pages }}</span>
+            <span class="mono px-1 text-[12px] text-ink-muted">page {{ page + 1 }} of {{ pages }}</span>
             <button
               type="button"
               :disabled="page + 1 >= pages"
-              :class="[FOCUS, 'rounded-md px-2.5 py-1.5 text-[12px] text-ink-muted ring-1 ring-inset ring-line-subtle transition-colors enabled:hover:bg-surface-hover enabled:hover:text-ink disabled:opacity-40']"
+              :class="[FOCUS, DISABLED, 'rounded-md px-2.5 py-1.5 text-[12px] text-ink-muted ring-1 ring-inset ring-line-subtle transition-colors enabled:hover:bg-surface-hover enabled:hover:text-ink']"
               @click="page = page + 1"
             >Next</button>
           </div>
@@ -666,7 +686,7 @@ const who = ref(false);
     <Modal
       :open="confirmDelete !== null"
       title="Delete this draft?"
-      :description="confirmDelete ? `Report ${confirmDelete.id} for ${repoName(confirmDelete.repo_id)}, week of ${formatDate(confirmDelete.week_start)}. Drafts are only visible to you, so nobody else has read it — but deleting cannot be undone.` : undefined"
+      :description="confirmDelete ? `Report ${confirmDelete.id} for ${reportRepoLabel(confirmDelete, repoName)}, ${reportRange(confirmDelete).toLowerCase()}. Drafts are only visible to you, so nobody else has read it — but deleting cannot be undone.` : undefined"
       :close-on-backdrop="false"
       @close="confirmDelete = null"
     >

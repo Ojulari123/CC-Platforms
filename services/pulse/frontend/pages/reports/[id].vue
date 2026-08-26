@@ -7,6 +7,7 @@ import type {
   ApprovalResponse,
   CommentResponse,
   Page,
+  PersonaResponse,
   ReportResponse,
   UserMeResponse,
 } from "~/types/api";
@@ -34,7 +35,35 @@ const { data: report, isPending, isError, error } = useQuery({
 });
 
 const me = computed(() => auth.user.value as UserMeResponse | null);
-const repo = computed(() => repositories.value.find((r) => r.id === report.value?.repo_id) ?? null);
+const repo = computed(() =>
+  repositories.value.find((r) => report.value?.repo_id !== null && r.id === report.value?.repo_id) ?? null,
+);
+
+/* A custom report is a different document wearing the same row: any range rather than a
+   week, possibly a repository Pulse has never synced, and one attributed section per
+   contributor rather than one summary. */
+const adhoc = computed(() => isAdhoc(report.value));
+const sections = computed(() => orderedSubjects(report.value));
+const repoLabel = computed(() => (report.value ? reportRepoLabel(report.value, repoName) : ""));
+
+// summary_manager on a custom report is the sections above, joined, so offering it as a
+// fourth editable box would be offering the same text twice.
+const fields = computed(() => (adhoc.value ? REPORT_FIELDS.filter((f) => f.key !== "summary_manager") : REPORT_FIELDS));
+
+// Only for naming the persona a report was written with; the report itself carries the
+// id alone. A persona that has since been deleted stays an id rather than a guess.
+const { data: personaPage } = useQuery({
+  queryKey: ["personas"],
+  retry: false,
+  enabled: computed(() => report.value?.persona_id != null),
+  queryFn: () => api.request<Page<PersonaResponse>>("/personas", { query: { limit: 100, offset: 0 } }),
+});
+
+const personaName = computed(() => {
+  const id = report.value?.persona_id;
+  if (id == null) return null;
+  return personaPage.value?.items.find((p) => p.id === id)?.name ?? `persona_id ${id}`;
+});
 const isAuthor = computed(() => !!report.value && report.value.author_user_id === me.value?.id);
 // An approved report is closed to edits; the API answers 409/403 and so does this.
 const isEditable = computed(
@@ -60,7 +89,9 @@ const { data: comments, isError: commentsFailed } = useQuery({
 // from. It can come back empty on its own, which is not the same as four zeroes.
 const { data: evidence, isPending: evidencePending, isError: evidenceFailed } = useQuery({
   queryKey: computed(() => ["activity", "report", id.value]),
-  enabled: computed(() => !!report.value),
+  // /activity is per author, per week, per tracked repository — none of which describes
+  // a custom report, whose evidence is the attributed sections themselves.
+  enabled: computed(() => !!report.value && !adhoc.value && report.value.repo_id !== null),
   retry: false,
   queryFn: () =>
     api.request<ActivityResponse>(`/activity/${report.value!.author_user_id}`, {
@@ -351,40 +382,54 @@ const unreachable = computed(() => {
     <template v-else-if="report">
       <div class="sec mt-3">
         <Eyebrow>Pulse · report</Eyebrow>
-        <p class="mono mt-3 text-[12px] text-ink-muted">
-          {{ repoName(report.repo_id) }} › Week of {{ formatDate(report.week_start) }}
+        <p class="mono mt-3 text-[12px] text-ink-muted" data-test="report-scope">
+          {{ repoLabel }}
+          <span v-if="report.repo_id === null && report.repo_full_name" class="text-ink-faint">(not tracked by Pulse)</span>
+          › {{ reportRange(report) }}
         </p>
         <div class="mt-1 flex flex-wrap items-center gap-3">
-          <h1 class="text-[clamp(1.5rem,2.2vw,1.9rem)] font-semibold leading-[1.05] tracking-[-0.035em]">
-            Weekly report
-          </h1>
+          <!-- The kind is the heading. It used to be the heading *and* a chip beside it
+               carrying the raw API value, which said the same thing twice, once in a word
+               nobody outside the codebase uses. -->
+          <h1
+            class="text-[clamp(1.5rem,2.2vw,1.9rem)] font-semibold leading-[1.05] tracking-[-0.035em]"
+            data-test="report-kind"
+          >{{ reportKindLabel(report) }}</h1>
           <span
             aria-live="polite"
             :class="[MONO_LABEL, 'inline-flex items-center rounded px-2 py-1', statusClass(report.status)]"
           >{{ statusLabel(report.status) }}</span>
-          <span class="mono text-[11px] text-ink-muted">report_id {{ report.id }}</span>
+          <span class="mono text-[12px] text-ink-muted">report_id {{ report.id }}</span>
         </div>
         <p class="mt-2 flex flex-wrap items-center gap-2 text-[12.5px] text-ink-muted">
           <Avatar :name="personName(report.author, report.author_user_id)" size="sm" />
           Written by
           <span class="text-ink">{{ personName(report.author, report.author_user_id) }}</span>
           <span v-if="isAuthor">(you)</span>
-          <span class="mono text-[11px]">· user_id {{ report.author_user_id }}</span>
-          <span v-if="report.generated_at" class="mono text-[11px]">
+          <span class="mono text-[12px]">· user_id {{ report.author_user_id }}</span>
+          <span v-if="report.generated_at" class="mono text-[12px]">
             · AI-drafted {{ formatDateTime(report.generated_at) }}
             <template v-if="report.prompt_version">· {{ report.prompt_version }}</template>
+          </span>
+          <span v-if="personaName" class="mono text-[12px]" data-test="report-persona">
+            · persona {{ personaName }}
           </span>
         </p>
       </div>
 
-      <div class="sec mt-5 flex flex-wrap gap-2" style="animation-delay: 40ms">
+      <!-- Delete sits on its own side of the row with a rule between. It used to be the
+           third button in a run of three, one tab-stop from Submit. -->
+      <div class="sec mt-5 flex flex-wrap items-center gap-2" style="animation-delay: 40ms">
         <Btn v-if="isEditable" size="sm" :busy="submit.isPending.value" @click="submit.mutate()">
           Submit for review
         </Btn>
         <Btn size="sm" variant="secondary" :busy="pdfLoading" @click="openPdf">Download PDF</Btn>
-        <Btn v-if="isDeletable" size="sm" variant="destructive" @click="confirmDelete = true">
-          Delete draft
-        </Btn>
+        <template v-if="isDeletable">
+          <span aria-hidden="true" class="ml-2 hidden h-6 w-px bg-line-subtle sm:block" />
+          <Btn size="sm" variant="destructive" @click="confirmDelete = true">
+            Delete draft
+          </Btn>
+        </template>
       </div>
 
       <p v-if="saveError" role="alert" class="mt-4 max-w-[74ch] rounded-md bg-bad-surface px-4 py-3 text-[12.5px] leading-relaxed text-ink">
@@ -394,7 +439,7 @@ const unreachable = computed(() => {
       <div class="mt-8 grid gap-8 lg:grid-cols-[minmax(0,1fr)_340px]">
         <div class="min-w-0">
           <!-- Counts as filters over the evidence beside them. -->
-          <section class="sec grid grid-cols-2 gap-3 md:grid-cols-4" style="animation-delay: 60ms" aria-label="The week's counts">
+          <section v-if="!adhoc" class="sec grid grid-cols-2 gap-3 md:grid-cols-4" style="animation-delay: 60ms" aria-label="The week's counts">
             <button
               v-for="meta in COUNT_META"
               :key="meta.key"
@@ -403,7 +448,8 @@ const unreachable = computed(() => {
               :disabled="!evidence"
               :class="[
                 FOCUS,
-                'rounded-md px-4 py-3.5 text-left ring-1 ring-inset transition-colors disabled:opacity-50',
+                DISABLED,
+                'rounded-md px-4 py-3.5 text-left ring-1 ring-inset transition-colors',
                 only === meta.key ? 'bg-surface-active ring-line' : 'bg-surface/40 ring-line-subtle enabled:hover:ring-line',
               ]"
               @click="only = only === meta.key ? null : meta.key"
@@ -417,21 +463,78 @@ const unreachable = computed(() => {
             </button>
           </section>
 
-          <p v-if="evidenceFailed" role="alert" class="mt-3 max-w-[74ch] text-[12.5px] leading-relaxed text-ink-muted">
-            The week's activity did not come back, so the counts above are missing rather than
-            zero. The report itself is unaffected — this is a second request.
-          </p>
-          <p v-else class="mt-3 max-w-[74ch] text-[12.5px] leading-relaxed text-ink-muted">
-            Counts are the week's totals for this author in this repository. Selecting one narrows
-            the evidence list to that kind.
-          </p>
+          <template v-if="!adhoc">
+            <p v-if="evidenceFailed" role="alert" class="mt-3 max-w-[74ch] text-[12.5px] leading-relaxed text-ink-muted">
+              The week's activity did not come back, so the counts above are missing rather than
+              zero. The report itself is unaffected — this is a second request.
+            </p>
+            <p v-else class="mt-3 max-w-[74ch] text-[12.5px] leading-relaxed text-ink-muted">
+              Counts are the week's totals for this author in this repository. Selecting one narrows
+              the evidence list to that kind.
+            </p>
+          </template>
+
+          <!-- One section per contributor, in the order they were written, each under the
+               name it describes. They are never run together: two people's work reading as
+               one paragraph is exactly the failure this report exists to avoid. -->
+          <section v-if="adhoc" class="sec" style="animation-delay: 60ms" aria-labelledby="sections-heading">
+            <div class="flex flex-wrap items-baseline justify-between gap-3 border-b border-line-subtle pb-2">
+              <h2 id="sections-heading" class="text-[18px] font-semibold leading-tight tracking-[-0.02em] text-ink">
+                By contributor
+              </h2>
+              <p class="mono text-[12px] text-ink-muted">
+                {{ sections.length }} {{ sections.length === 1 ? "person" : "people" }} ·
+                {{ reportRange(report) }}
+              </p>
+            </div>
+
+            <p
+              data-test="attribution-note"
+              class="mt-3 max-w-[74ch] rounded-md bg-warn-surface px-3.5 py-2.5 text-[12.5px] leading-relaxed text-ink"
+            >
+              {{ ATTRIBUTION_NOTE }}
+            </p>
+
+            <p v-if="!sections.length" class="mt-4 max-w-[70ch] text-[12.5px] leading-relaxed text-ink-muted">
+              This report has no attributed sections stored against it.
+            </p>
+
+            <div v-else data-test="sections">
+              <article
+                v-for="section in sections"
+                :key="section.id"
+                data-test="section"
+                class="mt-6 border-t border-line-subtle pt-4 first:border-t-0"
+              >
+                <div class="flex flex-wrap items-center gap-2.5">
+                  <Avatar :name="subjectLabel(section)" size="sm" />
+                  <h3 class="text-[13.5px] font-medium tracking-tight text-ink" data-test="section-name">
+                    {{ subjectLabel(section) }}
+                  </h3>
+                  <span
+                    :class="[MONO_LABEL, 'rounded bg-sunken px-2 py-1 text-ink-muted ring-1 ring-inset ring-line-subtle']"
+                  >{{ section.subject_user_id !== null ? "pulse user" : "github login" }}</span>
+                  <span class="mono ml-auto text-[12px] text-ink-faint">#{{ section.position + 1 }}</span>
+                </div>
+                <p class="mt-2 max-w-[74ch] whitespace-pre-wrap text-[13px] leading-relaxed text-ink">
+                  <template v-if="section.section">{{ section.section }}</template>
+                  <span v-else class="italic text-ink-muted">No section was written for this person.</span>
+                </p>
+              </article>
+            </div>
+
+            <p class="mt-6 max-w-[74ch] text-[12px] leading-relaxed text-ink-muted">
+              These sections are what an approver reads: they are stored as this report's manager
+              summary, in this order.
+            </p>
+          </section>
 
           <!-- The three fields, each editable where it stands. -->
           <section class="sec mt-8" style="animation-delay: 80ms" aria-label="The report">
-            <div v-for="field in REPORT_FIELDS" :key="field.key" class="border-t border-line-subtle pt-3.5 first:border-t-0 first:pt-0 [&+div]:mt-5">
+            <div v-for="field in fields" :key="field.key" class="border-t border-line-subtle pt-3.5 first:border-t-0 first:pt-0 [&+div]:mt-5">
               <div class="flex flex-wrap items-center gap-2.5">
-                <h2 class="text-[13px] font-medium tracking-tight text-ink">{{ field.label }}</h2>
-                <span class="mono text-[11px] text-ink-faint">{{ field.api }}</span>
+                <h2 class="text-[18px] font-semibold leading-tight tracking-[-0.02em] text-ink">{{ field.label }}</h2>
+                <span class="mono text-[12px] text-ink-faint">{{ field.api }}</span>
                 <button
                   v-if="isEditable && editing !== field.key"
                   :ref="(el) => setEditButton(el, field.key)"
@@ -447,14 +550,14 @@ const unreachable = computed(() => {
                   :id="`field-${field.key}`"
                   v-model="draftText"
                   rows="6"
-                  :class="[FOCUS, 'mt-2 w-full resize-y rounded-md bg-sunken px-3 py-2.5 text-[12.5px] leading-relaxed text-ink ring-1 ring-inset ring-line-subtle transition-colors placeholder:text-ink-faint hover:ring-line']"
+                  :class="[FOCUS, 'mt-2 w-full resize-y rounded-md bg-sunken px-3 py-2.5 text-[12.5px] leading-relaxed text-ink ring-1 ring-inset ring-line transition-colors placeholder:text-ink-faint hover:ring-line-strong']"
                 />
                 <div class="mt-2 flex flex-wrap items-center gap-2">
                   <Btn size="sm" :busy="save.isPending.value" @click="save.mutate({ key: field.key, value: draftText })">
                     Save
                   </Btn>
                   <Btn size="sm" variant="ghost" @click="editing = null">Cancel</Btn>
-                  <span class="mono ml-auto text-[11px] text-ink-muted">{{ draftText.trim().length }} characters</span>
+                  <span class="mono ml-auto text-[12px] text-ink-muted">{{ draftText.trim().length }} characters</span>
                 </div>
               </template>
 
@@ -495,7 +598,7 @@ const unreachable = computed(() => {
 
           <!-- Comments. The prototype has no thread; this page does, and it stays. -->
           <section class="sec mt-8 border-t border-line-subtle pt-6" style="animation-delay: 120ms" aria-labelledby="comments-heading">
-            <h2 id="comments-heading" class="text-[13px] font-medium tracking-tight text-ink">Comments</h2>
+            <h2 id="comments-heading" class="text-[18px] font-semibold leading-tight tracking-[-0.02em] text-ink">Comments</h2>
 
             <p v-if="commentsFailed" role="alert" class="mt-2 text-[12.5px] text-ink-muted">
               The comment thread did not load. Everything else on this page is unaffected.
@@ -507,8 +610,8 @@ const unreachable = computed(() => {
               <li v-for="comment in comments.items" :key="comment.id" class="py-3">
                 <p class="flex flex-wrap items-baseline gap-2 text-[12px] text-ink-muted">
                   <span class="text-ink">{{ personName(comment.author, comment.author_user_id) }}</span>
-                  <span class="mono text-[11px]">{{ formatDateTime(comment.created_at) }}</span>
-                  <span v-if="comment.edited_at" class="mono text-[11px]">(edited)</span>
+                  <span class="mono text-[12px]">{{ formatDateTime(comment.created_at) }}</span>
+                  <span v-if="comment.edited_at" class="mono text-[12px]">(edited)</span>
                 </p>
 
                 <template v-if="editingCommentId === comment.id">
@@ -517,7 +620,7 @@ const unreachable = computed(() => {
                     :id="`comment-${comment.id}`"
                     v-model="editingCommentBody"
                     rows="3"
-                    :class="[FOCUS, 'mt-2 w-full resize-y rounded-md bg-sunken px-3 py-2 text-[12.5px] leading-relaxed text-ink ring-1 ring-inset ring-line-subtle hover:ring-line']"
+                    :class="[FOCUS, 'mt-2 w-full resize-y rounded-md bg-sunken px-3 py-2 text-[12.5px] leading-relaxed text-ink ring-1 ring-inset ring-line hover:ring-line-strong']"
                   />
                   <div class="mt-2 flex gap-2">
                     <Btn size="sm" :busy="updateComment.isPending.value" @click="updateComment.mutate(comment.id)">Save</Btn>
@@ -532,12 +635,12 @@ const unreachable = computed(() => {
                   <div v-if="comment.author_user_id === me?.id" class="mt-1.5 flex gap-3">
                     <button
                       type="button"
-                      :class="[FOCUS, 'rounded text-[11.5px] text-ink-muted transition-colors hover:text-ink']"
+                      :class="[FOCUS, 'rounded text-[12.5px] text-ink-muted transition-colors hover:text-ink']"
                       @click="startCommentEdit(comment)"
                     >Edit</button>
                     <button
                       type="button"
-                      :class="[FOCUS, 'rounded text-[11.5px] text-bad transition-colors hover:brightness-110']"
+                      :class="[FOCUS, 'rounded text-[12.5px] text-bad transition-colors hover:brightness-110']"
                       @click="removeComment.mutate(comment.id)"
                     >Delete</button>
                   </div>
@@ -550,7 +653,7 @@ const unreachable = computed(() => {
               id="new-comment"
               v-model="newComment"
               rows="3"
-              :class="[FOCUS, 'mt-1.5 w-full resize-y rounded-md bg-sunken px-3 py-2 text-[12.5px] leading-relaxed text-ink ring-1 ring-inset ring-line-subtle hover:ring-line']"
+              :class="[FOCUS, 'mt-1.5 w-full resize-y rounded-md bg-sunken px-3 py-2 text-[12.5px] leading-relaxed text-ink ring-1 ring-inset ring-line hover:ring-line-strong']"
             />
             <div class="mt-2 flex items-center gap-2">
               <Btn
@@ -566,10 +669,10 @@ const unreachable = computed(() => {
 
         <!-- Evidence and history. -->
         <aside class="min-w-0 space-y-8">
-          <section aria-labelledby="evidence-heading" class="sec" style="animation-delay: 60ms">
+          <section v-if="!adhoc" aria-labelledby="evidence-heading" class="sec" style="animation-delay: 60ms">
             <div class="flex items-baseline justify-between gap-3 border-b border-line-subtle pb-2">
               <h2 id="evidence-heading" :class="[MONO_LABEL, 'text-ink-faint']">Evidence</h2>
-              <p class="mono text-[11px] text-ink-muted">{{ evidenceRows.length }} shown</p>
+              <p class="mono text-[12px] text-ink-muted">{{ evidenceRows.length }} shown</p>
             </div>
             <p v-if="evidencePending" class="mt-3 text-[12px] text-ink-muted">Reading the week…</p>
             <p v-else-if="evidenceFailed" class="mt-3 text-[12px] leading-relaxed text-ink-muted">
@@ -581,8 +684,8 @@ const unreachable = computed(() => {
             <ul v-else class="divide-y divide-line-subtle">
               <li v-for="row in evidenceRows" :key="row.key" class="py-2.5">
                 <p class="flex items-baseline justify-between gap-3">
-                  <span class="mono text-[11px] text-ink-muted">{{ row.label }}</span>
-                  <span class="mono shrink-0 text-[11px] text-ink-muted">{{ formatStamp(row.stamp) }}</span>
+                  <span class="mono text-[12px] text-ink-muted">{{ row.label }}</span>
+                  <span class="mono shrink-0 text-[12px] text-ink-muted">{{ formatStamp(row.stamp) }}</span>
                 </p>
                 <p class="mt-0.5 text-[12.5px] leading-relaxed text-ink">{{ row.detail }}</p>
               </li>
@@ -602,7 +705,7 @@ const unreachable = computed(() => {
                     <span class="text-ink">{{ personName(entry.actor, entry.actor_user_id) }}</span>
                     {{ actionLabel(entry.action) }}
                   </span>
-                  <span class="mono block text-[11px] text-ink-muted">{{ formatDateTime(entry.created_at) }}</span>
+                  <span class="mono block text-[12px] text-ink-muted">{{ formatDateTime(entry.created_at) }}</span>
                   <span v-if="entry.note" class="mt-1 block max-w-[46ch] whitespace-pre-wrap text-[12px] leading-relaxed text-ink">
                     {{ entry.note }}
                   </span>
@@ -611,13 +714,25 @@ const unreachable = computed(() => {
             </ul>
           </section>
 
-          <section class="rounded-md bg-sunken/60 px-4 py-3.5 ring-1 ring-inset ring-line-subtle">
+          <section v-if="!adhoc" class="rounded-md bg-sunken/60 px-4 py-3.5 ring-1 ring-inset ring-line-subtle">
             <Eyebrow>One per person, per repository, per week</Eyebrow>
             <p class="mt-2 max-w-[46ch] text-[12.5px] leading-relaxed text-ink-muted">
-              This is yours for <span class="mono text-[12px] text-ink">{{ repoName(report.repo_id) }}</span
+              This is yours for <span class="mono text-[12px] text-ink">{{ repoLabel }}</span
               >, week of <span class="mono text-[12px] text-ink">{{ report.week_start }}</span
               >. Rewriting it replaces what is here rather than adding a second copy, which is why
               the history matters.
+            </p>
+          </section>
+
+          <section v-else class="rounded-md bg-sunken/60 px-4 py-3.5 ring-1 ring-inset ring-line-subtle">
+            <Eyebrow>Asked for, not scheduled</Eyebrow>
+            <p class="mt-2 max-w-[46ch] text-[12.5px] leading-relaxed text-ink-muted">
+              A custom report covers
+              <span class="mono text-[12px] text-ink">{{ report.range_start }}</span> to
+              <span class="mono text-[12px] text-ink">{{ report.range_end }}</span> on
+              <span class="mono text-[12px] text-ink">{{ repoLabel }}</span>. There is no
+              uniqueness rule on it, so asking again writes a second report rather than replacing
+              this one.
             </p>
           </section>
         </aside>

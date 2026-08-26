@@ -2,7 +2,7 @@
 import { computed, ref } from "vue";
 import Btn from "@crescent/ui/components/Btn.vue";
 import Eyebrow from "@crescent/ui/components/Eyebrow.vue";
-import { FOCUS } from "@crescent/ui/utils/ui";
+import { DISABLED, FOCUS } from "@crescent/ui/utils/ui";
 
 // Presentational on purpose: the queue row and the report page both own their own
 // mutation and their own cache invalidation, and this only has to collect the note and
@@ -61,7 +61,13 @@ function submit(decision: Decision) {
         placeholder="What should change, or why this is fine as it stands."
         :class="[
           FOCUS,
-          'mt-1.5 w-full resize-y rounded-md bg-app px-2.5 py-2 text-[12.5px] leading-relaxed text-ink ring-1 ring-inset ring-line-subtle transition-[box-shadow] placeholder:text-ink-faint hover:ring-line disabled:opacity-60',
+          DISABLED,
+          // `ring-line`, not `ring-line-subtle`, for the same reason <Select>'s trigger uses it:
+          // an inset ring is this field's only boundary, and 1.4.11 asks 3:1 of one. Against its
+          // own fill `--line-subtle` measures 2.26 (light) / 2.32 (dark) and `--line` 4.04 / 4.22.
+          // Hover moves up a weight rather than onto `--line`, so the resting and hovered rings
+          // stay two different things — and `disabled:ring-line` no longer out-draws the live one.
+          'mt-1.5 w-full resize-y rounded-md bg-app px-2.5 py-2 text-[12.5px] leading-relaxed text-ink ring-1 ring-inset ring-line transition-[box-shadow] placeholder:text-ink-faint enabled:hover:ring-line-strong disabled:ring-line',
         ]"
       />
     </label>
@@ -82,7 +88,7 @@ function submit(decision: Decision) {
       {{ errorMessage }}
     </p>
 
-    <p v-else class="mt-2.5 text-[11px] leading-relaxed text-ink-muted">
+    <p v-else class="mt-2.5 text-[12px] leading-relaxed text-ink-muted">
       Deciding takes the report out of your queue and emails {{ authorName }}.
     </p>
   </div>

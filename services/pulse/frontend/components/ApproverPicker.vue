@@ -133,7 +133,7 @@ function save() {
         {{ errorMessage }}
       </p>
 
-      <p class="mono mt-3.5 text-[11px] leading-relaxed text-ink-faint">
+      <p class="mono mt-3.5 text-[12px] leading-relaxed text-ink-faint">
         get /github/repositories/{{ repo.id }}/approver-candidates<br />
         put /github/repositories/{{ repo.id }}/lead/{user_id}<br />
         put /github/repositories/{{ repo.id }}/deputy/{user_id}<br />

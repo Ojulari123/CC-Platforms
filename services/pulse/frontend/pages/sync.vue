@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { useMutation, useQuery, useQueryClient } from "@tanstack/vue-query";
 import type { SelectOption } from "@crescent/ui/types/ui";
-import type { GitHubAccountResponse, Page, SyncRunResponse, UserMeResponse } from "~/types/api";
+import type { ConnectedAccountResponse, Page, SyncRunResponse, UserMeResponse } from "~/types/api";
 
 definePageMeta({ middleware: "auth" });
 
@@ -21,26 +21,21 @@ const { repositories, repoName } = useRepositories();
 const me = computed(() => auth.user.value as UserMeResponse | null);
 const isPlatformAdmin = computed(() => me.value?.is_platform_admin === true);
 
-// 404 is the not-connected state, not an error.
+// Not connected is `account: null` inside a 200, so the state most people start in is an
+// answer rather than an error.
 const {
-  data: account,
+  data: accountEnvelope,
   isPending: accountPending,
   isError: accountFailed,
   error: accountError,
 } = useQuery({
   queryKey: ["github-account"],
   retry: false,
-  queryFn: async () => {
-    try {
-      return await api.request<GitHubAccountResponse>("/github/account");
-    } catch (err: unknown) {
-      if (httpStatus(err) === 404) return null;
-      throw err;
-    }
-  },
+  queryFn: () => api.request<ConnectedAccountResponse>("/github/account"),
 });
 
-const connected = computed(() => account.value !== null && account.value !== undefined);
+const account = computed(() => accountEnvelope.value?.account ?? null);
+const connected = computed(() => account.value !== null);
 
 const repoFilter = computed({
   get: () => (route.query.repo ? Number(route.query.repo) : null),
@@ -68,6 +63,40 @@ const lastRun = computed(() => rows.value[0] ?? null);
 const failing = computed(() => failedRuns(rows.value));
 const next = computed(() => nextScheduledRun());
 
+/* The stale-sync notice can be put away, and the dismissal is stored against the set of
+   runs that are failing rather than against the notice. Read that way, closing it says
+   "I have seen these five", not "stop telling me about failures" — the next failure has a
+   different fingerprint and raises the notice again. A warning that can be silenced for
+   good while the thing it warns about carries on is worse than no warning.
+
+   `${authStoragePrefix}.<name>` in localStorage is the layer's key format (see
+   composables/useTokenStorage.ts); this is a preference rather than a credential, but a
+   second format for one key would only be a second thing to remember. */
+const STALE_KEY = `${useRuntimeConfig().public.authStoragePrefix}.sync_stale_dismissed`;
+const staleFingerprint = computed(() => failureFingerprint(rows.value));
+const staleDismissed = ref<string | null>(null);
+const staleVisible = computed(
+  () => failing.value.length > 0 && staleDismissed.value !== staleFingerprint.value,
+);
+
+onMounted(() => {
+  try {
+    staleDismissed.value = localStorage.getItem(STALE_KEY);
+  } catch {
+    // Storage is unreadable in some private-browsing modes. The notice simply stays.
+  }
+});
+
+function dismissStale() {
+  staleDismissed.value = staleFingerprint.value;
+  try {
+    localStorage.setItem(STALE_KEY, staleFingerprint.value);
+  } catch {
+    // Unwritable storage costs the dismissal its persistence, not this visit.
+  }
+  announce("Stale sync notice dismissed. It returns if another run fails.");
+}
+
 const visited = computed(() => {
   const ids = new Set<number>();
   for (const run of rows.value) if (run.repo_id !== null) ids.add(run.repo_id);
@@ -87,10 +116,18 @@ const openRun = ref<number | null>(null);
 
 const connecting = ref(false);
 
+/* One handoff, two endpoints. /github/connect is the first authorisation. /github/reconnect
+   is for an account that is already stored and only needs wider access: it hands back a URL
+   and deliberately leaves the stored token alone, so the connection in place keeps working
+   until GitHub confirms the new one. Nothing is lost by starting it and walking away. */
 async function connect() {
   connecting.value = true;
+  const again = connected.value;
   try {
-    const res = await api.request<{ authorize_url: string }>("/github/connect");
+    const res = await api.request<{ authorize_url: string }>(
+      again ? "/github/reconnect" : "/github/connect",
+      { method: again ? "POST" : "GET" },
+    );
     // Same tab on purpose: window.open after an await is outside the click's call stack
     // and gets blocked as a popup.
     window.location.href = res.authorize_url;
@@ -193,7 +230,7 @@ onMounted(() => {
           failed is a week of missing evidence rather than a slow page.
         </p>
       </div>
-      <p class="mono flex shrink-0 items-center gap-2 rounded-md bg-sunken px-2.5 py-2 text-[11px] ring-1 ring-inset ring-line-subtle">
+      <p class="mono flex shrink-0 items-center gap-2 rounded-md bg-sunken px-2.5 py-2 text-[12px] ring-1 ring-inset ring-line-subtle">
         <span :class="[MONO_LABEL, 'text-ink-faint']">get</span>
         <span class="text-ink">/github/sync-runs</span>
         <span class="hidden text-ink-muted sm:inline">?limit=50</span>
@@ -209,7 +246,7 @@ onMounted(() => {
       <div class="flex flex-wrap items-start justify-between gap-4">
         <div class="min-w-0">
           <Eyebrow>Connection</Eyebrow>
-          <h2 id="conn-heading" class="mt-2 flex flex-wrap items-center gap-2.5 text-[14px] font-medium tracking-tight">
+          <h2 id="conn-heading" class="mt-2 flex flex-wrap items-center gap-2.5 text-[18px] font-semibold leading-tight tracking-[-0.02em] text-ink">
             <template v-if="accountPending">
               <span class="text-ink-muted">Checking…</span>
             </template>
@@ -231,6 +268,9 @@ onMounted(() => {
               :busy="syncNow.isPending.value"
               @click="syncNow.mutate()"
             >Sync now</Btn>
+            <Btn size="sm" variant="secondary" data-test="reconnect" :busy="connecting" @click="connect">
+              Reconnect
+            </Btn>
             <Btn size="sm" variant="destructive" @click="confirmDisconnect = true">Disconnect</Btn>
           </template>
           <Btn v-else-if="!accountPending" size="sm" arrow :busy="connecting" @click="connect">
@@ -272,8 +312,14 @@ onMounted(() => {
           Running a sync by hand is a platform-admin action, so there is no button for it here. The
           scheduled run at 02:00 UTC is unaffected.
         </p>
-        <p class="mono mt-3 text-[11px] leading-relaxed text-ink-faint">
-          get /github/account · delete /github/account · post /github/sync
+        <p class="mt-3 max-w-[80ch] text-[12.5px] leading-relaxed text-ink-muted" data-test="reconnect-note">
+          Reconnect sends you to GitHub to approve access again, which is what widens a
+          connection that cannot reach everything you need. Approving replaces this connection in
+          place; the one above keeps working until it does, so starting it and changing your mind
+          costs nothing.
+        </p>
+        <p class="mono mt-3 text-[12px] leading-relaxed text-ink-faint">
+          get /github/account · post /github/reconnect · delete /github/account · post /github/sync
         </p>
       </template>
 
@@ -286,14 +332,14 @@ onMounted(() => {
         </p>
         <ol class="mt-4 space-y-2 border-t border-line-subtle pt-4 text-[12.5px] leading-relaxed text-ink-muted">
           <li class="flex gap-2">
-            <span class="mono shrink-0 text-[11px] text-ink-faint">01</span>
+            <span class="mono shrink-0 text-[12px] text-ink-faint">01</span>
             <span>
               <span class="mono text-[12px] text-ink">GET /github/connect</span> returns an
               authorize URL and you land on GitHub.
             </span>
           </li>
           <li class="flex gap-2">
-            <span class="mono shrink-0 text-[11px] text-ink-faint">02</span>
+            <span class="mono shrink-0 text-[12px] text-ink-faint">02</span>
             <span>
               Approving sends you back to
               <span class="mono text-[12px] text-ink">/github/oauth/callback</span>, which
@@ -305,7 +351,7 @@ onMounted(() => {
             </span>
           </li>
           <li class="flex gap-2">
-            <span class="mono shrink-0 text-[11px] text-ink-faint">03</span>
+            <span class="mono shrink-0 text-[12px] text-ink-faint">03</span>
             <span>
               Nothing appears until a run finishes. Until then your counts stay at zero, which
               reads exactly like having done no work.
@@ -353,7 +399,7 @@ onMounted(() => {
       style="animation-delay: 120ms"
     >
       <Eyebrow>The cursor</Eyebrow>
-      <h2 id="cursor-heading" class="mt-2 text-[14px] font-medium tracking-tight">
+      <h2 id="cursor-heading" class="mt-2 text-[18px] font-semibold leading-tight tracking-[-0.02em] text-ink">
         Each run resumes where the last one stopped
       </h2>
       <p class="mt-2 max-w-[86ch] text-[12.5px] leading-relaxed text-ink-muted">
@@ -391,12 +437,14 @@ onMounted(() => {
 
     <!-- Something is wrong right now. -->
     <div
-      v-if="failing.length"
-      class="sec mt-4 flex flex-wrap items-start gap-3 rounded-md bg-warn-surface px-4 py-3"
+      v-if="staleVisible"
+      data-test="stale-notice"
+      role="status"
+      class="sec mt-4 flex items-start gap-3 rounded-md bg-warn-surface px-4 py-3.5"
       style="animation-delay: 120ms"
     >
       <span class="mt-0.5 shrink-0 text-warn"><Icon name="alert" /></span>
-      <p class="min-w-0 flex-1 text-[12.5px] leading-relaxed text-ink">
+      <p class="min-w-0 flex-1 text-[13px] leading-relaxed text-ink">
         <span class="font-medium">
           {{ failing.length }} of the last {{ rows.length }} runs did not complete.
         </span>
@@ -405,6 +453,15 @@ onMounted(() => {
           week. The rows are below, with the reason each one gave.
         </span>
       </p>
+      <button
+        type="button"
+        data-test="stale-dismiss"
+        aria-label="Dismiss the stale sync notice"
+        :class="[FOCUS, TAP, '-mr-1 -mt-1 shrink-0 rounded p-1.5 text-ink-muted transition-colors hover:bg-surface-hover hover:text-ink']"
+        @click="dismissStale"
+      >
+        <Icon name="x" class="h-3.5 w-3.5" />
+      </button>
     </div>
 
     <!-- Run history. -->
@@ -527,7 +584,7 @@ onMounted(() => {
       </table>
     </div>
 
-    <p class="mono mt-4 text-[11px] text-ink-muted">
+    <p class="mono mt-4 text-[12px] text-ink-muted">
       {{ rows.length }} of {{ runs?.total ?? rows.length }} runs · get
       /github/sync-runs?limit=50&offset=0<template v-if="repoFilter !== null">&repo_id={{ repoFilter }}</template>
     </p>

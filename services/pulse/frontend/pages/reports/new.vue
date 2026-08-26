@@ -105,9 +105,14 @@ const create = useMutation({
           ? "422 · nothing of yours is synced for that week, so there is nothing to draft from. A blank draft is still allowed."
           : code === 403
             ? "403 · you have no synced activity in this repository, so you cannot report on it."
-            : code === 502
-              ? "502 · the model is unavailable right now. A blank draft still works."
-              : apiMessage(err, `Could not ${mode === "generate" ? "draft" : "create"} the report.`);
+            : code === 429
+              /* The daily AI allowance arrives as a FastAPI `detail` and is the server's
+                 own wording, which says who is paying and when it resets. The ten-an-hour
+                 limit is slowapi's and carries no `detail`, so it lands on the fallback. */
+              ? apiMessage(err, "429 · that is ten generated drafts in an hour, which is the limit. A blank draft still works.")
+              : code === 502
+                ? "502 · the model is unavailable right now. A blank draft still works."
+                : apiMessage(err, `Could not ${mode === "generate" ? "draft" : "create"} the report.`);
   },
 });
 
@@ -216,7 +221,7 @@ function reset() {
             moment you choose, and everything after that is an edit.
           </p>
         </div>
-        <p class="mono flex shrink-0 items-center gap-2 rounded-md bg-sunken px-2.5 py-2 text-[11px] ring-1 ring-inset ring-line-subtle">
+        <p class="mono flex shrink-0 items-center gap-2 rounded-md bg-sunken px-2.5 py-2 text-[12px] ring-1 ring-inset ring-line-subtle">
           <span :class="[MONO_LABEL, 'text-ink-faint']">post</span>
           <span class="text-ink">/reports/generate</span>
         </p>
@@ -261,12 +266,12 @@ function reset() {
       <div class="flex flex-wrap items-start justify-between gap-3">
         <div class="min-w-0">
           <Eyebrow>Draft created</Eyebrow>
-          <h2 id="draft-heading" class="mt-2 flex flex-wrap items-center gap-2.5 text-[14px] font-medium tracking-tight">
-            <span class="mono text-ink">#{{ report.id }}</span>
-            <span class="text-ink-muted">{{ repoName(report.repo_id) }} · {{ formatDate(report.week_start) }}</span>
-            <StatusDot :tone="statusTone(report.status)" quiet>{{ statusLabel(report.status) }}</StatusDot>
+          <h2 id="draft-heading" class="mt-2 flex flex-wrap items-center gap-x-2.5 gap-y-1.5 text-[18px] font-semibold leading-tight tracking-[-0.02em] text-ink">
+            <span class="mono">#{{ report.id }}</span>
+            <span class="text-[13px] font-normal text-ink-muted">{{ reportRepoLabel(report, repoName) }} · {{ formatDate(report.week_start) }}</span>
+            <span :class="['inline-flex items-center rounded px-2 py-1 text-[12px] font-normal', statusClass(report.status)]">{{ statusLabel(report.status) }}</span>
           </h2>
-          <p class="mono mt-2 text-[11px] text-ink-muted">
+          <p class="mono mt-2 text-[12px] text-ink-muted">
             <template v-if="report.generated_at">
               generated_at {{ report.generated_at }} · prompt_version {{ report.prompt_version ?? "none" }}
             </template>
@@ -285,8 +290,8 @@ function reset() {
             <label :for="`new-${field.key}`" class="text-[13px] font-medium tracking-tight text-ink">
               {{ field.label }}
             </label>
-            <span class="mono text-[11px] text-ink-faint">{{ field.api }}</span>
-            <span class="mono ml-auto text-[11px] text-ink-muted">
+            <span class="mono text-[12px] text-ink-faint">{{ field.api }}</span>
+            <span class="mono ml-auto text-[12px] text-ink-muted">
               {{ fields[field.key].trim().length }} characters
             </span>
           </div>
@@ -294,7 +299,7 @@ function reset() {
             :id="`new-${field.key}`"
             v-model="fields[field.key]"
             :rows="field.key === 'summary_manager' ? 7 : 4"
-            :class="[FOCUS, 'mt-2 w-full resize-y rounded-md bg-sunken px-3 py-2.5 text-[12.5px] leading-relaxed text-ink ring-1 ring-inset ring-line-subtle transition-colors placeholder:text-ink-faint hover:ring-line']"
+            :class="[FOCUS, 'mt-2 w-full resize-y rounded-md bg-sunken px-3 py-2.5 text-[12.5px] leading-relaxed text-ink ring-1 ring-inset ring-line transition-colors placeholder:text-ink-faint hover:ring-line-strong']"
           />
         </div>
       </div>
@@ -311,7 +316,7 @@ function reset() {
           Submit for review
         </Btn>
         <Btn variant="secondary" :busy="save.isPending.value" @click="save.mutate()">Save draft</Btn>
-        <p class="mono ml-auto text-[11px] text-ink-muted">
+        <p class="mono ml-auto text-[12px] text-ink-muted">
           patch /reports/{{ report.id }} · post /reports/{{ report.id }}/submit
         </p>
       </div>

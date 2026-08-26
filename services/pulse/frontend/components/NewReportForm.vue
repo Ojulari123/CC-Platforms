@@ -105,7 +105,7 @@ const blocked = computed(() => props.duplicate !== null || props.working !== nul
             @update:model-value="emit('update:week', $event)"
           />
         </div>
-        <p class="mono pb-2 text-[11px] text-ink-muted">
+        <p class="mono pb-2 text-[12px] text-ink-muted">
           repo_id {{ repoId ?? "—" }} · week_start {{ week }} · dept_id
           {{ repo?.dept_id ?? "null (unfiled)" }}
         </p>
@@ -196,7 +196,7 @@ const blocked = computed(() => props.duplicate !== null || props.working !== nul
         <h2 id="material-heading" class="text-[13px] font-medium tracking-tight text-ink">
           What a draft would be written from
         </h2>
-        <p class="mono text-[11px] text-ink-muted">your work only · week of {{ week }}</p>
+        <p class="mono text-[12px] text-ink-muted">your work only · week of {{ week }}</p>
       </div>
 
       <div class="mt-3 grid grid-cols-2 gap-3 md:grid-cols-4">
@@ -268,7 +268,7 @@ const blocked = computed(() => props.duplicate !== null || props.working !== nul
         >
           {{ working === "blank" ? "Creating" : "Start blank" }}
         </Btn>
-        <p class="mono ml-auto text-[11px] text-ink-muted">post /reports/generate · post /reports</p>
+        <p class="mono ml-auto text-[12px] text-ink-muted">post /reports/generate · post /reports</p>
       </div>
 
       <p v-if="errorMessage" role="alert" class="mt-3 max-w-[86ch] text-[12.5px] leading-relaxed text-bad">
