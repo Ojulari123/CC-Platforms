@@ -78,12 +78,13 @@ something's still open. **Updated per session, not per commit.**
   `/repos/{repo}/commits` defaults to the default branch. Work that lives on a feature
   branch and is squash-merged appears; work on a long-lived branch that never merges
   never shows up in anyone's activity or report.
-- **The sync cursor filters by commit date, not push date.** `_sync_repo` passes
-  `repo.last_synced_at` as GitHub's `since` (`services/pulse/app/services/sync.py:142`),
-  which filters on the commit's own timestamp. A commit authored *before* the cursor but
-  pushed after it (a rebase, a merge of an old branch, a force-push) is skipped and
-  never picked up again. Needs a cursor that tolerates lateness (overlap window) or a
-  push-event source.
+- ~~**The sync cursor filters by commit date, not push date.**~~ **DELIVERED.** The
+  cursor still goes to GitHub's `since`, which filters on the commit's own timestamp, but
+  `_commit_window` (`services/pulse/app/services/sync.py:260`) now subtracts an overlap
+  before asking, so a commit dated behind the cursor and pushed after it is re-requested
+  rather than lost. Re-asking is cheap because rows upsert by `(repo, sha)`. A commit
+  older than the overlap window is still missed, so a push-event source remains the only
+  complete answer.
 - **A repo with no department and no lead/deputy has no approver.** Sync creates
   repositories with `dept_id`/`lead_user_id`/`deputy_user_id` left null
   (`sync.py:_upsert_repository`), and `_can_approve` (`app/services/reports.py:49`)
@@ -351,6 +352,41 @@ is confirmed sending for real.
   service tokens. Not consolidated because the module's profile/leaver behaviour
   (`ProfileAnswer`, chunk-tolerant lookups, `resolve_profiles_safe`) is covered by ~37
   tests that would all need rewriting. Worth doing when that path is next touched.
+- **Three new columns have no backfill and fill in only as the sync re-lists a row.**
+  `pull_requests.closed_at` (migration `0016_pull_request_closed_at.py`) and
+  `issues.assignee_user_id` / `assignee_github_login` / `milestone_title` /
+  `milestone_due_on` (migration `0017_issue_assignee_milestone.py`) are populated in the
+  sync (`services/pulse/app/services/sync.py:218,243-251`) but GitHub only re-lists an
+  item it considers updated. A pull request closed long ago, or an issue nobody touches
+  again, keeps a null forever. Closing it means one full re-list per repository, with
+  `since` dropped, which is a rate-limit cost nobody has costed yet.
+- **`commits.committed_at` rows written before the committer-date fix cannot be told
+  apart.** The sync has stored the committer date since `0515da9`; anything synced before
+  that holds the author date, and nothing in the database distinguishes the two. Only a
+  re-sync corrects them, and the same full re-list applies.
+- **Only the first assignee of an issue is stored.** GitHub sends `assignees` as a list;
+  `_sync_issues` keeps `assignee`, the first of them
+  (`services/pulse/app/services/sync.py:243`). An issue shared between three people reads
+  as one person's queued work in next week's goals. Deliberate for now: a report describes
+  one person's plan, and three assignees are not three intentions.
+- **Next week's goals read journal entries from the report's own week only.**
+  `_stated_intent` scopes them to the same window as the activity
+  (`services/pulse/app/services/generation.py:71`), chosen so a report reads the same way
+  whenever it is regenerated. Somebody who writes their plan on the Monday after has it
+  missed. A trailing window would catch it and would make an old report's goals change
+  under it; neither is obviously right.
+- **An assigned open issue appears in every week's goals until it closes.** Not
+  date-bounded, on purpose, because queued work stays queued
+  (`services/pulse/app/services/generation.py:86`). The effect is the same issue repeated
+  across consecutive reports with nothing marking it as already mentioned.
+- **A week with journal entries but no GitHub activity still refuses to generate.**
+  `_total_items` counts commits, pull requests, reviews and issues only
+  (`services/pulse/app/services/generation.py:156`), so a week spent blocked and written
+  up in the journal produces `NoActivityError` rather than a short report that says so.
+- **Playwright is not in the repo or in CI.** The browser check of the chat page
+  (`services/pulse/frontend/pages/chat.vue:308-330`) was run from a throwaway install
+  outside the tree, so nothing reproduces it. The Vitest component tests cover the same
+  logic; what is missing is the real-browser regression.
 - **`.dockerignore` is ineffective for Pulse and Forge.** Both build with
   `context: .` (repo root), where no `/.dockerignore` exists, so every build ships
   the full ~537MB context. Identity builds from its own directory and is fine.

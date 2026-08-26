@@ -1,6 +1,9 @@
 services:
   postgres:
-    image: postgres:16-alpine
+    # pgvector's image, not plain postgres: it is the same PG16 plus the `vector`
+    # extension, which Pulse's repo index needs and stock postgres has no way to add.
+    # Production (Neon) ships pgvector already.
+    image: pgvector/pgvector:pg16
     # CC_ prefix on the host side so nothing else on the machine (or another
     # project's shell exports) collides with these. Inside the container the
     # Postgres image still needs POSTGRES_USER/PASSWORD/DB — we remap here.
@@ -212,6 +215,12 @@ services:
       NUXT_PUBLIC_IDENTITY_WEB_URL: http://localhost:3002
       NUXT_PUBLIC_SSO_AUTHORIZE_URL: http://localhost:3002/sso/authorize
       NUXT_PUBLIC_SSO_RETURN_ALLOWLIST: http://localhost:3000/auth/callback
+      # Where the theme cookie is written. Unset here on purpose: in dev the three
+      # products are three ports on localhost and a cookie ignores the port, so one
+      # host-only cookie already reaches all three. Set it to the parent domain
+      # (".example.com") only when the products sit on different subdomains — see
+      # DEPLOY.md.
+      # NUXT_PUBLIC_THEME_COOKIE_DOMAIN: ""
     ports:
       - "3000:3000"
     healthcheck:
@@ -233,6 +242,12 @@ services:
       NUXT_PUBLIC_IDENTITY_WEB_URL: http://localhost:3002
       NUXT_PUBLIC_SSO_AUTHORIZE_URL: http://localhost:3002/sso/authorize
       NUXT_PUBLIC_SSO_RETURN_ALLOWLIST: http://localhost:3001/auth/callback
+      # Where the theme cookie is written. Unset here on purpose: in dev the three
+      # products are three ports on localhost and a cookie ignores the port, so one
+      # host-only cookie already reaches all three. Set it to the parent domain
+      # (".example.com") only when the products sit on different subdomains — see
+      # DEPLOY.md.
+      # NUXT_PUBLIC_THEME_COOKIE_DOMAIN: ""
     ports:
       - "3001:3000"
     healthcheck:
@@ -259,6 +274,12 @@ services:
       NUXT_PUBLIC_FORGE_API_URL: http://localhost:8003
       NUXT_PUBLIC_SSO_AUTHORIZE_URL: http://localhost:3002/sso/authorize
       NUXT_PUBLIC_SSO_RETURN_ALLOWLIST: http://localhost:3000/auth/callback,http://localhost:3001/auth/callback,http://localhost:3002/auth/callback
+      # Where the theme cookie is written. Unset here on purpose: in dev the three
+      # products are three ports on localhost and a cookie ignores the port, so one
+      # host-only cookie already reaches all three. Set it to the parent domain
+      # (".example.com") only when the products sit on different subdomains — see
+      # DEPLOY.md.
+      # NUXT_PUBLIC_THEME_COOKIE_DOMAIN: ""
     ports:
       - "3002:3000"
     healthcheck:
