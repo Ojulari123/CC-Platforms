@@ -369,7 +369,7 @@ const readout = computed(() => `dept_id ${deptId.value} · ${total.value} ${tota
       <h1 class="mt-3 text-[clamp(1.5rem,2.2vw,1.9rem)] font-semibold leading-[1.05] tracking-[-0.035em]">
         {{ dept.data.value?.name ?? "Department" }}
       </h1>
-      <p v-if="dept.data.value" class="mono mt-1.5 text-[11px] text-ink-muted">
+      <p v-if="dept.data.value" class="mono mt-1.5 text-[12px] text-ink-muted">
         dept_id {{ dept.data.value.id }} · {{ dept.data.value.slug }}
       </p>
     </header>
@@ -412,7 +412,7 @@ const readout = computed(() => `dept_id ${deptId.value} · ${total.value} ${tota
           <section aria-label="Department head" class="rounded-md bg-surface/40 px-4 py-3.5 ring-1 ring-inset ring-line-subtle">
             <div class="flex flex-wrap items-start justify-between gap-3">
               <div class="min-w-0">
-                <h2 class="text-[14px] font-medium tracking-tight">Head</h2>
+                <h2 class="text-[18px] font-semibold leading-tight tracking-[-0.02em] text-ink">Head</h2>
                 <p class="mt-1 max-w-[64ch] text-[12.5px] leading-relaxed text-ink-muted">
                   One named person. Being head grants nothing on its own — every permission check reads the role
                   on the membership row, never this field.
@@ -440,8 +440,8 @@ const readout = computed(() => `dept_id ${deptId.value} · ${total.value} ${tota
               >
                 Save head
               </Btn>
-              <p v-if="!(deptAdmins.data.value?.items ?? []).length" class="text-[11px] leading-relaxed text-ink-muted">
-                Nobody here holds <span class="mono text-[11px]">admin</span>, so there is nobody who may be head yet.
+              <p v-if="!(deptAdmins.data.value?.items ?? []).length" class="text-[12px] leading-relaxed text-ink-muted">
+                Nobody here holds <span class="mono text-[12px]">admin</span>, so there is nobody who may be head yet.
               </p>
             </div>
             <p v-if="headError" role="alert" class="mt-3 rounded bg-bad-surface px-3 py-2 text-[12px] text-bad">
@@ -453,8 +453,8 @@ const readout = computed(() => `dept_id ${deptId.value} · ${total.value} ${tota
           <section aria-label="Roster" class="mt-5 overflow-hidden rounded-md bg-surface/40 ring-1 ring-inset ring-line-subtle">
             <header class="flex flex-wrap items-center gap-3 border-b border-line-subtle px-4 py-3">
               <div class="min-w-0">
-                <h2 class="text-[14px] font-medium tracking-tight">Roster</h2>
-                <p class="mono mt-0.5 text-[11px] text-ink-muted">
+                <h2 class="text-[18px] font-semibold leading-tight tracking-[-0.02em] text-ink">Roster</h2>
+                <p class="mono mt-0.5 text-[12px] text-ink-muted">
                   {{ roleCount("admin") }} admin · {{ roleCount("manager") }} manager ·
                   {{ roleCount("engineer") }} engineer
                 </p>
@@ -528,28 +528,31 @@ const readout = computed(() => `dept_id ${deptId.value} · ${total.value} ${tota
                   :class="[
                     FOCUS,
                     'flex w-full items-center gap-3 px-4 py-2.5 text-left transition-colors hover:bg-surface-hover/60',
-                    !m.is_active && 'opacity-60',
                   ]"
                   @click="openRow = openRow === m.user_id ? null : m.user_id"
                 >
                   <Avatar :name="fullName(m.first_name, m.last_name, m.email)" size="sm" />
+                  <!-- An inactive member dims its type, not the row. This row is the
+                       disclosure control, so `opacity-60` faded a live button — and the
+                       `<li>` rule with it, at 1.40:1. `--ink-disabled` marks the record
+                       without dimming the affordance. -->
                   <span class="min-w-0 flex-1">
                     <span class="flex items-center gap-1.5">
-                      <span class="truncate text-[12.5px] text-ink">
+                      <span :class="['truncate text-[12.5px]', m.is_active ? 'text-ink' : 'text-ink-disabled']">
                         {{ fullName(m.first_name, m.last_name, m.email) }}
                       </span>
                       <span
                         v-if="dept.data.value.head_user_id === m.user_id"
-                        class="mono shrink-0 rounded bg-sunken px-1 py-px text-[11px] uppercase tracking-[0.08em] text-ink-muted"
+                        class="mono shrink-0 rounded bg-sunken px-1 py-px text-[12px] uppercase tracking-[0.08em] text-ink-muted"
                       >head</span>
                       <span
                         v-if="m.user_id === me?.id"
-                        class="mono shrink-0 rounded bg-sunken px-1 py-px text-[11px] uppercase tracking-[0.08em] text-ink-muted"
+                        class="mono shrink-0 rounded bg-sunken px-1 py-px text-[12px] uppercase tracking-[0.08em] text-ink-muted"
                       >you</span>
                     </span>
-                    <span class="mono mt-0.5 block truncate text-[11px] text-ink-muted">{{ m.email }}</span>
+                    <span :class="['mono mt-0.5 block truncate text-[12px]', m.is_active ? 'text-ink-muted' : 'text-ink-disabled']">{{ m.email }}</span>
                   </span>
-                  <span class="hidden w-[74px] shrink-0 text-[12px] text-ink-muted sm:block">{{ m.role }}</span>
+                  <span :class="['hidden w-[74px] shrink-0 text-[12px] sm:block', m.is_active ? 'text-ink-muted' : 'text-ink-disabled']">{{ m.role }}</span>
                   <Icon
                     name="chevronDown"
                     :class="['h-3.5 w-3.5 shrink-0 text-ink-faint transition-transform', openRow === m.user_id && 'rotate-180']"
@@ -627,7 +630,7 @@ const readout = computed(() => `dept_id ${deptId.value} · ${total.value} ${tota
           </p>
 
           <div v-if="total > LIMIT" class="mt-3 flex flex-wrap items-center justify-between gap-3">
-            <p class="mono text-[11px] text-ink-muted">
+            <p class="mono text-[12px] text-ink-muted">
               {{ offset + 1 }}–{{ Math.min(offset + LIMIT, total) }} of {{ total }}
             </p>
             <div class="flex gap-2">
@@ -682,7 +685,7 @@ const readout = computed(() => `dept_id ${deptId.value} · ${total.value} ${tota
               <li v-for="invite in invites.data.value" :key="invite.id" class="flex items-center gap-3 py-2.5">
                 <span class="min-w-0 flex-1">
                   <span class="mono block truncate text-[12px] text-ink-muted">{{ invite.email }}</span>
-                  <span class="mono mt-0.5 block text-[11px] text-ink-muted">
+                  <span class="mono mt-0.5 block text-[12px] text-ink-muted">
                     {{ invite.role }} · {{ expiresIn(invite.expires_at) }}
                   </span>
                 </span>
@@ -693,7 +696,7 @@ const readout = computed(() => `dept_id ${deptId.value} · ${total.value} ${tota
 
           <!-- ── delete ── -->
           <section v-if="isPlatformAdmin" aria-label="Delete this department" class="mt-8 border-t border-line-strong pt-5">
-            <h2 class="mono text-[11px] uppercase tracking-[0.08em] text-ink-faint">Delete this department</h2>
+            <h2 class="mono text-[12px] uppercase tracking-[0.08em] text-ink-faint">Delete this department</h2>
             <p class="mt-2 max-w-[70ch] text-[12.5px] leading-relaxed text-ink-muted">
               Only for one created by mistake. Everybody has to be removed first — the API refuses while anyone
               is still a member rather than leaving membership rows pointing at nothing.
@@ -728,10 +731,10 @@ const readout = computed(() => `dept_id ${deptId.value} · ${total.value} ${tota
             type="text"
             autocomplete="off"
             :aria-invalid="renameError !== null"
-            :class="[FOCUS, 'mt-1.5 w-full rounded-md bg-sunken px-2.5 py-2 text-[12.5px] text-ink ring-1 ring-inset ring-line-subtle']"
+            :class="[FOCUS, 'mt-1.5 w-full rounded-md bg-sunken px-2.5 py-2 text-[12.5px] text-ink ring-1 ring-inset ring-line']"
             @keydown.enter.prevent="submitRename"
           />
-          <span class="mt-1.5 block text-[11px] leading-relaxed text-ink-faint">
+          <span class="mt-1.5 block text-[12px] leading-relaxed text-ink-faint">
             The id and the slug stay as they are, so nothing that already points here breaks.
           </span>
         </label>
@@ -754,7 +757,7 @@ const readout = computed(() => `dept_id ${deptId.value} · ${total.value} ${tota
       @close="removing = null"
     >
       <div v-if="removing" class="space-y-3">
-        <p class="mono text-[11px] text-ink-muted">
+        <p class="mono text-[12px] text-ink-muted">
           user_id {{ removing.user_id }} · {{ removing.role }} · dept_id {{ deptId }}
         </p>
         <p class="text-[12px] leading-relaxed text-ink-muted">
@@ -776,7 +779,7 @@ const readout = computed(() => `dept_id ${deptId.value} · ${total.value} ${tota
           <div class="mt-1.5">
             <Select v-model="replacement" label="Replacement" placeholder="Nobody" :options="replacementOptions" />
           </div>
-          <p class="mt-1.5 text-[11px] leading-relaxed text-ink-faint">
+          <p class="mt-1.5 text-[12px] leading-relaxed text-ink-faint">
             If they lead a team or hold the headship, somebody has to take it over — or the post is left empty
             on purpose.
           </p>
@@ -817,7 +820,7 @@ const readout = computed(() => `dept_id ${deptId.value} · ${total.value} ${tota
             type="search"
             autocomplete="off"
             placeholder="Name or email"
-            :class="[FOCUS, 'mt-1.5 w-full rounded-md bg-sunken px-2.5 py-2 text-[12.5px] text-ink ring-1 ring-inset ring-line-subtle placeholder:text-ink-faint']"
+            :class="[FOCUS, 'mt-1.5 w-full rounded-md bg-sunken px-2.5 py-2 text-[12.5px] text-ink ring-1 ring-inset ring-line placeholder:text-ink-faint']"
           />
         </label>
         <div>
@@ -842,7 +845,7 @@ const readout = computed(() => `dept_id ${deptId.value} · ${total.value} ${tota
               <span class="block truncate text-[12.5px] text-ink">
                 {{ fullName(person.first_name, person.last_name, person.email) }}
               </span>
-              <span class="mono block truncate text-[11px] text-ink-muted">{{ person.email }}</span>
+              <span class="mono block truncate text-[12px] text-ink-muted">{{ person.email }}</span>
             </span>
             <Btn
               size="sm"

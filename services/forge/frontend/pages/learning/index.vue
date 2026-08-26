@@ -34,7 +34,7 @@ const WEEK6_TAG = `${MONO_LABEL} inline-flex shrink-0 items-center rounded borde
             :class="[FOCUS, TAP, 'block h-full rounded-md bg-surface/25 p-5 ring-1 ring-inset ring-line-subtle transition-colors hover:bg-surface-hover/50 hover:ring-line']"
           >
             <div class="flex flex-wrap items-center justify-between gap-3">
-              <h2 class="text-[15px] font-semibold tracking-[-0.015em]">{{ path.title }}</h2>
+              <h2 class="text-[18px] font-semibold leading-tight tracking-[-0.02em] text-ink">{{ path.title }}</h2>
               <span :class="WEEK6_TAG">Week 6 · not built</span>
             </div>
             <p class="mt-2.5 max-w-[52ch] text-[13px] leading-relaxed text-ink-muted">{{ path.summary }}</p>

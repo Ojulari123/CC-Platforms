@@ -158,13 +158,13 @@ const readout = computed(() => `${count.value} ${count.value === 1 ? "department
           </p>
         </div>
 
-        <p v-if="truncated" class="mono mt-2 text-[11px] leading-relaxed text-ink-muted">
+        <p v-if="truncated" class="mono mt-2 text-[12px] leading-relaxed text-ink-muted">
           rosters read {{ ROSTER_PAGE }} members per department, which is the API's page cap
         </p>
 
         <!-- ── outside every department ── -->
         <div class="mt-5 border-t border-line-strong pt-3">
-          <p class="mono flex items-center gap-2 text-[11px] uppercase tracking-[0.08em] text-warn">
+          <p class="mono flex items-center gap-2 text-[12px] uppercase tracking-[0.08em] text-warn">
             <Icon name="alert" class="h-3.5 w-3.5 shrink-0" />
             Outside every department
           </p>
@@ -191,7 +191,7 @@ const readout = computed(() => `${count.value} ${count.value === 1 ? "department
                   <span class="block truncate text-[12px] text-ink">
                     {{ fullName(person.first_name, person.last_name, person.email) }}
                   </span>
-                  <span class="mono block truncate text-[11px] text-ink-muted">{{ person.email }}</span>
+                  <span class="mono block truncate text-[12px] text-ink-muted">{{ person.email }}</span>
                 </span>
                 <StatusDot v-if="person.is_active" tone="warn" quiet>unplaced</StatusDot>
                 <StatusDot v-else tone="muted" quiet>inactive</StatusDot>
@@ -199,7 +199,7 @@ const readout = computed(() => `${count.value} ${count.value === 1 ? "department
             </ul>
             <p class="mt-3 text-[12.5px] leading-relaxed text-ink-muted">
               {{ unplaced.length }} {{ unplaced.length === 1 ? "account" : "accounts" }} with
-              <span class="mono text-[11px]">dept_id</span> null. They can sign in and write their own report;
+              <span class="mono text-[12px]">dept_id</span> null. They can sign in and write their own report;
               no manager sees it, because a report is read through the department it was filed in.
             </p>
           </template>
@@ -209,7 +209,7 @@ const readout = computed(() => `${count.value} ${count.value === 1 ? "department
       <!-- ── the right pane ── -->
       <div class="sec min-w-0" style="animation-delay: 80ms">
         <div class="rounded-md bg-surface/40 px-4 py-4 ring-1 ring-inset ring-line-subtle">
-          <h2 class="text-[14px] font-medium tracking-tight">Pick a department to open its roster</h2>
+          <h2 class="text-[18px] font-semibold leading-tight tracking-[-0.02em] text-ink">Pick a department to open its roster</h2>
           <p class="mt-1.5 max-w-[70ch] text-[12.5px] leading-relaxed text-ink-muted">
             Each one has its own URL, so a link to
             <span class="mono text-[12px]">/departments/6</span> reaches the same place tomorrow. Teams sit
@@ -230,7 +230,7 @@ const readout = computed(() => `${count.value} ${count.value === 1 ? "department
               <Cross class="mt-1 shrink-0" />
               <p class="min-w-0 text-[12.5px] leading-relaxed text-ink-muted">
                 <span class="font-medium text-ink">A department can have no head.</span>
-                <span class="mono text-[11px]">head_user_id</span> is nullable and the department works anyway.
+                <span class="mono text-[12px]">head_user_id</span> is nullable and the department works anyway.
                 Being head grants nothing on its own — every check reads the role on the membership row.
               </p>
             </div>
@@ -274,7 +274,7 @@ const readout = computed(() => `${count.value} ${count.value === 1 ? "department
             placeholder="Engineering"
             :aria-invalid="formError !== null"
             :aria-describedby="formError ? 'dept-error' : undefined"
-            :class="[FOCUS, 'mt-1.5 w-full rounded-md bg-sunken px-2.5 py-2 text-[12.5px] text-ink ring-1 ring-inset ring-line-subtle placeholder:text-ink-faint']"
+            :class="[FOCUS, 'mt-1.5 w-full rounded-md bg-sunken px-2.5 py-2 text-[12.5px] text-ink ring-1 ring-inset ring-line placeholder:text-ink-faint']"
             @keydown.enter.prevent="submitCreate"
           />
         </label>

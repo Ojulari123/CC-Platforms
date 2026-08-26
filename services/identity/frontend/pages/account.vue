@@ -358,11 +358,11 @@ useHead({ title: "Account" });
         </h1>
 
         <div v-if="me" class="sec mt-7 flex flex-wrap items-baseline gap-x-3 gap-y-1.5" style="animation-delay: 80ms">
-          <span class="mono text-[11px] text-ink-muted">{{ me.email }}</span>
+          <span class="mono text-[12px] text-ink-muted">{{ me.email }}</span>
           <span class="text-ink-faint" aria-hidden="true">·</span>
-          <span class="mono text-[11px] text-ink-muted">user_id {{ me.id }}</span>
+          <span class="mono text-[12px] text-ink-muted">user_id {{ me.id }}</span>
           <span class="text-ink-faint" aria-hidden="true">·</span>
-          <span class="mono text-[11px] text-ink-muted">{{ membership?.dept_name ?? "Unplaced" }}</span>
+          <span class="mono text-[12px] text-ink-muted">{{ membership?.dept_name ?? "Unplaced" }}</span>
         </div>
 
         <p class="sec mt-5 max-w-[52ch] text-[13.5px] leading-relaxed text-ink-muted" style="animation-delay: 100ms">
@@ -690,19 +690,21 @@ useHead({ title: "Account" });
             <li
               v-for="row in rows"
               :key="row.session_id"
-              :class="['flex flex-wrap items-baseline justify-between gap-x-6 gap-y-2 border-b border-line-subtle py-3.5', row.is_revoked ? 'opacity-60' : '']"
+              class="flex flex-wrap items-baseline justify-between gap-x-6 gap-y-2 border-b border-line-subtle py-3.5"
             >
+              <!-- Same rule as the Sessions table: a revoked family dims its type, never
+                   the whole row, so the rule between rows keeps its full weight. -->
               <div class="min-w-0">
                 <p class="flex flex-wrap items-center gap-2">
-                  <span class="mono text-[12.5px] text-ink">{{ row.session_id }}</span>
+                  <span :class="['mono text-[12.5px]', row.is_revoked ? 'text-ink-disabled' : 'text-ink']">{{ row.session_id }}</span>
                   <span v-if="row.is_current" :class="[MONO_LABEL, 'rounded bg-sunken px-1.5 py-px text-ink-muted']">this device</span>
                 </p>
-                <p class="mono mt-1 text-[11px] text-ink-muted">
+                <p :class="['mono mt-1 text-[12px]', row.is_revoked ? 'text-ink-disabled' : 'text-ink-muted']">
                   started {{ formatDateTime(row.started_at) }} · {{ row.rotations }} rotations · expires {{ expiryLabel(row) }}
                 </p>
               </div>
               <div class="text-right">
-                <span class="mono block text-[12.5px] text-ink">{{ formatDateTime(row.last_used_at) }}</span>
+                <span :class="['mono block text-[12.5px]', row.is_revoked ? 'text-ink-disabled' : 'text-ink']">{{ formatDateTime(row.last_used_at) }}</span>
                 <StatusDot :tone="STATE_TONE[sessionState(row)] ?? 'muted'" quiet>{{ sessionState(row) }}</StatusDot>
               </div>
             </li>
@@ -747,7 +749,7 @@ useHead({ title: "Account" });
           <p class="text-[12px] leading-relaxed text-ink">
             <span class="font-medium">You will be signed out here too.</span>
             <span class="text-ink-muted">
-              Every refresh-token family on your account is blacklisted and <span class="mono text-[11px]">token_version</span>
+              Every refresh-token family on your account is blacklisted and <span class="mono text-[12px]">token_version</span>
               is bumped, so no device can refresh again without signing in.
             </span>
           </p>

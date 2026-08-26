@@ -572,10 +572,10 @@ const RAMP = ["bg-line-subtle", "bg-line", "bg-line-strong", "bg-ink"];
           <div class="min-w-0 flex-1">
             <p class="max-w-[80ch] text-[12.5px] leading-relaxed text-ink-muted">{{ answer!.reason }}</p>
             <div class="mt-2.5 flex flex-wrap items-center gap-x-3 gap-y-1.5">
-              <span class="mono text-[11px] uppercase tracking-[0.08em] text-ink-faint">enforced by</span>
+              <span class="mono text-[12px] uppercase tracking-[0.08em] text-ink-faint">enforced by</span>
               <GuardTag :name="answer!.guard" />
               <ScopeMark :scope="cap.scope" />
-              <span class="mono text-[11px] text-ink-muted">{{ SCOPE_LABEL[cap.scope] }}</span>
+              <span class="mono text-[12px] text-ink-muted">{{ SCOPE_LABEL[cap.scope] }}</span>
               <WeightMark :weight="cap.weight" />
             </div>
             <p v-if="answer!.caveat" class="mt-2 max-w-[80ch] text-[12.5px] leading-relaxed text-ink-muted">
@@ -601,11 +601,11 @@ const RAMP = ["bg-line-subtle", "bg-line", "bg-line-strong", "bg-ink"];
           ]"
           @update:model-value="mode = $event as 'person' | 'capability'"
         >
-          <span class="mono hidden text-[11px] uppercase tracking-[0.08em] text-ink-faint sm:inline">
+          <span class="mono hidden text-[12px] uppercase tracking-[0.08em] text-ink-faint sm:inline">
             one verdict() behind both
           </span>
         </Tabs>
-        <p class="mono mt-2 text-[11px] uppercase tracking-[0.08em] text-ink-faint sm:hidden">
+        <p class="mono mt-2 text-[12px] uppercase tracking-[0.08em] text-ink-faint sm:hidden">
           one verdict() behind both
         </p>
       </div>
@@ -613,8 +613,8 @@ const RAMP = ["bg-line-subtle", "bg-line", "bg-line-strong", "bg-ink"];
       <TabPanel v-if="mode === 'person'" id="access" tab="person" class="sec mt-5" style="animation-delay: 80ms">
         <section :aria-label="`How far ${person.name} reaches`">
           <div class="flex flex-wrap items-baseline justify-between gap-2">
-            <h2 class="text-[14px] font-medium tracking-tight">How far {{ person.firstName }} reaches</h2>
-            <p class="mono text-[11px] text-ink-muted">
+            <h2 class="text-[18px] font-semibold leading-tight tracking-[-0.02em] text-ink">How far {{ person.firstName }} reaches</h2>
+            <p class="mono text-[12px] text-ink-muted">
               user_id {{ person.id }} · {{ person.role ?? "no role" }} · {{ person.deptName ?? "unplaced" }}
               <template v-if="person.deptCount > 1"> · +{{ person.deptCount - 1 }} more</template>
               <template v-if="person.platformAdmin"> · platform admin</template>
@@ -636,7 +636,7 @@ const RAMP = ["bg-line-subtle", "bg-line", "bg-line-strong", "bg-ink"];
                   <span :class="['text-[12.5px]', rungHeld(rung.scope).frac > 0 ? 'text-ink' : 'text-ink-muted']">
                     {{ rung.label }}
                   </span>
-                  <span class="mono shrink-0 text-[11px] text-ink-muted">
+                  <span class="mono shrink-0 text-[12px] text-ink-muted">
                     {{ rungHeld(rung.scope).held }}/{{ rungHeld(rung.scope).of }}
                   </span>
                 </div>
@@ -650,7 +650,7 @@ const RAMP = ["bg-line-subtle", "bg-line", "bg-line-strong", "bg-ink"];
                   />
                 </div>
               </div>
-              <p class="mono text-[11px] leading-relaxed text-ink-muted">
+              <p class="mono text-[12px] leading-relaxed text-ink-muted">
                 {{ (stopsAt[rung.scope] ?? []).length === 0 ? "nobody stops here" : `stops here: ${names(stopsAt[rung.scope] ?? [])}` }}
               </p>
             </li>
@@ -660,8 +660,8 @@ const RAMP = ["bg-line-subtle", "bg-line", "bg-line-strong", "bg-ink"];
         <div class="mt-6 grid items-start gap-x-6 gap-y-5 lg:grid-cols-2">
           <section class="min-w-0 border-t border-line-strong pt-2.5" :aria-label="`Can: ${person.name}`">
             <header class="flex items-center gap-2.5 pb-1.5">
-              <h3 class="mono text-[11px] uppercase tracking-[0.08em] text-ok">Can</h3>
-              <span class="mono text-[11px] text-ink-muted">{{ can.length }} of {{ CAPS.length }}</span>
+              <h3 class="mono text-[12px] uppercase tracking-[0.08em] text-ok">Can</h3>
+              <span class="mono text-[12px] text-ink-muted">{{ can.length }} of {{ CAPS.length }}</span>
             </header>
             <p v-if="can.length === 0" class="py-3 text-[12px] text-ink-muted">
               Nothing at all — the account is deactivated.
@@ -672,7 +672,7 @@ const RAMP = ["bg-line-subtle", "bg-line", "bg-line-strong", "bg-ink"];
                   <span class="block text-[12.5px] text-ink">{{ c.label }}</span>
                   <span class="mt-1.5 flex flex-wrap items-center gap-x-2.5 gap-y-1">
                     <ScopeMark :scope="c.scope" />
-                    <span class="mono text-[11px] text-ink-muted">{{ SCOPE_LABEL[c.scope] }}</span>
+                    <span class="mono text-[12px] text-ink-muted">{{ SCOPE_LABEL[c.scope] }}</span>
                     <WeightMark :weight="c.weight" />
                     <GuardTag :name="c.guard" />
                   </span>
@@ -683,8 +683,8 @@ const RAMP = ["bg-line-subtle", "bg-line", "bg-line-strong", "bg-ink"];
 
           <section class="min-w-0 border-t border-line-strong pt-2.5" :aria-label="`Cannot: ${person.name}`">
             <header class="flex items-center gap-2.5 pb-1.5">
-              <h3 class="mono text-[11px] uppercase tracking-[0.08em] text-bad">Cannot</h3>
-              <span class="mono text-[11px] text-ink-muted">{{ cannot.length }} of {{ CAPS.length }}</span>
+              <h3 class="mono text-[12px] uppercase tracking-[0.08em] text-bad">Cannot</h3>
+              <span class="mono text-[12px] text-ink-muted">{{ cannot.length }} of {{ CAPS.length }}</span>
             </header>
             <p v-if="cannot.length === 0" class="py-3 text-[12px] text-ink-muted">Nothing is out of reach.</p>
             <ul v-else class="divide-y divide-line-subtle">
@@ -693,7 +693,7 @@ const RAMP = ["bg-line-subtle", "bg-line", "bg-line-strong", "bg-ink"];
                   <span class="block text-[12.5px] text-ink">{{ c.label }}</span>
                   <span class="mt-1.5 flex flex-wrap items-center gap-x-2.5 gap-y-1">
                     <ScopeMark :scope="c.scope" />
-                    <span class="mono text-[11px] text-ink-muted">{{ SCOPE_LABEL[c.scope] }}</span>
+                    <span class="mono text-[12px] text-ink-muted">{{ SCOPE_LABEL[c.scope] }}</span>
                     <WeightMark :weight="c.weight" />
                     <GuardTag :name="c.guard" />
                   </span>
@@ -706,8 +706,8 @@ const RAMP = ["bg-line-subtle", "bg-line", "bg-line-strong", "bg-ink"];
 
       <TabPanel v-else id="access" tab="capability" class="sec mt-5" style="animation-delay: 80ms">
         <div class="flex flex-wrap items-baseline justify-between gap-2">
-          <h2 class="text-[14px] font-medium tracking-tight">Ranked by what it costs if it is wrong</h2>
-          <p class="mono text-[11px] text-ink-muted">irreversible first</p>
+          <h2 class="text-[18px] font-semibold leading-tight tracking-[-0.02em] text-ink">Ranked by what it costs if it is wrong</h2>
+          <p class="mono text-[12px] text-ink-muted">irreversible first</p>
         </div>
         <p class="mt-1.5 max-w-[80ch] text-[12px] leading-relaxed text-ink-muted">
           Not by how often it is used. The order asks a different question — if this were granted to the wrong
@@ -726,7 +726,7 @@ const RAMP = ["bg-line-subtle", "bg-line", "bg-line-strong", "bg-ink"];
               <h3 class="text-[13px] font-medium text-ink">{{ c.label }}</h3>
               <span class="ml-auto flex flex-wrap items-center gap-x-2.5 gap-y-1">
                 <ScopeMark :scope="c.scope" />
-                <span class="mono text-[11px] text-ink-muted">{{ SCOPE_LABEL[c.scope] }}</span>
+                <span class="mono text-[12px] text-ink-muted">{{ SCOPE_LABEL[c.scope] }}</span>
                 <WeightMark :weight="c.weight" />
                 <GuardTag :name="c.guard" />
               </span>
@@ -734,13 +734,13 @@ const RAMP = ["bg-line-subtle", "bg-line", "bg-line-strong", "bg-ink"];
 
             <dl class="mt-2.5 grid gap-x-6 gap-y-1.5 sm:grid-cols-2">
               <div class="flex gap-2">
-                <dt class="mono w-[52px] shrink-0 text-[11px] uppercase tracking-[0.08em] text-ok">can</dt>
+                <dt class="mono w-[52px] shrink-0 text-[12px] uppercase tracking-[0.08em] text-ok">can</dt>
                 <dd class="min-w-0 flex-1 text-[12px] leading-relaxed text-ink-muted">
                   {{ peopleAllowed(people, c).length === 0 ? "nobody" : names(peopleAllowed(people, c), 4) }}
                 </dd>
               </div>
               <div class="flex gap-2">
-                <dt class="mono w-[52px] shrink-0 text-[11px] uppercase tracking-[0.08em] text-ink-faint">cannot</dt>
+                <dt class="mono w-[52px] shrink-0 text-[12px] uppercase tracking-[0.08em] text-ink-faint">cannot</dt>
                 <dd class="min-w-0 flex-1 text-[12px] leading-relaxed text-ink-muted">
                   {{
                     people.length - peopleAllowed(people, c).length === 0
@@ -784,7 +784,7 @@ const RAMP = ["bg-line-subtle", "bg-line", "bg-line-strong", "bg-ink"];
         </div>
       </section>
 
-      <p class="mt-5 flex flex-wrap items-center gap-x-2 gap-y-1 border-t border-line-subtle pt-3 text-[11px] text-ink-faint">
+      <p class="mt-5 flex flex-wrap items-center gap-x-2 gap-y-1 border-t border-line-subtle pt-3 text-[12px] text-ink-faint">
         <Icon name="shield" class="h-3.5 w-3.5 shrink-0" />
         Products verify the token with the published public key and read these claims locally. The signing key
         never leaves identity.

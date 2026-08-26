@@ -47,7 +47,7 @@ const WEEK6_TAG = `${MONO_LABEL} inline-flex shrink-0 items-center rounded borde
               <li
                 v-for="m in group.modules"
                 :key="m"
-                class="mono flex items-center gap-2 rounded-md border border-dashed border-line-subtle bg-surface/25 px-2.5 py-[7px] text-[11px] text-ink-faint"
+                class="mono flex items-center gap-2 rounded-md border border-dashed border-line-subtle bg-surface/25 px-2.5 py-[7px] text-[12px] text-ink-faint"
               >
                 <span class="h-1 w-1 rounded-full bg-line-strong" aria-hidden="true" />
                 {{ m }}
@@ -64,11 +64,11 @@ const WEEK6_TAG = `${MONO_LABEL} inline-flex shrink-0 items-center rounded borde
             <div class="rounded-md border border-dashed border-line-subtle bg-surface/25 px-4 py-3">
               <p :class="[MONO_LABEL, 'text-ink-faint']">{{ node.kind }}</p>
               <p class="mt-1 text-[13px] font-medium text-ink">{{ node.title }}</p>
-              <p class="mono mt-0.5 text-[11.5px] text-ink-muted">{{ node.detail }}</p>
+              <p class="mono mt-0.5 text-[12px] text-ink-muted">{{ node.detail }}</p>
             </div>
             <p
               v-if="i < NODES.length - 1"
-              class="mono py-1.5 text-center text-[11px] text-ink-faint"
+              class="mono py-1.5 text-center text-[12px] text-ink-faint"
               aria-hidden="true"
             >
               ↓

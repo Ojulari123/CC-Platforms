@@ -382,7 +382,7 @@ const readout = computed(() => `${total.value} ${total.value === 1 ? "account" :
             <Icon name="x" class="h-3.5 w-3.5" />
           </button>
         </label>
-        <p class="mono text-[11px] text-ink-muted">{{ shown.length }} of {{ rows.length }} shown</p>
+        <p class="mono text-[12px] text-ink-muted">{{ shown.length }} of {{ rows.length }} shown</p>
       </div>
 
       <!-- ── filters ── -->
@@ -441,8 +441,11 @@ const readout = computed(() => `${total.value} ${total.value === 1 ? "account" :
         v-if="visible.length > 0"
         class="xfade mt-4 flex flex-wrap items-center gap-2 rounded-md bg-surface-active px-3 py-2.5 ring-1 ring-inset ring-line"
       >
-        <span class="mono text-[11px] text-ink">{{ visible.length }} selected</span>
-        <span class="h-4 w-px bg-line-subtle" aria-hidden="true" />
+        <span class="mono text-[12px] text-ink">{{ visible.length }} selected</span>
+        <!-- `--line` rather than `--line-subtle`: this rule is the one place in the
+             platform where a hairline sits on `--surface-active`, where subtle measures
+             1.65:1 and is effectively not drawn. -->
+        <span class="h-4 w-px bg-line" aria-hidden="true" />
         <button
           type="button"
           :class="[FOCUS, TAP, 'rounded-md px-2.5 py-1.5 text-[12px] text-ink transition-colors hover:bg-surface-hover']"
@@ -525,20 +528,20 @@ const readout = computed(() => `${total.value} ${total.value === 1 ? "account" :
                 >
                   <button
                     type="button"
-                    :class="[FOCUS, 'inline-flex items-center gap-1.5 rounded text-[11px] font-medium uppercase tracking-[0.08em] text-ink-faint transition-colors hover:text-ink']"
+                    :class="[FOCUS, 'inline-flex items-center gap-1.5 rounded text-[12px] font-medium uppercase tracking-[0.08em] text-ink-faint transition-colors hover:text-ink']"
                     @click="sortDir = sortDir === 'asc' ? 'desc' : 'asc'"
                   >
                     Person
                     <Icon name="chevronDown" :class="['h-3 w-3 transition-transform', sortDir === 'desc' && 'rotate-180']" />
                   </button>
                 </th>
-                <th scope="col" class="hidden w-[160px] px-3 py-2.5 text-left text-[11px] font-medium uppercase tracking-[0.08em] text-ink-faint md:table-cell">
+                <th scope="col" class="hidden w-[160px] px-3 py-2.5 text-left text-[12px] font-medium uppercase tracking-[0.08em] text-ink-faint md:table-cell">
                   Department
                 </th>
-                <th scope="col" class="hidden w-[104px] px-3 py-2.5 text-left text-[11px] font-medium uppercase tracking-[0.08em] text-ink-faint sm:table-cell">
+                <th scope="col" class="hidden w-[104px] px-3 py-2.5 text-left text-[12px] font-medium uppercase tracking-[0.08em] text-ink-faint sm:table-cell">
                   Role
                 </th>
-                <th scope="col" class="w-[124px] px-3 py-2.5 text-left text-[11px] font-medium uppercase tracking-[0.08em] text-ink-faint">
+                <th scope="col" class="w-[124px] px-3 py-2.5 text-left text-[12px] font-medium uppercase tracking-[0.08em] text-ink-faint">
                   Status
                 </th>
                 <th scope="col" class="w-11 px-3 py-2.5"><span class="sr-only">Actions</span></th>
@@ -550,7 +553,6 @@ const readout = computed(() => `${total.value} ${total.value === 1 ? "account" :
                 :key="row.id"
                 :class="[
                   'group/row sec border-b border-line-subtle/70 transition-colors last:border-0 hover:bg-surface-hover/50',
-                  !row.is_active && 'opacity-60',
                 ]"
                 :style="{ animationDelay: `${Math.min(i, 3) * 40}ms` }"
               >
@@ -572,14 +574,19 @@ const readout = computed(() => `${total.value} ${total.value === 1 ? "account" :
                   <div class="flex min-w-0 items-center gap-2.5">
                     <Avatar :name="row.name" size="sm" />
                     <div class="min-w-0">
-                      <p class="flex items-center gap-1.5 truncate text-[12.5px] text-ink">
+                      <!-- A deactivated account dims its type rather than the whole row.
+                           `opacity-60` faded the row rule with it: the hairline fell to
+                           1.40:1 and the muted email to 3.20:1 in light, both unreadable.
+                           `--ink-disabled` is the token the platform already uses for a
+                           record that is not live, and leaves the border alone. -->
+                      <p :class="['flex items-center gap-1.5 truncate text-[12.5px]', row.is_active ? 'text-ink' : 'text-ink-disabled']">
                         {{ row.name }}
                         <span
                           v-if="row.id === me?.id"
-                          class="mono shrink-0 rounded bg-sunken px-1 py-px text-[11px] uppercase tracking-[0.08em] text-ink-muted"
+                          class="mono shrink-0 rounded bg-sunken px-1 py-px text-[12px] uppercase tracking-[0.08em] text-ink-muted"
                         >you</span>
                       </p>
-                      <p class="mono mt-0.5 flex items-center gap-1 truncate text-[11px] text-ink-muted">
+                      <p :class="['mono mt-0.5 flex items-center gap-1 truncate text-[12px]', row.is_active ? 'text-ink-muted' : 'text-ink-disabled']">
                         <Icon v-if="!row.email_verified" name="alert" class="h-3 w-3 shrink-0 text-warn" />
                         <span class="truncate">{{ row.email }}</span>
                       </p>
@@ -593,14 +600,14 @@ const readout = computed(() => `${total.value} ${total.value === 1 ? "account" :
                   <span
                     v-for="p in row.placements"
                     :key="p.deptId"
-                    class="mono mr-1 inline-block max-w-full truncate rounded bg-sunken px-1.5 py-0.5 text-[11px] text-ink-muted"
+                    :class="['mono mr-1 inline-block max-w-full truncate rounded bg-sunken px-1.5 py-0.5 text-[12px]', row.is_active ? 'text-ink-muted' : 'text-ink-disabled']"
                   >{{ p.deptName }}</span>
                 </td>
                 <td class="hidden px-3 py-2.5 sm:table-cell">
-                  <span class="text-[12px] text-ink-muted">
+                  <span :class="['text-[12px]', row.is_active ? 'text-ink-muted' : 'text-ink-disabled']">
                     {{ row.placements.map((p) => p.role).join(", ") || "—" }}
                   </span>
-                  <span v-if="row.is_platform_admin" class="mono mt-0.5 block text-[11px] uppercase tracking-[0.08em] text-ink-muted">
+                  <span v-if="row.is_platform_admin" :class="['mono mt-0.5 block text-[12px] uppercase tracking-[0.08em]', row.is_active ? 'text-ink-muted' : 'text-ink-disabled']">
                     platform
                   </span>
                 </td>
@@ -618,7 +625,7 @@ const readout = computed(() => `${total.value} ${total.value === 1 ? "account" :
                     @update:open="menuFor = $event ? row.id : null"
                     @select="onMenuSelect(row, $event)"
                   />
-                  <span v-else class="mono text-[11px] text-ink-muted">you</span>
+                  <span v-else class="mono text-[12px] text-ink-muted">you</span>
                 </td>
               </tr>
             </tbody>
@@ -639,7 +646,7 @@ const readout = computed(() => `${total.value} ${total.value === 1 ? "account" :
         </div>
 
         <div v-if="total > LIMIT" class="sec mt-3 flex flex-wrap items-center justify-between gap-3">
-          <p class="mono text-[11px] text-ink-muted">
+          <p class="mono text-[12px] text-ink-muted">
             {{ offset + 1 }}–{{ Math.min(offset + LIMIT, total) }} of {{ total }} · the filters above count this
             page
           </p>
@@ -653,7 +660,7 @@ const readout = computed(() => `${total.value} ${total.value === 1 ? "account" :
           </div>
         </div>
 
-        <p class="sec mt-3 text-[11px] leading-relaxed text-ink-faint" style="animation-delay: 120ms">
+        <p class="sec mt-3 text-[12px] leading-relaxed text-ink-faint" style="animation-delay: 120ms">
           Deactivating keeps the record and cuts the sessions. Deleting removes the account, and is refused while
           the person still belongs to a department — the membership row has to go first.
         </p>
@@ -668,7 +675,7 @@ const readout = computed(() => `${total.value} ${total.value === 1 ? "account" :
         @close="confirmDelete = null"
       >
         <div v-if="confirmDelete" class="space-y-3">
-          <p class="mono text-[11px] text-ink-muted">
+          <p class="mono text-[12px] text-ink-muted">
             user_id {{ confirmDelete.id }} · {{ confirmDelete.email }}
           </p>
           <div

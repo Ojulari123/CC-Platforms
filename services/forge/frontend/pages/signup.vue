@@ -193,7 +193,7 @@ useHead({ title: "Create account · Forge" });
 
           <ul class="sec mt-10 grid gap-px border-t border-line-subtle sm:grid-cols-2" style="animation-delay: 160ms">
             <li v-for="[n, t] in GUARANTEES" :key="n" class="flex items-baseline gap-2.5 border-b border-line-subtle py-3">
-              <span class="mono text-[11px] text-ink-faint">{{ n }}</span>
+              <span class="mono text-[12px] text-ink-faint">{{ n }}</span>
               <span :class="[MONO_LABEL, 'text-ink-muted']">{{ t }}</span>
             </li>
           </ul>

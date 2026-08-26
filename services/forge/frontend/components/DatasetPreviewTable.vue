@@ -32,15 +32,15 @@ const width = computed(() => props.totalColumns ?? props.columns.length);
         <caption class="sr-only">First {{ shown.length }} rows of {{ label }}</caption>
         <thead>
           <tr class="border-b border-line-subtle bg-sunken/60">
-            <th scope="col" class="mono w-10 px-3 py-2 text-[11px] font-normal text-ink-faint">#</th>
+            <th scope="col" class="mono w-10 px-3 py-2 text-[12px] font-normal text-ink-faint">#</th>
             <th
               v-for="(col, i) in columns"
               :key="col"
               scope="col"
-              class="mono whitespace-nowrap px-3 py-2 text-[11px] font-medium text-ink-muted"
+              class="mono whitespace-nowrap px-3 py-2 text-[12px] font-medium text-ink-muted"
             >
               {{ col }}
-              <span v-if="i === textCol" class="mono ml-1.5 text-[11px] font-normal lowercase text-ink-faint">
+              <span v-if="i === textCol" class="mono ml-1.5 text-[12px] font-normal lowercase text-ink-faint">
                 text
               </span>
             </th>
@@ -52,7 +52,7 @@ const width = computed(() => props.totalColumns ?? props.columns.length);
             :key="r"
             class="border-b border-line-subtle/60 transition-colors last:border-0 hover:bg-surface-hover/50"
           >
-            <td class="mono px-3 py-[7px] text-[11px] text-ink-faint">{{ r + 1 }}</td>
+            <td class="mono px-3 py-[7px] text-[12px] text-ink-faint">{{ r + 1 }}</td>
             <!-- The values are the feature. They used to sit dimmer and smaller than
                  their own column headers. -->
             <td
@@ -72,11 +72,11 @@ const width = computed(() => props.totalColumns ?? props.columns.length);
     <div
       class="flex flex-wrap items-center gap-x-4 gap-y-1 border-t border-line-subtle bg-sunken/40 px-3 py-2 sm:px-4"
     >
-      <p class="mono text-[11px] text-ink-muted">
+      <p class="mono text-[12px] text-ink-muted">
         first {{ shown.length }} of {{ rowCount.toLocaleString() }} rows · {{ columns.length }} of
         {{ width }} columns shown
       </p>
-      <p class="mono ml-auto text-[11px] text-ink-faint">header row → column names</p>
+      <p class="mono ml-auto text-[12px] text-ink-faint">header row → column names</p>
     </div>
   </div>
 </template>

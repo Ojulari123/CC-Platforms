@@ -211,13 +211,13 @@ useHead({ title: "Products" });
         </h1>
 
         <div v-if="me" class="sec mt-7 flex flex-wrap items-baseline gap-x-3 gap-y-1.5" style="animation-delay: 80ms">
-          <span class="mono text-[11px] text-ink-muted">{{ displayName }}</span>
+          <span class="mono text-[12px] text-ink-muted">{{ displayName }}</span>
           <span class="text-ink-faint" aria-hidden="true">·</span>
-          <span class="mono text-[11px] text-ink-muted">{{ membership?.dept_name ?? "Unplaced" }}</span>
+          <span class="mono text-[12px] text-ink-muted">{{ membership?.dept_name ?? "Unplaced" }}</span>
           <span class="text-ink-faint" aria-hidden="true">·</span>
-          <span class="mono text-[11px] text-ink-muted">{{ isPlatformAdmin ? "platform admin" : membership?.role ?? "no role yet" }}</span>
+          <span class="mono text-[12px] text-ink-muted">{{ isPlatformAdmin ? "platform admin" : membership?.role ?? "no role yet" }}</span>
           <span class="text-ink-faint" aria-hidden="true">·</span>
-          <span class="mono text-[11px] text-ink-muted">user_id {{ me.id }}</span>
+          <span class="mono text-[12px] text-ink-muted">user_id {{ me.id }}</span>
         </div>
 
         <p class="sec mt-5 max-w-[52ch] text-[13.5px] leading-relaxed text-ink-muted" style="animation-delay: 100ms">

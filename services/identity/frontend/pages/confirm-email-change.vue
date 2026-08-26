@@ -230,13 +230,13 @@ useHead({ title: "Confirm your new email address" });
 
           <ul class="sec mt-10 grid gap-px border-t border-line-subtle sm:grid-cols-2" style="animation-delay: 160ms">
             <li v-for="[n, t] in FACTS" :key="n" class="flex items-baseline gap-2.5 border-b border-line-subtle py-3">
-              <span class="mono text-[11px] text-ink-faint">{{ n }}</span>
+              <span class="mono text-[12px] text-ink-faint">{{ n }}</span>
               <span :class="[MONO_LABEL, 'text-ink-muted']">{{ t }}</span>
             </li>
           </ul>
 
           <!-- A fragment, never the token. Enough to tell two links apart, useless to spend. -->
-          <p class="mono mt-6 text-[11px] tracking-[0.08em] text-ink-muted">token {{ fragment }} · never shown in full</p>
+          <p class="mono mt-6 text-[12px] tracking-[0.08em] text-ink-muted">token {{ fragment }} · never shown in full</p>
         </div>
 
         <!-- outcome column -->
@@ -284,7 +284,7 @@ useHead({ title: "Confirm your new email address" });
               </p>
             </div>
 
-            <p v-if="state === 'done'" class="mono mt-4 text-[11px] tracking-[0.08em] text-ink-muted">
+            <p v-if="state === 'done'" class="mono mt-4 text-[12px] tracking-[0.08em] text-ink-muted">
               link spent · sessions revoked
             </p>
 

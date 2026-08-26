@@ -144,7 +144,7 @@ useHead({ title: () => (tab.value === "signin" ? "Sign in" : "Create account") }
 
           <p
             v-if="asked"
-            class="sec mono mt-8 inline-flex items-center gap-2 rounded-md bg-info-surface px-3 py-2 text-[11px] text-info"
+            class="sec mono mt-8 inline-flex items-center gap-2 rounded-md bg-info-surface px-3 py-2 text-[12px] text-info"
             style="animation-delay: 120ms"
           >
             <Icon name="shield" class="h-3.5 w-3.5" />
@@ -153,7 +153,7 @@ useHead({ title: () => (tab.value === "signin" ? "Sign in" : "Create account") }
 
           <ul class="sec mt-10 grid gap-px border-t border-line-subtle sm:grid-cols-2" style="animation-delay: 160ms">
             <li v-for="[n, t] in TRUST" :key="n" class="flex items-baseline gap-2.5 border-b border-line-subtle py-3">
-              <span class="mono text-[11px] text-ink-faint">{{ n }}</span>
+              <span class="mono text-[12px] text-ink-faint">{{ n }}</span>
               <span :class="[MONO_LABEL, 'text-ink-muted']">{{ t }}</span>
             </li>
           </ul>
@@ -257,7 +257,7 @@ useHead({ title: () => (tab.value === "signin" ? "Sign in" : "Create account") }
                     <NuxtLink
                       v-if="tab === 'signin'"
                       to="/forgot-password"
-                      :class="[FOCUS, 'rounded text-[11px] text-ink-muted transition-colors hover:text-ink']"
+                      :class="[FOCUS, 'rounded text-[12px] text-ink-muted transition-colors hover:text-ink']"
                     >
                       Forgot?
                     </NuxtLink>

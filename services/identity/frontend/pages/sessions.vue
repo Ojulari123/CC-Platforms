@@ -189,12 +189,12 @@ const NOT_BUILT: [string, string][] = [
     <!-- ── tiles ── -->
     <div class="sec mt-5 grid grid-cols-1 gap-3 border-t border-line-subtle pt-4 sm:grid-cols-3" style="animation-delay: 40ms">
       <div v-for="s in stats" :key="s.label" class="rounded-md bg-surface/40 px-4 py-3.5 ring-1 ring-inset ring-line-subtle">
-        <p class="mono text-[11px] uppercase tracking-[0.08em] text-ink-faint">{{ s.label }}</p>
+        <p class="mono text-[12px] uppercase tracking-[0.08em] text-ink-faint">{{ s.label }}</p>
         <p class="mono mt-2 text-[28px] font-medium leading-none tracking-[-0.02em] text-ink">
           <template v-if="sessions.isPending.value">—</template>
           <template v-else>{{ s.value }}</template>
         </p>
-        <p class="mt-2.5 text-[11px] text-ink-faint">{{ s.note }}</p>
+        <p class="mt-2.5 text-[12px] text-ink-faint">{{ s.note }}</p>
       </div>
     </div>
 
@@ -206,7 +206,7 @@ const NOT_BUILT: [string, string][] = [
       <span class="mt-0.5 shrink-0 text-ink-faint"><Icon name="alert" /></span>
       <p class="min-w-0 flex-1 text-[12px] leading-relaxed text-ink-muted">
         <span class="font-medium text-ink">No device and no location, because neither is recorded.</span>
-        The <span class="mono text-[11px]">refresh_tokens</span> table has no user-agent column and no IP column,
+        The <span class="mono text-[12px]">refresh_tokens</span> table has no user-agent column and no IP column,
         so “Chrome on Windows, Port Harcourt” could only be guessed. What is real is the family id, when it
         started, when it last refreshed and how many times it has rotated — which is enough to tell a working
         session from an abandoned one. Adding device and location is a migration plus a change to token
@@ -224,7 +224,7 @@ const NOT_BUILT: [string, string][] = [
           :items="tabItems"
           @update:model-value="filter = $event as SessionFilter"
         >
-          <span class="mono text-[11px] uppercase tracking-[0.08em] text-ink-faint">refresh families</span>
+          <span class="mono text-[12px] uppercase tracking-[0.08em] text-ink-faint">refresh families</span>
         </Tabs>
 
         <div v-if="sessions.isPending.value" class="mt-4 space-y-2" role="status">
@@ -250,11 +250,11 @@ const NOT_BUILT: [string, string][] = [
             <caption class="sr-only">Your refresh-token families</caption>
             <thead>
               <tr class="border-b border-line-subtle">
-                <th scope="col" class="px-3 py-2.5 text-left text-[11px] font-medium uppercase tracking-[0.08em] text-ink-faint">Family</th>
-                <th scope="col" class="px-3 py-2.5 text-left text-[11px] font-medium uppercase tracking-[0.08em] text-ink-faint">Started</th>
-                <th scope="col" class="px-3 py-2.5 text-left text-[11px] font-medium uppercase tracking-[0.08em] text-ink-faint">Last refreshed</th>
-                <th scope="col" class="px-3 py-2.5 text-right text-[11px] font-medium uppercase tracking-[0.08em] text-ink-faint">Rotations</th>
-                <th scope="col" class="px-3 py-2.5 text-left text-[11px] font-medium uppercase tracking-[0.08em] text-ink-faint">Expiry</th>
+                <th scope="col" class="px-3 py-2.5 text-left text-[12px] font-medium uppercase tracking-[0.08em] text-ink-faint">Family</th>
+                <th scope="col" class="px-3 py-2.5 text-left text-[12px] font-medium uppercase tracking-[0.08em] text-ink-faint">Started</th>
+                <th scope="col" class="px-3 py-2.5 text-left text-[12px] font-medium uppercase tracking-[0.08em] text-ink-faint">Last refreshed</th>
+                <th scope="col" class="px-3 py-2.5 text-right text-[12px] font-medium uppercase tracking-[0.08em] text-ink-faint">Rotations</th>
+                <th scope="col" class="px-3 py-2.5 text-left text-[12px] font-medium uppercase tracking-[0.08em] text-ink-faint">Expiry</th>
               </tr>
             </thead>
             <tbody>
@@ -263,26 +263,29 @@ const NOT_BUILT: [string, string][] = [
                 :key="s.session_id"
                 :class="[
                   'sec border-b border-line-subtle/70 transition-colors last:border-0 hover:bg-surface-hover/50',
-                  s.is_revoked && 'opacity-60',
                 ]"
                 :style="{ animationDelay: `${Math.min(i, 3) * 40}ms` }"
               >
+                <!-- A revoked family dims its type, not the row. `opacity-60` took the
+                     row rule down with it — 1.40:1, which is no rule at all — and put the
+                     muted columns at 3.20:1 in light. `--ink-disabled` says "not live"
+                     without touching the border. -->
                 <td class="px-3 py-2.5">
                   <p class="flex flex-wrap items-center gap-2">
-                    <span class="mono text-[12.5px] text-ink-muted">{{ s.session_id }}</span>
+                    <span :class="['mono text-[12.5px]', s.is_revoked ? 'text-ink-disabled' : 'text-ink-muted']">{{ s.session_id }}</span>
                     <span
                       v-if="s.is_current"
-                      class="mono shrink-0 rounded bg-sunken px-1 py-px text-[11px] uppercase tracking-[0.08em] text-ink-muted"
+                      class="mono shrink-0 rounded bg-sunken px-1 py-px text-[12px] uppercase tracking-[0.08em] text-ink-muted"
                     >this device</span>
                   </p>
                 </td>
-                <td class="mono px-3 py-2.5 text-[11px] text-ink-muted">{{ formatDateTime(s.started_at) }}</td>
+                <td :class="['mono px-3 py-2.5 text-[12px]', s.is_revoked ? 'text-ink-disabled' : 'text-ink-muted']">{{ formatDateTime(s.started_at) }}</td>
                 <td class="px-3 py-2.5">
-                  <span class="mono block text-[12.5px] text-ink">{{ formatDateTime(s.last_used_at) }}</span>
+                  <span :class="['mono block text-[12.5px]', s.is_revoked ? 'text-ink-disabled' : 'text-ink']">{{ formatDateTime(s.last_used_at) }}</span>
                   <StatusDot :tone="STATE_TONE[sessionState(s, now)]" quiet>{{ sessionState(s, now) }}</StatusDot>
                 </td>
-                <td class="mono px-3 py-2.5 text-right text-[12.5px] text-ink-muted">{{ s.rotations }}</td>
-                <td class="mono px-3 py-2.5 text-[11px] text-ink-muted">{{ expiryLabel(s) }}</td>
+                <td :class="['mono px-3 py-2.5 text-right text-[12.5px]', s.is_revoked ? 'text-ink-disabled' : 'text-ink-muted']">{{ s.rotations }}</td>
+                <td :class="['mono px-3 py-2.5 text-[12px]', s.is_revoked ? 'text-ink-disabled' : 'text-ink-muted']">{{ expiryLabel(s) }}</td>
               </tr>
             </tbody>
           </table>
@@ -307,7 +310,7 @@ const NOT_BUILT: [string, string][] = [
           </div>
         </div>
 
-        <p class="mt-3 text-[11px] leading-relaxed text-ink-faint">
+        <p class="mt-3 text-[12px] leading-relaxed text-ink-faint">
           Access tokens are not listed. They live about fifteen minutes and are never stored, so there is nothing
           to revoke — cutting the family is what stops the next one being issued.
         </p>
@@ -326,11 +329,11 @@ const NOT_BUILT: [string, string][] = [
               <dd class="mt-0.5 text-[12.5px] leading-relaxed text-ink-muted">{{ body }}</dd>
             </div>
           </dl>
-          <p v-if="jwks.data.value?.keys?.length" class="mono mt-2.5 text-[11px] leading-relaxed text-ink-muted">
+          <p v-if="jwks.data.value?.keys?.length" class="mono mt-2.5 text-[12px] leading-relaxed text-ink-muted">
             signing key {{ jwks.data.value.keys[0]!.kid }} · {{ jwks.data.value.keys[0]!.alg }} · public keys
             published at /.well-known/jwks.json
           </p>
-          <p v-else class="mono mt-2.5 text-[11px] leading-relaxed text-ink-muted">
+          <p v-else class="mono mt-2.5 text-[12px] leading-relaxed text-ink-muted">
             public keys published at /.well-known/jwks.json
           </p>
         </section>
@@ -338,7 +341,7 @@ const NOT_BUILT: [string, string][] = [
         <!-- Marked as unbuilt on purpose. A security review should be able to see what
              this console can and cannot do without reading the API. -->
         <section aria-label="Not built yet" class="border-t border-line-strong pt-3">
-          <h2 class="mono text-[11px] uppercase tracking-[0.08em] text-ink-faint">Not built yet</h2>
+          <h2 class="mono text-[12px] uppercase tracking-[0.08em] text-ink-faint">Not built yet</h2>
           <p class="mt-2 text-[12.5px] leading-relaxed text-ink-muted">
             Three things a security review usually asks for do not exist behind this screen. They are named here
             rather than mocked up, because a control that cannot work is worse than a missing one.
@@ -367,7 +370,7 @@ const NOT_BUILT: [string, string][] = [
           <p class="text-[12px] leading-relaxed text-ink">
             <span class="font-medium">This signs you out here too.</span>
             <span class="text-ink-muted">
-              It bumps <span class="mono text-[11px]">token_version</span>, which invalidates every refresh token
+              It bumps <span class="mono text-[12px]">token_version</span>, which invalidates every refresh token
               issued to you before now. Nothing is deleted and your password does not change.
             </span>
           </p>

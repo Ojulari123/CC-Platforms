@@ -147,7 +147,7 @@ const path = computed(() => LEARNING_PATHS.find((p) => p.slug === pathSlug.value
                   :key="step.title"
                   class="flex items-center gap-3 border-t border-line-subtle py-2.5 first:border-0 first:pt-0"
                 >
-                  <span class="mono grid h-5 w-5 shrink-0 place-items-center rounded border border-dashed border-line text-[11px] text-ink-faint">
+                  <span class="mono grid h-5 w-5 shrink-0 place-items-center rounded border border-dashed border-line text-[12px] text-ink-faint">
                     {{ i + 1 }}
                   </span>
                   <span class="text-[12.5px] text-ink-muted">{{ step.title }}</span>
@@ -184,13 +184,13 @@ const path = computed(() => LEARNING_PATHS.find((p) => p.slug === pathSlug.value
             >
               <div class="flex items-baseline justify-between">
                 <p class="text-[12.5px] font-medium text-ink-muted">{{ g.group }}</p>
-                <span class="mono text-[11px] text-ink-faint">{{ `0${gi + 1}` }}</span>
+                <span class="mono text-[12px] text-ink-faint">{{ `0${gi + 1}` }}</span>
               </div>
               <ul class="mt-3 space-y-1.5">
                 <li
                   v-for="m in g.modules"
                   :key="m"
-                  class="mono flex items-center gap-2 rounded-md border border-dashed border-line-subtle bg-surface/25 px-2.5 py-[7px] text-[11px] text-ink-faint"
+                  class="mono flex items-center gap-2 rounded-md border border-dashed border-line-subtle bg-surface/25 px-2.5 py-[7px] text-[12px] text-ink-faint"
                 >
                   <span class="h-1 w-1 rounded-full bg-line-strong" aria-hidden="true" />
                   {{ m }}

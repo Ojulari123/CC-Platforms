@@ -106,7 +106,7 @@ const counts = computed(() => {
         <span class="text-ink-muted">Start with the part that works.</span>
       </h1>
       <p
-        class="mono mt-5 flex flex-wrap items-center gap-x-3 gap-y-1.5 border-y border-line-subtle py-3 text-[11px] uppercase tracking-[0.08em] text-ink-muted"
+        class="mono mt-5 flex flex-wrap items-center gap-x-3 gap-y-1.5 border-y border-line-subtle py-3 text-[12px] uppercase tracking-[0.08em] text-ink-muted"
       >
         <span class="text-ink">live today</span>
         <span aria-hidden="true">·</span>
@@ -216,7 +216,7 @@ const counts = computed(() => {
       <!-- dataset list -->
       <div class="mt-12 border-t border-line-subtle pt-8">
         <div class="flex flex-wrap items-baseline justify-between gap-3">
-          <h2 class="text-[15px] font-semibold tracking-[-0.015em]">Datasets</h2>
+          <h2 class="text-[18px] font-semibold leading-tight tracking-[-0.02em] text-ink">Datasets</h2>
           <span :class="[MONO_LABEL, 'text-ink-muted']">
             {{ datasets.length }} of {{ total }}<template v-if="counts"> · {{ counts }}</template>
           </span>
@@ -243,7 +243,7 @@ const counts = computed(() => {
       <!-- rejections -->
       <div class="mt-12 grid gap-8 border-t border-line-subtle pt-8 lg:grid-cols-12 lg:gap-12">
         <div class="lg:col-span-4">
-          <h2 class="text-[15px] font-semibold tracking-[-0.015em]">A bad file gets told why</h2>
+          <h2 class="text-[18px] font-semibold leading-tight tracking-[-0.02em] text-ink">A bad file gets told why</h2>
           <p class="mt-2.5 text-[13px] leading-relaxed text-ink-muted">
             Five refusals are implemented and each one names the cause. Nothing is silently
             dropped and no half-parsed dataset is ever stored.
@@ -258,7 +258,7 @@ const counts = computed(() => {
               :aria-pressed="rejection === r.key"
               :class="[
                 FOCUS,
-                'mono rounded px-2.5 py-1.5 text-[11px] ring-1 ring-inset transition-colors',
+                'mono rounded px-2.5 py-1.5 text-[12px] ring-1 ring-inset transition-colors',
                 rejection === r.key
                   ? 'bg-surface-active text-ink ring-line-strong'
                   : 'bg-surface/40 text-ink-muted ring-line-subtle hover:bg-surface-hover',

@@ -5,5 +5,5 @@ defineProps<{ name: string }>();
 </script>
 
 <template>
-  <span class="mono shrink-0 rounded bg-sunken px-1.5 py-0.5 text-[11px] text-ink-faint">{{ name }}</span>
+  <span class="mono shrink-0 rounded bg-sunken px-1.5 py-0.5 text-[12px] text-ink-faint">{{ name }}</span>
 </template>

@@ -1,7 +1,7 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
   "framework": "nuxtjs",
-  "installCommand": "npm ci",
+  "installCommand": "test -d ../../../packages/ui || { echo 'packages/ui is missing. In Vercel Project Settings > Build and Deployment, turn on \"Include source files outside of the Root Directory in the Build Step\". Without it the shared Nuxt layer is not uploaded and nuxt.config.ts cannot resolve extends: [\"../../../packages/ui\"].'; exit 1; }; npm ci",
   "buildCommand": "npm run build",
   "ignoreCommand": "git diff --quiet HEAD^ HEAD -- . ../../../packages/ui"
 }

@@ -60,7 +60,7 @@ const remove = useMutation({
   <div>
     <NuxtLink
       to="/datasets"
-      class="mono inline-flex items-center gap-1.5 rounded text-[11px] uppercase tracking-[0.08em] text-ink-muted outline-none transition-colors hover:text-ink focus-visible:ring-2 focus-visible:ring-[var(--accent-ink)] focus-visible:ring-offset-2 focus-visible:ring-offset-app"
+      class="mono inline-flex items-center gap-1.5 rounded text-[12px] uppercase tracking-[0.08em] text-ink-muted transition-colors hover:text-ink focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[color:var(--accent-ink)]"
     >
       <Icon name="arrowLeft" class="h-3.5 w-3.5" />
       All datasets
@@ -102,7 +102,7 @@ const remove = useMutation({
             <h1 class="max-w-[24ch] break-words text-[clamp(1.5rem,2.2vw,1.9rem)] font-semibold tracking-[-0.035em]">
               {{ dataset.name }}
             </h1>
-            <p class="mono mt-3 flex flex-wrap items-center gap-x-3 gap-y-1.5 text-[11px] text-ink-muted">
+            <p class="mono mt-3 flex flex-wrap items-center gap-x-3 gap-y-1.5 text-[12px] text-ink-muted">
               <span>dataset_id {{ dataset.id }}</span>
               <span aria-hidden="true">·</span>
               <span>{{ dataset.columns.length }} cols</span>
@@ -126,7 +126,7 @@ const remove = useMutation({
 
       <section class="mt-10 border-t border-line-subtle pt-8">
         <div class="flex flex-wrap items-baseline justify-between gap-3">
-          <h2 class="text-[15px] font-semibold tracking-[-0.015em]">First rows</h2>
+          <h2 class="text-[18px] font-semibold leading-tight tracking-[-0.02em] text-ink">First rows</h2>
           <span :class="[MONO_LABEL, 'text-ink-muted']">header row → column names</span>
         </div>
 

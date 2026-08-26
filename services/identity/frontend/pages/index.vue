@@ -206,8 +206,8 @@ useHead({ title: "One login. Every tool your engineers open." });
                     }"
                   >
                     <figcaption class="flex items-center justify-between border-b border-line-subtle px-3.5 py-2">
-                      <span class="mono text-[11px] text-ink-muted">{{ product.file }}</span>
-                      <span class="mono text-[11px] text-ink-faint">{{ product.meta }}</span>
+                      <span class="mono text-[12px] text-ink-muted">{{ product.file }}</span>
+                      <span class="mono text-[12px] text-ink-faint">{{ product.meta }}</span>
                     </figcaption>
 
                     <div class="p-3.5">
@@ -225,11 +225,11 @@ useHead({ title: "One login. Every tool your engineers open." });
                             class="flex items-baseline gap-2.5 border-b border-line-subtle py-[5px] last:border-b-0"
                           >
                             <span :class="[MONO_LABEL, 'w-[62px] shrink-0 text-ink-faint']">{{ k }}</span>
-                            <span class="truncate text-[11px] leading-snug text-ink-muted">{{ v }}</span>
+                            <span class="truncate text-[12px] leading-snug text-ink-muted">{{ v }}</span>
                           </div>
                         </div>
                         <div class="flex items-center justify-between border-t border-line-subtle pt-3">
-                          <span class="mono text-[11px] text-ink-faint">approval</span>
+                          <span class="mono text-[12px] text-ink-faint">approval</span>
                           <StatusDot tone="warn">Awaiting lead review</StatusDot>
                         </div>
                       </div>
@@ -243,15 +243,15 @@ useHead({ title: "One login. Every tool your engineers open." });
                             <div
                               v-for="(cell, i) in row"
                               :key="`${row[0]}-${i}`"
-                              :class="['bg-app px-2.5 py-1.5 text-[11px] text-ink-muted', i === 2 ? 'mono text-right text-ink' : '']"
+                              :class="['bg-app px-2.5 py-1.5 text-[12px] text-ink-muted', i === 2 ? 'mono text-right text-ink' : '']"
                             >
                               {{ cell }}
                             </div>
                           </template>
                         </div>
                         <div class="flex items-center justify-between border-t border-line-subtle pt-2.5">
-                          <span class="mono text-[11px] text-ink-faint">step 1 / 4 · schema inferred</span>
-                          <span class="inline-flex items-center gap-1.5 text-[11px] text-ok">
+                          <span class="mono text-[12px] text-ink-faint">step 1 / 4 · schema inferred</span>
+                          <span class="inline-flex items-center gap-1.5 text-[12px] text-ok">
                             <Icon name="check" class="h-3 w-3" />
                             Preview ready
                           </span>
@@ -280,7 +280,7 @@ useHead({ title: "One login. Every tool your engineers open." });
               class="sec flex items-baseline gap-2.5 border-line-subtle py-4 lg:border-l lg:pl-6"
               :style="{ animationDelay: `${200 + i * 40}ms` }"
             >
-              <span class="mono text-[11px] text-ink-faint">{{ n }}</span>
+              <span class="mono text-[12px] text-ink-faint">{{ n }}</span>
               <span :class="[MONO_LABEL, 'text-ink-muted']">{{ t }}</span>
             </li>
           </ul>
@@ -318,7 +318,7 @@ useHead({ title: "One login. Every tool your engineers open." });
                   <p :class="[MONO_LABEL, 'text-ink-faint']">{{ product.tag }}</p>
                 </div>
               </div>
-              <span class="mono text-[11px] text-ink-faint">0{{ idx + 1 }}</span>
+              <span class="mono text-[12px] text-ink-faint">0{{ idx + 1 }}</span>
             </div>
 
             <p class="mt-5 max-w-[46ch] text-[13.5px] leading-relaxed text-ink-muted">{{ product.line }}</p>

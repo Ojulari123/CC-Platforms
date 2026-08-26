@@ -100,7 +100,7 @@ function submit() {
           placeholder="name@cyphercrescent.com"
           :aria-invalid="message !== null"
           :aria-describedby="message ? 'invite-error' : undefined"
-          :class="[FOCUS, 'mono mt-1.5 w-full rounded-md bg-sunken px-2.5 py-2 text-[12.5px] text-ink ring-1 ring-inset ring-line-subtle placeholder:text-ink-faint']"
+          :class="[FOCUS, 'mono mt-1.5 w-full rounded-md bg-sunken px-2.5 py-2 text-[12.5px] text-ink ring-1 ring-inset ring-line placeholder:text-ink-faint']"
           @keydown.enter.prevent="submit"
           @input="error = null"
         />
@@ -111,7 +111,7 @@ function submit() {
         <div class="mt-1.5">
           <Select v-model="deptId" label="Department" placeholder="Choose a department" :options="departments" />
         </div>
-        <p class="mt-1.5 text-[11px] leading-relaxed text-ink-faint">
+        <p class="mt-1.5 text-[12px] leading-relaxed text-ink-faint">
           Required. An invite is issued by a department and carries it — someone in no department
           cannot be given work or approvals.
         </p>
@@ -122,7 +122,7 @@ function submit() {
         <div class="mt-1.5">
           <Select v-model="role" label="Role" :options="roles" />
         </div>
-        <p class="mt-1.5 text-[11px] leading-relaxed text-ink-faint">{{ roleBlurb(role) }}</p>
+        <p class="mt-1.5 text-[12px] leading-relaxed text-ink-faint">{{ roleBlurb(role) }}</p>
       </div>
 
       <p v-if="message" id="invite-error" role="alert" class="rounded bg-bad-surface px-3 py-2 text-[12px] text-bad">

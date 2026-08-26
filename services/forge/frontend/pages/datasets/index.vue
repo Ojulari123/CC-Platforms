@@ -64,7 +64,7 @@ const remove = useMutation({
 
     <section class="mt-12 border-t border-line-subtle pt-8">
       <div class="flex flex-wrap items-baseline justify-between gap-3">
-        <h2 class="text-[15px] font-semibold tracking-[-0.015em]">All datasets</h2>
+        <h2 class="text-[18px] font-semibold leading-tight tracking-[-0.02em] text-ink">All datasets</h2>
         <span :class="[MONO_LABEL, 'text-ink-muted']">
           <template v-if="total">{{ rangeStart }}–{{ rangeEnd }} of {{ total }}</template>
           <template v-else>0 of 0</template>

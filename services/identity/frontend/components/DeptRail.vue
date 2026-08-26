@@ -73,9 +73,9 @@ function headName(dept: DepartmentResponse): string | null {
         >
           <span class="flex flex-wrap items-baseline gap-x-2">
             <span class="text-[13px] font-medium text-ink">{{ dept.name }}</span>
-            <span class="mono text-[11px] text-ink-muted">dept_id {{ dept.id }} · {{ dept.slug }}</span>
+            <span class="mono text-[12px] text-ink-muted">dept_id {{ dept.id }} · {{ dept.slug }}</span>
           </span>
-          <span class="mono mt-0.5 block text-[11px] text-ink-muted">
+          <span class="mono mt-0.5 block text-[12px] text-ink-muted">
             <template v-if="rosters[dept.id]">
               {{ rosters[dept.id]!.total }} {{ rosters[dept.id]!.total === 1 ? "member" : "members" }}
             </template>
@@ -89,7 +89,7 @@ function headName(dept: DepartmentResponse): string | null {
           <Avatar :name="headName(dept) ?? ''" size="sm" />
           <div class="min-w-0">
             <p class="truncate text-[12px] text-ink">{{ headName(dept) }}</p>
-            <p class="mono text-[11px] text-ink-muted">head · user_id {{ dept.head_user_id }}</p>
+            <p class="mono text-[12px] text-ink-muted">head · user_id {{ dept.head_user_id }}</p>
           </div>
         </div>
         <p v-else class="flex items-start gap-2 text-[12px] leading-relaxed text-warn">
@@ -97,7 +97,7 @@ function headName(dept: DepartmentResponse): string | null {
           <span>
             No head.
             <span class="text-ink-muted">
-              <span class="mono text-[11px]">head_user_id</span> is null, and the department works anyway —
+              <span class="mono text-[12px]">head_user_id</span> is null, and the department works anyway —
               the field names a person, it does not grant anything.
             </span>
           </span>
@@ -109,7 +109,7 @@ function headName(dept: DepartmentResponse): string | null {
               <Avatar :name="fullName(m.first_name, m.last_name, m.email)" size="sm" />
             </span>
           </div>
-          <span v-if="rosters[dept.id]!.total > 6" class="mono text-[11px] text-ink-muted">
+          <span v-if="rosters[dept.id]!.total > 6" class="mono text-[12px] text-ink-muted">
             +{{ rosters[dept.id]!.total - 6 }}
           </span>
         </div>

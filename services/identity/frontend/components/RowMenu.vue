@@ -78,7 +78,7 @@ function choose(id: string) {
       v-if="open"
       role="menu"
       :aria-label="label"
-      class="xfade absolute right-0 top-full z-30 mt-1 block w-[196px] overflow-hidden rounded-md bg-surface p-1 text-left shadow-2xl ring-1 ring-line"
+      class="xfade absolute right-0 top-full z-30 mt-1 block w-[196px] overflow-hidden rounded-md bg-surface p-1 text-left shadow-overlay ring-1 ring-line"
     >
       <template v-for="item in items" :key="item.id">
         <span v-if="item.separatorBefore" class="my-1 block h-px bg-line-subtle" aria-hidden="true" />

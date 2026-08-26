@@ -16,6 +16,6 @@ defineProps<{ weight: 1 | 2 | 3 }>();
         :style="{ height: `${3 + i * 2}px` }"
       />
     </span>
-    <span class="mono text-[11px] uppercase tracking-[0.08em] text-ink-faint">{{ WORD[weight] }}</span>
+    <span class="mono text-[12px] uppercase tracking-[0.08em] text-ink-faint">{{ WORD[weight] }}</span>
   </span>
 </template>

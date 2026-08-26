@@ -8,14 +8,19 @@ export function initials(first: string, last: string, email: string): string {
   return (a + b).toUpperCase() || (email ?? "?").trim()[0]?.toUpperCase() || "?";
 }
 
+/* Tokens, not palette literals. These were `bg-indigo-50 / text-indigo-700 / ring-slate-200`
+   and friends — fixed light-theme colours that would have painted a pale chip with dark
+   type straight onto the dark app the moment anything rendered a RoleBadge. `--accent-ink`
+   and `--info` are the two that clear 4.5:1 on every surface; engineer is deliberately
+   uncoloured, because "no special reach" is not a status worth a hue. */
 const ROLE_CLASSES: Record<string, string> = {
-  admin: "bg-indigo-50 text-indigo-700 ring-indigo-200",
-  manager: "bg-sky-50 text-sky-700 ring-sky-200",
-  engineer: "bg-slate-50 text-slate-600 ring-slate-200",
+  admin: "bg-accent-surface text-accent-ink ring-line",
+  manager: "bg-info-surface text-info ring-line",
+  engineer: "bg-sunken text-ink-muted ring-line",
 };
 
 export function roleClass(role: string): string {
-  return ROLE_CLASSES[role] ?? "bg-slate-50 text-slate-600 ring-slate-200";
+  return ROLE_CLASSES[role] ?? "bg-sunken text-ink-muted ring-line";
 }
 
 const ROLE_BLURBS: Record<string, string> = {

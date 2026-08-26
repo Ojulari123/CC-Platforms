@@ -61,7 +61,7 @@ defineExpose({ clear: () => { accepted.value = null; localError.value = null; } 
     data-drop-zone
     :data-dragging="dragging ? 'true' : 'false'"
     :class="[
-      'mt-8 rounded-md border px-5 py-8 transition-colors focus-within:ring-2 focus-within:ring-[var(--accent-ink)] focus-within:ring-offset-2 focus-within:ring-offset-app',
+      'mt-8 rounded-md border px-5 py-8 transition-colors focus-within:outline focus-within:outline-2 focus-within:outline-offset-2 focus-within:outline-[color:var(--accent-ink)]',
       dragging ? 'border-line-strong bg-surface-hover/60' : 'border-line-subtle bg-surface/25',
     ]"
     @dragenter.prevent="dragging = true"
@@ -112,8 +112,8 @@ defineExpose({ clear: () => { accepted.value = null; localError.value = null; } 
       class="mt-5 flex flex-wrap items-center gap-x-4 gap-y-1.5 border-t border-line-subtle pt-4"
     >
       <span class="mono text-[12.5px] text-ink">{{ accepted.name }}</span>
-      <span class="mono text-[11px] text-ink-muted">{{ formatBytes(accepted.size) }}</span>
-      <span class="mono text-[11px] text-ink-muted">{{ accepted.size.toLocaleString() }} bytes</span>
+      <span class="mono text-[12px] text-ink-muted">{{ formatBytes(accepted.size) }}</span>
+      <span class="mono text-[12px] text-ink-muted">{{ accepted.size.toLocaleString() }} bytes</span>
       <span :class="[MONO_LABEL, 'ml-auto text-ink-faint']">
         name, extension and size checked · parsing happens server side
       </span>
