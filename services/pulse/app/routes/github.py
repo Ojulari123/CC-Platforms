@@ -5,10 +5,13 @@ from fastapi.responses import RedirectResponse
 from sqlalchemy.orm import Session
 from crescent_core import Page, PageParams, TokenClaims, page_params
 from app.auth import current_user
+from app.celery_app import BrokerUnavailableError, dispatch
 from app.config import settings
 from app.db import get_db
 from app.rate_limit import address_key, limiter, user_or_address_key
-from app.schemas.github import GitHubAccountResponse, GitHubConnectResponse, SyncRunResponse
+from app.schemas.github import (
+    ConnectedAccountResponse, GitHubAccountResponse, GitHubConnectResponse, SyncRunResponse,
+)
 from app.services import github_oauth
 from app.services import sync as sync_service
 from app.tasks import sync_all_repos
@@ -53,17 +56,33 @@ def oauth_callback(request: Request, code: str | None = Query(default=None), sta
         return _back_to_pulse("failed")
     return _back_to_pulse("connected")
 
-@router.get("/account", response_model=GitHubAccountResponse)
-def my_account(user: TokenClaims = Depends(current_user), db: Session = Depends(get_db)) -> GitHubAccountResponse:
+@router.get("/account", response_model=ConnectedAccountResponse)
+def my_account(user: TokenClaims = Depends(current_user), db: Session = Depends(get_db)) -> ConnectedAccountResponse:
+    """200 with `account: null` when nothing is connected. This is always the caller's own
+    account, so there was never a second thing the 404 could have meant; it was simply an
+    error status for the state most users start in."""
     account = github_oauth.get_account(db, user.user_id)
-    if not account:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="No GitHub account connected")
-    return account
+    return ConnectedAccountResponse(account=GitHubAccountResponse.model_validate(account) if account else None)
 
 
 @router.delete("/account", status_code=status.HTTP_204_NO_CONTENT)
 def disconnect(user: TokenClaims = Depends(current_user), db: Session = Depends(get_db)) -> None:
     github_oauth.disconnect(db, user.user_id)
+
+@router.post("/reconnect", response_model=GitHubConnectResponse)
+@limiter.limit("10/minute", key_func=user_or_address_key)
+def reconnect(request: Request, user: TokenClaims = Depends(current_user)) -> GitHubConnectResponse:
+    """A fresh authorize URL for someone whose stored token is too narrow.
+
+    A token carries the scopes it was granted and can never gain more, so an account
+    connected before GITHUB_OAUTH_SCOPES was widened has to go back through GitHub.
+
+    The stored account is deliberately left alone. handle_callback upserts on user_id, so
+    approving replaces the token and its scopes anyway, and deleting first would only
+    matter to the person who opens GitHub's consent screen and closes it again — they
+    would come back to no connection at all and nothing to re-authorise.
+    """
+    return GitHubConnectResponse(authorize_url=github_oauth.build_authorize_url(user.user_id))
 
 @router.post("/sync")
 @limiter.limit("5/minute", key_func=user_or_address_key)
@@ -73,7 +92,10 @@ def trigger_sync(request: Request, wait: bool = Query(default=False, description
     if wait:
         runs = sync_service.run_full_sync(db)
         return {"mode": "inline", "runs": [{"repo_id": r.repo_id, "status": r.status, "detail": r.detail} for r in runs]}
-    task = sync_all_repos.delay()
+    try:
+        task = dispatch(sync_all_repos)
+    except BrokerUnavailableError as exc:
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc))
     return {"mode": "queued", "task_id": task.id}
 
 @router.get("/sync-runs", response_model=Page[SyncRunResponse])

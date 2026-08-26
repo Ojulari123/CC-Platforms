@@ -222,16 +222,139 @@ class TestCallbackRedirectCannotBeSteered:
         assert parse_qs(urlparse(location).query) == {"github": ["connected"]}
 
 class TestViewAndDisconnect:
-    def test_account_404_when_not_connected(self, client, act_as):
+    def test_not_connected_is_200_with_an_empty_account(self, client, act_as):
+        """Never having connected is where every user starts. Serving it as a 404 put a
+        stack trace in the console of anyone who had not."""
         act_as(**ADA)
-        assert client.get("/github/account").status_code == 404
+
+        r = client.get("/github/account")
+
+        assert r.status_code == 200
+        assert r.json() == {"account": None}
 
     def test_view_and_disconnect(self, client, act_as, fake_github):
         _callback(client, uid=42)
         act_as(**ADA)
-        assert client.get("/github/account").json()["github_login"] == "ada-gh"
+        assert client.get("/github/account").json()["account"]["github_login"] == "ada-gh"
         assert client.delete("/github/account").status_code == 204
-        assert client.get("/github/account").status_code == 404
+        assert client.get("/github/account").json() == {"account": None}
+
+    def test_the_account_body_still_carries_every_field_it_did(self, client, act_as, fake_github):
+        _callback(client, uid=42)
+        act_as(**ADA)
+
+        account = client.get("/github/account").json()["account"]
+
+        assert set(account) == {"user_id", "github_user_id", "github_login", "scopes", "connected_at"}
+        assert account["user_id"] == 42 and account["scopes"] == settings.GITHUB_OAUTH_SCOPES
+
+    def test_one_persons_connection_is_not_visible_to_another(self, client, act_as, fake_github):
+        _callback(client, uid=42)
+        act_as(**BEN)
+
+        assert client.get("/github/account").json() == {"account": None}
 
     def test_disconnect_requires_a_login(self, client):
         assert client.delete("/github/account").status_code == 401
+
+class TestScopesAndReconnect:
+    """A token carries the scopes it was granted and can never gain more, so widening
+    GITHUB_OAUTH_SCOPES only reaches accounts connected after the change."""
+
+    def test_the_shipped_default_scopes_ask_for_repository_access(self):
+        """The class default, not the test environment's override: read:user alone grants
+        no repository content access, so a private repo would index to nothing."""
+        from app.config import Settings
+
+        shipped = Settings.model_fields["GITHUB_OAUTH_SCOPES"].default
+        assert {s.strip() for s in shipped.split(",")} == {"read:user", "repo"}
+
+    def test_the_authorize_url_asks_for_the_configured_scopes(self, client, act_as):
+        act_as(**ADA)
+        url = client.get("/github/connect").json()["authorize_url"]
+        scope = parse_qs(urlparse(url).query)["scope"][0]
+        assert scope == settings.GITHUB_OAUTH_SCOPES
+
+    def test_a_new_connection_records_the_widened_scopes(self, client, db, fake_github):
+        _callback(client, uid=42)
+        account = db.query(GitHubAccount).filter_by(user_id=42).one()
+        assert account.scopes == settings.GITHUB_OAUTH_SCOPES
+        assert github_oauth.has_repo_scope(account) is True
+
+    def test_an_account_connected_before_the_change_still_reads_as_narrow(self, db):
+        stale = GitHubAccount(user_id=42, github_user_id=1, github_login="ada-gh",
+                              access_token_encrypted=crypto.encrypt("gho_old"), scopes="read:user")
+        db.add(stale)
+        db.commit()
+        assert github_oauth.has_repo_scope(stale) is False
+
+    def test_an_account_with_no_recorded_scopes_reads_as_narrow(self, db):
+        blank = GitHubAccount(user_id=43, github_user_id=2, github_login="ben-gh",
+                              access_token_encrypted=crypto.encrypt("gho_old"), scopes=None)
+        db.add(blank)
+        db.commit()
+        assert github_oauth.has_repo_scope(blank) is False
+        assert github_oauth.has_repo_scope(None) is False
+
+    def test_reconnect_returns_a_fresh_authorize_url_asking_for_the_wider_scopes(self, client, act_as, db, fake_github):
+        _callback(client, uid=42)
+        act_as(**ADA)
+
+        r = client.post("/github/reconnect")
+
+        assert r.status_code == 200
+        url = r.json()["authorize_url"]
+        assert url.startswith("https://github.com/login/oauth/authorize?")
+        assert parse_qs(urlparse(url).query)["scope"][0] == settings.GITHUB_OAUTH_SCOPES
+
+    def test_an_abandoned_consent_screen_leaves_the_account_working(self, client, act_as, db, fake_github):
+        """Start a reconnect and never finish it. Nothing was taken away, so the person
+        is exactly where they were rather than disconnected with nothing to re-authorise."""
+        _callback(client, uid=42)
+        act_as(**ADA)
+        before = db.query(GitHubAccount).filter_by(user_id=42).one()
+        token_before, id_before = before.access_token_encrypted, before.id
+
+        assert client.post("/github/reconnect").status_code == 200
+        # ...and the callback never arrives.
+
+        db.expire_all()
+        after = db.query(GitHubAccount).filter_by(user_id=42).one()
+        assert after.id == id_before
+        assert after.access_token_encrypted == token_before
+        assert crypto.decrypt(after.access_token_encrypted) == "gho_token_for_abc"
+        assert client.get("/github/account").json()["account"]["github_login"] == "ada-gh"
+
+    def test_reconnecting_with_no_account_still_returns_somewhere_to_go(self, client, act_as):
+        act_as(**ADA)
+        assert client.post("/github/reconnect").status_code == 200
+
+    def test_reconnect_requires_a_login(self, client):
+        assert client.post("/github/reconnect").status_code == 401
+
+    def test_an_unconfigured_server_is_503_and_leaves_the_account_alone(self, client, act_as, db, fake_github, monkeypatch):
+        _callback(client, uid=42)
+        monkeypatch.setattr(settings, "GITHUB_CLIENT_ID", "")
+        act_as(**ADA)
+
+        assert client.post("/github/reconnect").status_code == 503
+        assert db.query(GitHubAccount).filter_by(user_id=42).count() == 1
+
+    def test_completing_the_reconnect_replaces_the_narrow_token_in_place(self, client, act_as, db, fake_github):
+        """The upsert on user_id is what makes deleting first unnecessary: one row before,
+        one row after, carrying the token and the scopes granted the second time."""
+        stale = GitHubAccount(user_id=42, github_user_id=123456, github_login="ada-gh",
+                              access_token_encrypted=crypto.encrypt("gho_old_narrow"), scopes="read:user")
+        db.add(stale)
+        db.commit()
+        act_as(**ADA)
+        assert client.post("/github/reconnect").status_code == 200
+
+        _callback(client, uid=42, code="second")
+
+        db.expire_all()
+        account = db.query(GitHubAccount).filter_by(user_id=42).one()
+        assert db.query(GitHubAccount).count() == 1
+        assert account.github_login == "ada-gh"
+        assert crypto.decrypt(account.access_token_encrypted) == "gho_token_for_second"
+        assert github_oauth.has_repo_scope(account) is True

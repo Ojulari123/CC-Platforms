@@ -5,12 +5,13 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 from crescent_core import TokenClaims
 from app.models import (
-    ACTION_APPROVED, ACTION_CHANGES_REQUESTED, ACTION_REJECTED, ACTION_SUBMITTED,
+    ACTION_APPROVED, ACTION_CHANGES_REQUESTED, ACTION_REJECTED, ACTION_SUBMITTED, REPORT_KIND_WEEKLY,
     STATUS_APPROVED, STATUS_CHANGES_REQUESTED, STATUS_DRAFT, STATUS_REJECTED, STATUS_SUBMITTED,
-    Approval, Comment, Commit, Issue, PullRequest, Report, Repository,
+    Approval, Comment, Report, Repository,
 )
 from app.schemas.reports import ReportCreate, ReportUpdate
 from app.services.email import notify_report_ready
+from app.services.repositories import may_write_on_repo
 
 _ACTION_TO_STATUS = {
     ACTION_APPROVED: STATUS_APPROVED,
@@ -29,7 +30,9 @@ def _get_report(db: Session, report_id: int) -> Report:
     return report
 
 def _repo_of(db: Session, report: Report) -> Repository | None:
-    return db.get(Repository, report.repo_id)
+    # An ad-hoc report on an untracked repository has no repo_id at all, and db.get with
+    # a null key warns rather than simply missing.
+    return db.get(Repository, report.repo_id) if report.repo_id is not None else None
 
 def _can_read(user: TokenClaims, report: Report, repo: Repository | None) -> bool:
     if user.is_platform_admin:
@@ -62,26 +65,11 @@ def _require_author(user: TokenClaims, report: Report, verb: str) -> None:
 def _has_content(report: Report) -> bool:
     return any((s or "").strip() for s in (report.summary_manager, report.summary_exec, report.next_week_goals))
 
-def _has_activity(db: Session, user_id: int, repo_id: int) -> bool:
-    for model in (Commit, PullRequest, Issue):
-        if db.scalar(select(model.id).where(model.repo_id == repo_id, model.author_user_id == user_id).limit(1)):
-            return True
-    return False
-
-def _may_report_on(db: Session, user: TokenClaims, repo: Repository) -> bool:
-    if user.is_platform_admin:
-        return True
-    if user.user_id in (repo.lead_user_id, repo.deputy_user_id):
-        return True
-    if repo.dept_id is not None and user.role_in(repo.dept_id) == "admin":
-        return True
-    return _has_activity(db, user.user_id, repo.id)
-
 def create_report(db: Session, user: TokenClaims, payload: ReportCreate) -> Report:
     repo = db.get(Repository, payload.repo_id)
     if not repo:
         raise HTTPException(status_code=404, detail="Repository not found")
-    if not _may_report_on(db, user, repo):
+    if not may_write_on_repo(db, user, repo):
         raise HTTPException(
             status_code=403,
             detail=(
@@ -93,9 +81,14 @@ def create_report(db: Session, user: TokenClaims, payload: ReportCreate) -> Repo
     week = _monday(payload.week_start or date.today())
     report = Report(
         author_user_id=user.user_id,
+        subject_user_id=user.user_id,  # a weekly report is about the person writing it
         repo_id=repo.id,
+        repo_full_name=repo.full_name,
         dept_id=repo.dept_id,  # taken from the repo, never from the author
+        kind=REPORT_KIND_WEEKLY,
         week_start=week,
+        range_start=week,
+        range_end=week + timedelta(days=6),
         status=STATUS_DRAFT,
         summary_manager=payload.summary_manager,
         summary_exec=payload.summary_exec,
@@ -109,6 +102,13 @@ def create_report(db: Session, user: TokenClaims, payload: ReportCreate) -> Repo
         raise HTTPException(status_code=409, detail=f"You already have a report for this repo for the week of {week.isoformat()}")
     db.refresh(report)
     return report
+
+def report_subject_ids(report: Report) -> list[int]:
+    """Who a report is about. The child rows when it covers several contributors,
+    otherwise the single subject on the report itself."""
+    if report.subjects:
+        return [s.subject_user_id for s in report.subjects if s.subject_user_id is not None]
+    return [report.subject_user_id] if report.subject_user_id is not None else []
 
 def list_reports(db: Session, user: TokenClaims, limit: int, offset: int, repo_id: int | None = None, dept_id: int | None = None, author_user_id: int | None = None, status: str | None = None) -> tuple[list[Report], int]:
     wide = user.is_platform_admin

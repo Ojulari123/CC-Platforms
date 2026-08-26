@@ -57,7 +57,7 @@ def no_sleep(monkeypatch):
 
 def _install_client(monkeypatch, behaviours):
     fake = _FakeClient(behaviours)
-    monkeypatch.setattr(llm, "_build_client", lambda: fake)
+    monkeypatch.setattr(llm, "_build_client", lambda credential=None: fake)
     return fake
 
 class TestRetry:

@@ -1,4 +1,4 @@
-from datetime import timedelta
+from datetime import date, timedelta
 from io import BytesIO
 from xml.sax.saxutils import escape
 from reportlab.lib import colors
@@ -8,7 +8,7 @@ from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
 from reportlab.lib.units import inch
 from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
 from sqlalchemy.orm import Session
-from app.models import (STATUS_APPROVED, STATUS_CHANGES_REQUESTED, STATUS_DRAFT, STATUS_REJECTED, STATUS_SUBMITTED, Report)
+from app.models import (REPORT_KIND_WEEKLY, STATUS_APPROVED, STATUS_CHANGES_REQUESTED, STATUS_DRAFT, STATUS_REJECTED, STATUS_SUBMITTED, Report)
 from app.services.generation import _collect_week_activity
 from app.services.identity_client import resolve_profiles_safe
 
@@ -75,26 +75,46 @@ def _author_label(report: Report) -> str:
     # The name is identity's data, not ours; escape it before it becomes reportlab markup.
     return escape(f"{profile['first_name']} {profile['last_name']}") + f" (#{report.author_user_id})"
 
+def report_period(report: Report) -> tuple[date | None, date | None]:
+    """The dates a report covers. week_start is null on an ad-hoc report, so range_start
+    and range_end are the general answer and the week is the special case."""
+    if report.week_start is not None:
+        return report.week_start, report.range_end or report.week_start + timedelta(days=6)
+    return report.range_start, report.range_end
+
+def period_label(report: Report) -> str:
+    """Also the filename stem for a downloaded PDF, so it never returns an empty string:
+    an ad-hoc report generated with no range would otherwise produce `report-7-.pdf`."""
+    start, end = report_period(report)
+    if start is None and end is None:
+        return "undated"
+    if report.week_start is not None:
+        return f"week-{start.isoformat()}"
+    return "-".join(d.isoformat() for d in (start, end) if d is not None)
+
 def render_report_pdf(db: Session, report: Report) -> bytes:
     s = _styles()
     repo = report.repository
-    repo_name = repo.full_name if repo is not None else f"repo #{report.repo_id}"
-    week_start = report.week_start
-    week_end = week_start + timedelta(days=6)
+    repo_name = repo.full_name if repo is not None else (report.repo_full_name or f"repo #{report.repo_id}")
+    start, end = report_period(report)
+    weekly = report.kind == REPORT_KIND_WEEKLY
 
     flow: list = []
-    flow.append(Paragraph(f"Weekly Report: {escape(repo_name)}", s["title"]))
-    flow.append(Paragraph(
-        f"{_author_label(report)} &nbsp;·&nbsp; "
-        f"Week of {week_start.isoformat()} ({week_start.isoformat()} → {week_end.isoformat()})",
-        s["meta"],
-    ))
+    flow.append(Paragraph(f"{'Weekly' if weekly else 'Ad-hoc'} Report: {escape(repo_name)}", s["title"]))
+    covered = " → ".join(d.isoformat() for d in (start, end) if d is not None) or "no dates recorded"
+    if weekly and start is not None:
+        covered = f"Week of {start.isoformat()} ({covered})"
+    flow.append(Paragraph(f"{_author_label(report)} &nbsp;·&nbsp; {covered}", s["meta"]))
     flow.append(Spacer(1, 8))
     flow.append(_status_badge(report.status, s))
 
-    activity = _collect_week_activity(db, report.author_user_id, report.repo_id, week_start)
-    flow.append(Paragraph("Activity this week", s["heading"]))
-    flow.append(_activity_table(activity["counts"], s))
+    # The activity table counts one author's week in one tracked repo, which is exactly
+    # what an ad-hoc report is not: it can cover several contributors, an arbitrary range,
+    # and a repository Pulse does not track.
+    if weekly and report.repo_id is not None and report.week_start is not None:
+        activity = _collect_week_activity(db, report.author_user_id, report.repo_id, report.week_start)
+        flow.append(Paragraph("Activity this week", s["heading"]))
+        flow.append(_activity_table(activity["counts"], s))
 
     _section("Manager Summary", report.summary_manager, flow, s)
     _section("Executive Summary", report.summary_exec, flow, s)

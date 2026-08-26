@@ -3,25 +3,39 @@ from sqlalchemy.orm import Session
 from crescent_core import TokenClaims, Page, PageParams, page_params
 from app.auth import current_user
 from app.db import get_db
+from app.services.provider_limits import ProviderRateLimited
 from app.rate_limit import limiter, user_or_address_key
 from app.models import ACTION_APPROVED, ACTION_CHANGES_REQUESTED, ACTION_REJECTED
 from app.schemas.reports import (
-    ApprovalResponse, CommentCreate, CommentResponse, CommentUpdate, DecisionRequest,
+    AdhocRequest, ApprovalResponse, CommentCreate, CommentResponse, CommentUpdate, DecisionRequest,
     GenerateRequest, ReportCreate, ReportResponse, ReportStatus, ReportUpdate,
 )
-from app.services import generation as generation_service, pdf as pdf_service, people, reports as reports_service
+from app.services import adhoc as adhoc_service, generation as generation_service, pdf as pdf_service, people, reports as reports_service
+from app.services.adhoc import AdhocRefused
+from app.services.ai_provider import AIError
 from app.services.generation import NoActivityError, ReportConflictError
+from app.services.github_client import GitHubRateLimited
 from app.services.llm import LLMError
+from app.services.llm_budget import BudgetExceededError
 
 router = APIRouter(prefix="/reports", tags=["reports"])
+
+_REPORT_PAIRS = (("author_user_id", "author"), ("subject_user_id", "subject"))
 
 def _named(model, rows, *pairs: tuple[str, str]) -> list:
     items = [model.model_validate(r) for r in rows]
     people.attach_names(items, *pairs)
     return items
 
+def _named_reports(rows) -> list[ReportResponse]:
+    items = _named(ReportResponse, rows, *_REPORT_PAIRS)
+    # Second pass over the nested rows: attach_names reads one set of field names off
+    # every item it is given, and a subject row is not a report.
+    people.attach_names([s for item in items for s in item.subjects], ("subject_user_id", "subject"))
+    return items
+
 def _named_report(report) -> ReportResponse:
-    return _named(ReportResponse, [report], ("author_user_id", "author"))[0]
+    return _named_reports([report])[0]
 
 @router.post("", response_model=ReportResponse, status_code=status.HTTP_201_CREATED)
 @limiter.limit("30/minute", key_func=user_or_address_key)
@@ -32,14 +46,51 @@ def create_report(request: Request, payload: ReportCreate, user: TokenClaims = D
 @limiter.limit("10/hour", key_func=user_or_address_key)
 def generate_report(request: Request, payload: GenerateRequest, user: TokenClaims = Depends(current_user), db: Session = Depends(get_db)) -> ReportResponse:
     try:
-        return _named_report(generation_service.generate_report(db, user, payload.repo_id, payload.week_start))
+        return _named_report(generation_service.generate_report(db, user, payload.repo_id, payload.week_start, payload.persona_id))
     except NoActivityError as exc:
         raise HTTPException(status_code=422, detail=str(exc))
+    except BudgetExceededError as exc:
+        raise HTTPException(status_code=status.HTTP_429_TOO_MANY_REQUESTS, detail=str(exc))
     except ReportConflictError as exc:
         raise HTTPException(status_code=409, detail=str(exc))
+    except ProviderRateLimited as exc:
+        # Busy, not broken. 503 with Retry-After is what tells a caller to come back
+        # rather than that something went wrong.
+        raise HTTPException(
+            status_code=503,
+            detail=f"Report generation is busy right now. Try again in about {max(1, round(exc.wait_seconds))} second(s).",
+            headers={"Retry-After": str(max(1, round(exc.wait_seconds)))},
+        )
     except LLMError:
         # Not interpolated: an LLMError carries the provider's own exception, which can
         # name request URLs, models and org ids. llm.py already logs it.
+        raise HTTPException(status_code=502, detail="Report generation is unavailable right now. Please try again shortly.")
+
+# Same limit as /generate, and for the same reason: one request is several model calls,
+# and the daily token budget is the real spend ceiling behind it.
+@router.post("/adhoc", response_model=ReportResponse, status_code=status.HTTP_201_CREATED)
+@limiter.limit("10/hour", key_func=user_or_address_key)
+def adhoc_report(request: Request, payload: AdhocRequest, user: TokenClaims = Depends(current_user), db: Session = Depends(get_db)) -> ReportResponse:
+    try:
+        return _named_report(adhoc_service.generate_adhoc_report(db, user, payload))
+    except AdhocRefused as exc:
+        raise HTTPException(status_code=exc.status_code, detail=str(exc))
+    except BudgetExceededError as exc:
+        raise HTTPException(status_code=status.HTTP_429_TOO_MANY_REQUESTS, detail=str(exc))
+    except GitHubRateLimited as exc:
+        minutes = max(1, round(exc.wait_seconds / 60))
+        raise HTTPException(status_code=503, detail=f"GitHub's rate limit was reached. Try again in about {minutes} minute(s).")
+    except ProviderRateLimited as exc:
+        # Busy, not broken. 503 with Retry-After is what tells a caller to come back
+        # rather than that something went wrong.
+        raise HTTPException(
+            status_code=503,
+            detail=f"Report generation is busy right now. Try again in about {max(1, round(exc.wait_seconds))} second(s).",
+            headers={"Retry-After": str(max(1, round(exc.wait_seconds)))},
+        )
+    except AIError:
+        # Not interpolated: an AIError carries the provider's own exception, which can
+        # name request URLs, models and org ids. The provider module already logs it.
         raise HTTPException(status_code=502, detail="Report generation is unavailable right now. Please try again shortly.")
 
 @router.get("", response_model=Page[ReportResponse])
@@ -49,13 +100,13 @@ def list_reports(repo_id: int | None = Query(default=None), dept_id: int | None 
         db, user, limit=page.limit, offset=page.offset,
         repo_id=repo_id, dept_id=dept_id, author_user_id=author_user_id, status=status,
     )
-    return Page.of(_named(ReportResponse, items, ("author_user_id", "author")), total=total, params=page)
+    return Page.of(_named_reports(items), total=total, params=page)
 
 @router.get("/review-queue", response_model=Page[ReportResponse])
 def review_queue(status: ReportStatus | None = Query(default="submitted", description="Which state to show; defaults to those awaiting a decision"),
     page: PageParams = Depends(page_params), user: TokenClaims = Depends(current_user), db: Session = Depends(get_db)) -> Page[ReportResponse]:
     items, total = reports_service.review_queue(db, user, limit=page.limit, offset=page.offset, status=status)
-    return Page.of(_named(ReportResponse, items, ("author_user_id", "author")), total=total, params=page)
+    return Page.of(_named_reports(items), total=total, params=page)
 
 @router.get("/{report_id}", response_model=ReportResponse)
 def get_report(report_id: int, user: TokenClaims = Depends(current_user), db: Session = Depends(get_db)) -> ReportResponse:
@@ -65,7 +116,7 @@ def get_report(report_id: int, user: TokenClaims = Depends(current_user), db: Se
 def report_pdf(report_id: int, user: TokenClaims = Depends(current_user), db: Session = Depends(get_db)) -> Response:
     report = reports_service.get_report(db, user, report_id)
     body = pdf_service.render_report_pdf(db, report)
-    filename = f"report-{report.id}-week-{report.week_start.isoformat()}.pdf"
+    filename = f"report-{report.id}-{pdf_service.period_label(report)}.pdf"
     return Response(
         content=body,
         media_type="application/pdf",

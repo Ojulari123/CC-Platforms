@@ -1,3 +1,4 @@
+import base64
 import logging
 import re
 import time
@@ -17,6 +18,14 @@ def _next_link(link_header: str) -> str | None:
 def _parse_dt(value: str | None) -> datetime | None:
     return datetime.fromisoformat(value.replace("Z", "+00:00")) if value else None
 
+def _decode_content(payload: dict) -> bytes:
+    """GitHub base64s file content, but returns it unencoded for some blobs; the
+    `encoding` field is the only thing that says which, so it is read rather than assumed."""
+    content = payload.get("content") or ""
+    if payload.get("encoding") == "base64":
+        return base64.b64decode(content)
+    return content.encode()
+
 class GitHubRateLimited(Exception):
 
     def __init__(self, wait_seconds: float, url: str):
@@ -34,15 +43,17 @@ class GitHubClient:
         self._base = (base_url or settings.GITHUB_API_URL).rstrip("/")
         self._sleep = sleep
         self._max_wait = max_wait_seconds
-        self._http = httpx.Client(
-            timeout=15.0,
-            transport=transport,
-            headers={
-                "Authorization": f"Bearer {token}",
-                "Accept": "application/vnd.github+json",
-                "X-GitHub-Api-Version": "2022-11-28",
-            },
-        )
+        headers = {
+            "Accept": "application/vnd.github+json",
+            "X-GitHub-Api-Version": "2022-11-28",
+        }
+        # No token means anonymous, which GitHub allows for public repositories at a much
+        # lower rate limit. An EMPTY Authorization header is not the same thing: GitHub
+        # answers 401 to `Bearer ` with nothing after it, so the header is left off
+        # entirely rather than sent blank.
+        if token:
+            headers["Authorization"] = f"Bearer {token}"
+        self._http = httpx.Client(timeout=15.0, transport=transport, headers=headers)
 
     def close(self) -> None:
         self._http.close()
@@ -118,3 +129,35 @@ class GitHubClient:
         if since:
             params["since"] = since
         return self._paginate(f"/repos/{full_name}/issues", params)
+
+    def get_commit(self, full_name: str, ref: str) -> dict:
+        """One commit, so a branch name can be pinned to the sha it pointed at. An index
+        that only recorded the branch could not tell whether it is still current."""
+        return self._request(f"{self._base}/repos/{full_name}/commits/{ref}").json()
+
+    def get_readme(self, full_name: str) -> str | None:
+        """None, not an exception, when there is no README: a repo without one is normal
+        and should not fail whatever is reading it."""
+        try:
+            data = self._request(f"{self._base}/repos/{full_name}/readme").json()
+        except httpx.HTTPStatusError as exc:
+            if exc.response.status_code == 404:
+                return None
+            raise
+        return _decode_content(data).decode("utf-8", errors="replace")
+
+    def get_tree(self, full_name: str, ref: str) -> dict:
+        """The whole payload, `truncated` flag included. GitHub caps a recursive tree at
+        100k entries / 7 MB and says so in that flag; a caller that drops it indexes part
+        of a monorepo believing it has all of it."""
+        return self._request(f"{self._base}/repos/{full_name}/git/trees/{ref}", params={"recursive": "1"}).json()
+
+    def get_blob(self, full_name: str, sha: str) -> bytes:
+        """Bytes, not text: whether a blob is even decodable is the caller's decision to
+        make, and a binary file that slipped past the extension filter must not raise here."""
+        return _decode_content(self._request(f"{self._base}/repos/{full_name}/git/blobs/{sha}").json())
+
+    def list_repos_for_token(self) -> list[dict]:
+        """Everything this token can reach, not just what it owns — a lot of a person's
+        work lives in repos owned by the organisation or by someone who added them."""
+        return self._paginate("/user/repos", {"affiliation": "owner,collaborator,organization_member", "sort": "pushed"})

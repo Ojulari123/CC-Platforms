@@ -1,6 +1,6 @@
 from datetime import date, datetime, timedelta, timezone
 import pytest
-from app.models import Commit, Repository
+from app.models import REPORT_KIND_ADHOC, Commit, Report, Repository
 
 DEPT = 1
 LEAD_ID = 20
@@ -99,6 +99,14 @@ class TestCreate:
     def test_report_for_a_missing_repo_is_404(self, client, act_as):
         act_as(**ENGINEER)
         assert _create(client, 9999).status_code == 404
+
+    def test_a_weekly_report_is_about_its_author(self, client, act_as, repo):
+        act_as(**ENGINEER)
+        body = _create(client, repo).json()
+        assert body["kind"] == "weekly"
+        assert body["subject_user_id"] == body["author_user_id"] == 10
+        assert body["subject_github_login"] is None
+        assert body["subjects"] == []
 
 class TestVisibility:
     def _make_report(self, client, act_as, repo):
@@ -569,3 +577,98 @@ class TestReviewQueue:
 
     def test_requires_a_token(self, client, repo):
         assert client.get("/reports/review-queue").status_code == 401
+
+class TestNewReportColumns:
+    """0010 backfilled repo_full_name/range_start/range_end onto existing rows; the
+    create path has to fill them too or every new report is the shape the backfill was
+    written to repair."""
+
+    def test_a_created_report_carries_the_repo_name_and_range(self, client, act_as, db, repo):
+        act_as(**ENGINEER)
+        rid = _create(client, repo).json()["id"]
+
+        row = db.get(Report, rid)
+        monday = _this_monday()
+        assert row.repo_full_name == "org/alpha"
+        assert row.range_start == monday
+        assert row.range_end == monday + timedelta(days=6)
+        # The backfill's shape: range_start is week_start and the range is a full week.
+        assert row.range_start == row.week_start
+        assert (row.range_end - row.range_start).days == 6
+
+class TestWeeklyUniqueIndexIsPartial:
+    """The unique index is restricted to kind = 'weekly'. SQLite drops an unqualified
+    postgresql_where, so without sqlite_where the suite enforced a stricter rule than
+    Postgres and passed for the wrong reason."""
+
+    def test_the_sqlite_ddl_carries_the_predicate(self):
+        from sqlalchemy.dialects import sqlite
+        from sqlalchemy.schema import CreateIndex
+
+        index = next(i for i in Report.__table__.indexes if i.name == "uq_report_author_repo_week")
+        ddl = str(CreateIndex(index).compile(dialect=sqlite.dialect()))
+        assert "CREATE UNIQUE INDEX" in ddl
+        assert "WHERE kind = 'weekly'" in ddl
+
+    def test_an_adhoc_row_may_duplicate_a_weekly_rows_repo_and_week(self, client, act_as, db, repo):
+        act_as(**ENGINEER)
+        assert _create(client, repo).status_code == 201
+        week = _this_monday()
+
+        db.add(Report(
+            author_user_id=10,
+            subject_user_id=10,
+            repo_id=repo,
+            repo_full_name="org/alpha",
+            dept_id=DEPT,
+            kind=REPORT_KIND_ADHOC,
+            week_start=week,
+            range_start=week,
+            range_end=week + timedelta(days=6),
+        ))
+        db.commit()
+
+        rows = db.query(Report).filter(Report.repo_id == repo, Report.week_start == week).all()
+        assert sorted(r.kind for r in rows) == ["adhoc", "weekly"]
+
+    def test_a_second_weekly_row_is_still_refused(self, client, act_as, repo):
+        act_as(**ENGINEER)
+        assert _create(client, repo).status_code == 201
+        assert _create(client, repo).status_code == 409
+
+
+class TestProviderBusyIsNotProviderBroken:
+    def test_a_weekly_report_rate_limit_is_503_with_a_retry_after(self, client, act_as, db, monkeypatch):
+        from app.services import generation as generation_service
+        from app.services.provider_limits import ProviderRateLimited
+
+        monkeypatch.setattr(
+            generation_service, "generate_report",
+            lambda *a, **k: (_ for _ in ()).throw(ProviderRateLimited(7.0, "OpenAI")),
+        )
+        act_as(**LEAD)
+
+        r = client.post("/reports/generate", json={"repo_id": 1, "week_start": "2026-07-06"})
+
+        assert r.status_code == 503
+        assert r.headers["Retry-After"] == "7"
+        assert "busy right now" in r.json()["detail"]
+
+    def test_an_adhoc_report_rate_limit_is_503_with_a_retry_after(self, client, act_as, db, monkeypatch):
+        from app.services import adhoc as adhoc_service
+        from app.services.provider_limits import ProviderRateLimited
+
+        monkeypatch.setattr(
+            adhoc_service, "generate_adhoc_report",
+            lambda *a, **k: (_ for _ in ()).throw(ProviderRateLimited(3.0, "OpenAI")),
+        )
+        act_as(**LEAD)
+
+        r = client.post("/reports/adhoc", json={
+            "repo_full_name": "org/alpha", "subjects": [{"github_login": "dev"}],
+            "range_start": "2026-07-01", "range_end": "2026-07-07",
+        })
+
+        assert r.status_code == 503
+        assert r.headers["Retry-After"] == "3"
+        assert "busy right now" in r.json()["detail"]

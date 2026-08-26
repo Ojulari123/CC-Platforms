@@ -79,7 +79,7 @@ def repo_with_activity(db):
 
 
 def test_generate_is_rate_limited(client, act_as, monkeypatch, live_limiter, repo_with_activity):
-    monkeypatch.setattr(llm, "generate_summaries", lambda payload: FAKE)
+    monkeypatch.setattr(llm, "generate_summaries", lambda payload, **kwargs: FAKE)
     act_as(**ENGINEER)
     body = {"repo_id": repo_with_activity.id, "week_start": WEEK}
 
@@ -92,7 +92,7 @@ def test_generate_is_rate_limited(client, act_as, monkeypatch, live_limiter, rep
 def test_a_refused_generate_never_calls_the_llm(client, act_as, monkeypatch, live_limiter, repo_with_activity):
     calls = {"n": 0}
 
-    def _count(payload):
+    def _count(payload, **kwargs):
         calls["n"] += 1
         return FAKE
 
@@ -163,7 +163,7 @@ class TestAuthenticatedRoutesAreKeyedByUser:
         assert client.post("/github/sync", headers=_bearer(11)).status_code == 403
 
     def test_one_user_cannot_spend_anothers_openai_allowance(self, client, act_as, monkeypatch, live_limiter, repo_with_activity):
-        monkeypatch.setattr(llm, "generate_summaries", lambda payload: FAKE)
+        monkeypatch.setattr(llm, "generate_summaries", lambda payload, **kwargs: FAKE)
         act_as(**ENGINEER)
         body = {"repo_id": repo_with_activity.id, "week_start": WEEK}
 

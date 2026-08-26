@@ -84,3 +84,21 @@ def test_sync_records_a_rate_limited_run_distinguishably(db, monkeypatch):
     assert "rate limit" in runs[0].detail.lower()
     assert "45 min" in runs[0].detail
     assert db.query(SyncRun).filter(SyncRun.status == "error").count() == 0
+
+
+class TestAnonymousRequests:
+    def test_an_empty_token_sends_no_authorization_header_at_all(self):
+        """GitHub answers 401 to `Authorization: Bearer ` with nothing after it, so a
+        public repository read with no stored account has to be genuinely anonymous."""
+        client = GitHubClient("")
+        try:
+            assert "Authorization" not in client._http.headers
+        finally:
+            client.close()
+
+    def test_a_token_is_still_sent_as_a_bearer(self):
+        client = GitHubClient("gho_abc")
+        try:
+            assert client._http.headers["Authorization"] == "Bearer gho_abc"
+        finally:
+            client.close()

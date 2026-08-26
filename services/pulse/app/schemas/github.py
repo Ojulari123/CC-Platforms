@@ -13,6 +13,12 @@ class GitHubAccountResponse(BaseModel):
     scopes: str | None
     connected_at: datetime
 
+class ConnectedAccountResponse(BaseModel):
+    """A wrapper rather than a nullable body, for the same reason LatestRollupResponse is
+    one: not having connected GitHub yet is a normal state, and serving it as a 404 put a
+    stack trace in the console of every user who had not."""
+    account: GitHubAccountResponse | None = None
+
 class SyncRunResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 

@@ -8,6 +8,7 @@ from app.config import settings
 from app.models import Commit, GitHubAccount, Issue, PullRequest, Repository, Review, SyncRun
 from app.services import sync as sync_service
 from app.services.github_client import GitHubClient
+from app.services.repo_index import RECONNECT_DETAIL
 import app.tasks 
 
 REPO = {"id": 555, "name": "alpha", "full_name": "org/alpha", "private": False, "default_branch": "main", "owner": {"login": "org"}}
@@ -431,3 +432,269 @@ def test_daily_sync_is_registered_on_the_celery_app():
     assert "app.tasks.sync_all_repos" in celery.tasks
     assert "daily-github-sync" in celery.conf.beat_schedule
     assert celery.conf.beat_schedule["daily-github-sync"]["task"] == "app.tasks.sync_all_repos"
+
+
+class TestCommitAttribution:
+    """GitHub sends `author` and `committer` on a commit and they are different people
+    after a squash merge: the author wrote the change, the committer pressed the button.
+    Reading the wrong one puts one person's work under another's name."""
+
+    def test_the_author_is_credited_not_the_committer(self, db, monkeypatch):
+        monkeypatch.setattr(settings, "GITHUB_REPOS", "org/alpha")
+        _connect_account(db, login="ada", user_id=10)
+        db.add(GitHubAccount(user_id=11, github_user_id=100, github_login="merger",
+                             access_token_encrypted=crypto.encrypt("gho_token")))
+        db.commit()
+        fake = FakeGitHub(commits=[{
+            "sha": "sq1", "html_url": "u",
+            "author": {"login": "ada"},
+            "committer": {"login": "merger"},
+            "commit": {"message": "add parser (#42)", "committer": {"date": "2026-07-20T10:00:00Z"}},
+        }])
+
+        sync_service.run_full_sync(db, make_client=lambda token: fake)
+
+        commit = db.scalar(select(Commit))
+        assert commit.author_github_login == "ada"
+        assert commit.author_user_id == 10
+
+    def test_a_commit_github_cannot_match_is_left_unattributed(self, db, monkeypatch):
+        """No fallback to the committer on purpose: unattributed is honest, crediting
+        whoever merged is not."""
+        monkeypatch.setattr(settings, "GITHUB_REPOS", "org/alpha")
+        _connect_account(db, login="merger", user_id=11)
+        fake = FakeGitHub(commits=[{
+            "sha": "x1", "html_url": "u",
+            "author": None,
+            "committer": {"login": "merger"},
+            "commit": {"message": "vendored change", "committer": {"date": "2026-07-20T10:00:00Z"}},
+        }])
+
+        sync_service.run_full_sync(db, make_client=lambda token: fake)
+
+        commit = db.scalar(select(Commit))
+        assert commit.author_github_login is None
+        assert commit.author_user_id is None
+
+    def test_commit_author_login_reads_author_only(self):
+        payload = {"author": {"login": "ada"}, "committer": {"login": "merger"}}
+        assert sync_service.commit_author_login(payload) == "ada"
+        assert sync_service.commit_author_login({"committer": {"login": "merger"}}) is None
+        assert sync_service.commit_author_login({"author": None}) is None
+
+
+class TestCollapseCommits:
+
+    def _c(self, sha, message):
+        return {"sha": sha, "message": message}
+
+    def test_a_squash_and_the_branch_commit_it_absorbed_count_once(self):
+        kept, merges, duplicates = sync_service.collapse_commits([
+            self._c("sq", "add parser (#42)"),
+            self._c("br", "add parser"),
+        ])
+        assert [c["sha"] for c in kept] == ["sq"]
+        assert (merges, duplicates) == (0, 1)
+
+    def test_a_merge_commit_is_not_somebody_elses_change(self):
+        kept, merges, duplicates = sync_service.collapse_commits([
+            self._c("m1", "Merge pull request #42 from org/feature"),
+            self._c("m2", "Merge branch 'main' into feature"),
+            self._c("w", "real work"),
+        ])
+        assert [c["sha"] for c in kept] == ["w"]
+        assert (merges, duplicates) == (2, 0)
+
+    def test_different_changes_are_left_alone(self):
+        kept, merges, duplicates = sync_service.collapse_commits([
+            self._c("a", "add parser"), self._c("b", "fix parser"), self._c("c", "document parser"),
+        ])
+        assert len(kept) == 3 and (merges, duplicates) == (0, 0)
+
+    def test_only_the_subject_line_is_compared(self):
+        kept, _, duplicates = sync_service.collapse_commits([
+            self._c("sq", "add parser (#42)\n\n* first step\n* second step"),
+            self._c("br", "add parser"),
+        ])
+        assert [c["sha"] for c in kept] == ["sq"] and duplicates == 1
+
+    def test_empty_messages_are_kept_rather_than_collapsed(self):
+        kept, _, duplicates = sync_service.collapse_commits([self._c("a", ""), self._c("b", None)])
+        assert len(kept) == 2 and duplicates == 0
+
+    def test_the_note_names_both_reasons_and_is_absent_when_nothing_changed(self):
+        assert sync_service.collapse_note(0, 0) is None
+        note = sync_service.collapse_note(1, 2)
+        assert "1 merge commit(s) were left out" in note
+        assert "2 commit(s) were counted once rather than twice" in note
+
+
+class TestUnreadableRepo:
+
+    def test_a_repo_no_account_can_open_says_to_reconnect(self, db, monkeypatch):
+        monkeypatch.setattr(settings, "GITHUB_REPOS", "org/private")
+        _connect_account(db)
+
+        class Denied:
+            def get_repo(self, full_name):
+                raise httpx.HTTPStatusError("nope", request=httpx.Request("GET", "https://api.github.com"),
+                                            response=httpx.Response(404))
+
+            def close(self):
+                pass
+
+        runs = sync_service.run_full_sync(db, make_client=lambda token: Denied())
+
+        assert runs[0].status == "error"
+        assert "could not be read by any connected GitHub account" in runs[0].detail
+        assert RECONNECT_DETAIL in runs[0].detail
+
+
+class TestCollapseIsNarrow:
+    """The squash rule keys on GitHub's own "(#12)" suffix rather than on the subject
+    alone. A looser rule swallows repeated chores that really are separate commits."""
+
+    def _c(self, sha, message):
+        return {"sha": sha, "message": message}
+
+    def test_two_commits_that_merely_share_a_subject_both_count(self):
+        kept, _, duplicates = sync_service.collapse_commits([
+            self._c("a", "update dev dependencies"),
+            self._c("b", "update dev dependencies"),
+        ])
+        assert [c["sha"] for c in kept] == ["a", "b"] and duplicates == 0
+
+    def test_two_pull_requests_with_the_same_title_both_count(self):
+        kept, _, duplicates = sync_service.collapse_commits([
+            self._c("a", "fix the flaky test (#42)"),
+            self._c("b", "fix the flaky test (#57)"),
+        ])
+        assert [c["sha"] for c in kept] == ["a", "b"] and duplicates == 0
+
+    def test_a_squash_absorbing_several_identical_subjects_collapses_them_all(self):
+        kept, _, duplicates = sync_service.collapse_commits([
+            self._c("sq", "add parser (#42)"),
+            self._c("b1", "add parser"),
+            self._c("b2", "add parser"),
+        ])
+        assert [c["sha"] for c in kept] == ["sq"] and duplicates == 2
+
+    def test_a_squash_of_differently_worded_commits_is_not_detected(self):
+        """Recorded rather than fixed: nothing in the payload links a squash to branch
+        commits whose subjects it did not reuse."""
+        kept, _, duplicates = sync_service.collapse_commits([
+            self._c("sq", "add the parser (#42)"),
+            self._c("b1", "first go at parsing"),
+            self._c("b2", "handle the empty case"),
+        ])
+        assert len(kept) == 3 and duplicates == 0
+
+    def test_has_pr_number_reads_only_the_subject(self):
+        assert sync_service.has_pr_number("add parser (#42)") is True
+        assert sync_service.has_pr_number("add parser\n\ncloses (#42)") is False
+        assert sync_service.has_pr_number("add parser") is False
+
+class TestCommitDates:
+    """A commit's stored date is the day it landed on the branch, not the day it was
+    written. A rebase or a cherry-pick moves the author date behind the day the commit
+    reached the branch, which would file it under a week it was not part of."""
+
+    def _fake(self, authored, committed):
+        commit = {"message": "did work"}
+        if authored:
+            commit["author"] = {"date": authored}
+        if committed:
+            commit["committer"] = {"date": committed}
+        return FakeGitHub(commits=[{"sha": "abc", "html_url": "u", "author": {"login": "ada"}, "commit": commit}])
+
+    def test_a_rebased_commit_is_stored_under_the_date_it_landed(self, db, monkeypatch):
+        monkeypatch.setattr(settings, "GITHUB_REPOS", "org/alpha")
+        _connect_account(db)
+        fake = self._fake("2026-07-14T10:00:00Z", "2026-08-11T10:00:00Z")
+
+        sync_service.run_full_sync(db, make_client=lambda t: fake)
+
+        commit = db.scalar(select(Commit))
+        assert commit.committed_at.isoformat().startswith("2026-08-11")
+
+    def test_the_author_date_is_the_fallback_when_no_committer_block_is_sent(self):
+        assert sync_service.commit_stamp({"commit": {"author": {"date": "2026-07-14T10:00:00Z"}}}) == "2026-07-14T10:00:00Z"
+
+    def test_a_payload_with_neither_date_reads_as_missing(self):
+        assert sync_service.commit_stamp({"commit": {"committer": {}}}) is None
+        assert sync_service.commit_stamp({}) is None
+
+class TestPullRequestClosure:
+    """merged_at cannot date a pull request that was closed without being merged, and
+    that was every closed unmerged pull request Pulse held before this column existed."""
+
+    def _fake(self, **over):
+        pr = {"id": 1, "number": 7, "title": "a PR", "state": "open", "merged_at": None,
+              "closed_at": None, "created_at": "2026-07-19T10:00:00Z",
+              "updated_at": "2026-07-20T10:00:00Z", "user": {"login": "ada"}, "html_url": "u"}
+        return FakeGitHub(prs=[pr | over])
+
+    def _sync(self, db, monkeypatch, fake):
+        monkeypatch.setattr(settings, "GITHUB_REPOS", "org/alpha")
+        _connect_account(db)
+        sync_service.run_full_sync(db, make_client=lambda t: fake)
+        return db.scalar(select(PullRequest))
+
+    def test_a_pull_request_closed_without_merging_keeps_its_closure_date(self, db, monkeypatch):
+        pr = self._sync(db, monkeypatch, self._fake(state="closed", closed_at="2026-07-21T10:00:00Z"))
+        assert pr.merged is False and pr.merged_at is None
+        assert pr.closed_at.isoformat().startswith("2026-07-21")
+
+    def test_a_merged_pull_request_carries_both_dates(self, db, monkeypatch):
+        pr = self._sync(db, monkeypatch, self._fake(
+            state="closed", merged_at="2026-07-21T10:00:00Z", closed_at="2026-07-21T10:00:00Z"))
+        assert pr.merged is True
+        assert pr.merged_at.isoformat().startswith("2026-07-21")
+        assert pr.closed_at.isoformat().startswith("2026-07-21")
+
+    def test_an_open_pull_request_has_no_closure_date(self, db, monkeypatch):
+        pr = self._sync(db, monkeypatch, self._fake())
+        assert pr.closed_at is None
+
+class TestIssueAssignment:
+    """Who an issue is queued to, which is what next week's goals are written from. The
+    person who raised an issue is usually not the person who will do it."""
+
+    def _fake(self, **over):
+        issue = {"id": 22, "number": 3, "title": "a bug", "state": "open",
+                 "created_at": "2026-07-18T09:00:00Z", "closed_at": None,
+                 "user": {"login": "bob"}, "html_url": "u"}
+        return FakeGitHub(issues=[issue | over])
+
+    def _sync(self, db, monkeypatch, fake):
+        monkeypatch.setattr(settings, "GITHUB_REPOS", "org/alpha")
+        _connect_account(db)
+        sync_service.run_full_sync(db, make_client=lambda t: fake)
+        return db.scalar(select(Issue))
+
+    def test_an_assignee_is_attributed_to_the_pulse_user(self, db, monkeypatch):
+        issue = self._sync(db, monkeypatch, self._fake(assignee={"login": "ada"}))
+        assert issue.author_github_login == "bob" and issue.author_user_id is None
+        assert issue.assignee_github_login == "ada" and issue.assignee_user_id == 10
+
+    def test_an_unassigned_issue_carries_nobody(self, db, monkeypatch):
+        issue = self._sync(db, monkeypatch, self._fake(assignee=None))
+        assert issue.assignee_github_login is None and issue.assignee_user_id is None
+
+    def test_unassigning_clears_the_previous_assignee(self, db, monkeypatch):
+        monkeypatch.setattr(settings, "GITHUB_REPOS", "org/alpha")
+        _connect_account(db)
+        sync_service.run_full_sync(db, make_client=lambda t: self._fake(assignee={"login": "ada"}))
+        sync_service.run_full_sync(db, make_client=lambda t: self._fake(assignee=None))
+        issue = db.scalar(select(Issue))
+        assert issue.assignee_github_login is None and issue.assignee_user_id is None
+
+    def test_a_milestone_keeps_its_name_and_due_date(self, db, monkeypatch):
+        issue = self._sync(db, monkeypatch, self._fake(
+            milestone={"title": "Sprint 12", "due_on": "2026-08-03T07:00:00Z"}))
+        assert issue.milestone_title == "Sprint 12"
+        assert issue.milestone_due_on.isoformat().startswith("2026-08-03")
+
+    def test_a_milestone_with_no_due_date_stores_the_name_alone(self, db, monkeypatch):
+        issue = self._sync(db, monkeypatch, self._fake(milestone={"title": "Backlog", "due_on": None}))
+        assert issue.milestone_title == "Backlog" and issue.milestone_due_on is None

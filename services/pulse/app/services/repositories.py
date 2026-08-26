@@ -6,7 +6,7 @@ from fastapi import HTTPException
 from sqlalchemy import func, or_, select, update
 from sqlalchemy.orm import Session
 from crescent_core import TokenClaims
-from app.models import Report, Repository
+from app.models import Commit, Issue, PullRequest, Report, Repository
 from app.services.activity import repo_ids_worked_in, repo_ids_worked_in_q, user_ids_worked_in_repo
 
 def _get_repo(db: Session, repo_id: int) -> Repository:
@@ -33,6 +33,25 @@ def _can_see_repo(db: Session, user: TokenClaims, repo: Repository) -> bool:
     if repo.dept_id is not None and user.is_member_of(repo.dept_id):
         return True
     return repo.id in repo_ids_worked_in(db, user.user_id)
+
+def _has_activity(db: Session, user_id: int, repo_id: int) -> bool:
+    for model in (Commit, PullRequest, Issue):
+        if db.scalar(select(model.id).where(model.repo_id == repo_id, model.author_user_id == user_id).limit(1)):
+            return True
+    return False
+
+def may_write_on_repo(db: Session, user: TokenClaims, repo: Repository) -> bool:
+    """"Is this person a member of this repo" — the one predicate behind writing a
+    report and posting to its journal. Deliberately narrower than _can_see_repo: a
+    plain member of the repo's department can read the repo without having worked in
+    it, and reading is not enough to write."""
+    if user.is_platform_admin:
+        return True
+    if user.user_id in (repo.lead_user_id, repo.deputy_user_id):
+        return True
+    if repo.dept_id is not None and user.role_in(repo.dept_id) == "admin":
+        return True
+    return _has_activity(db, user.user_id, repo.id)
 
 def visible_repo_scope(user: TokenClaims) -> list:
     """_can_see_repo expressed as SQL — change this and _can_see_repo together."""

@@ -107,6 +107,16 @@ def handle_callback(db: Session, code: str, state: str) -> GitHubAccount:
     db.refresh(account)
     return account
 
+def has_repo_scope(account: GitHubAccount | None) -> bool:
+    """Whether the stored token can read private repository contents. `scopes` records
+    what was asked for at connect time, so an account connected before
+    GITHUB_OAUTH_SCOPES was widened still reads false — which is right, its token really
+    doesn't have it, and the API says so instead of failing at fetch time."""
+    if account is None or not account.scopes:
+        return False
+    granted = {s.strip() for s in account.scopes.split(",") if s.strip()}
+    return "repo" in granted
+
 def get_account(db: Session, user_id: int) -> GitHubAccount | None:
     return db.scalar(select(GitHubAccount).where(GitHubAccount.user_id == user_id))
 
