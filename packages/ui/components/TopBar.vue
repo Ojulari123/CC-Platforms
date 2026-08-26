@@ -2,6 +2,7 @@
 import Avatar from "./Avatar.vue";
 import Icon from "./Icon.vue";
 import Mark from "./Mark.vue";
+import ThemeToggle from "./ThemeToggle.vue";
 import type { NavItem } from "../types/ui";
 import { CONTENT, FOCUS, TAP } from "../utils/ui";
 
@@ -43,14 +44,29 @@ const emit = defineEmits<{ signOut: [] }>();
       Skip to content
     </a>
 
-    <div :class="['flex h-14 items-center gap-6', CONTENT]">
+    <!-- The nav between these two clusters is `md:flex`, so below that this gap is just
+         the space between the brand and the account controls, and 24px of it was the last
+         thing keeping "Pulse" from fitting at 390px. -->
+    <div :class="['flex h-14 items-center gap-3 md:gap-6', CONTENT]">
       <div class="flex min-w-0 items-center gap-2.5">
-        <NuxtLink :to="homeTo" :class="[FOCUS, TAP, 'flex items-center gap-2.5 rounded']" aria-label="Meridian home">
+        <!-- `shrink-0` is load-bearing. Without it the flex algorithm squeezed this link's
+             box (to 64.5px at 390px wide) while its 94.7px of content carried on painting,
+             so the wordmark ran 6.2px under the theme toggle on Pulse at 390 and 36.2px at
+             360. The box now keeps its content, and the breadcrumb beside it — which has
+             `truncate` and a `min-w-0` parent — is the one thing that gives. -->
+        <NuxtLink :to="homeTo" :class="[FOCUS, TAP, 'flex shrink-0 items-center gap-2.5 rounded']" aria-label="Meridian home">
           <Mark />
-          <span class="text-[14px] font-semibold tracking-tight">Meridian</span>
+          <!-- Same rule as "All products" below: the label folds on a narrow screen, the
+               link does not. The Mark is still the way home, and on a phone the product
+               name is the more useful of the two words. -->
+          <span class="hidden text-[14px] font-semibold tracking-tight min-[490px]:inline">Meridian</span>
         </NuxtLink>
         <template v-if="breadcrumb">
-          <span class="text-[14px] text-ink-faint" aria-hidden="true">/</span>
+          <!-- The separator goes with the word it separates from. Left in while the
+               wordmark is folded it read "/ Pulse", and cost the 18px that was the
+               difference between the product name fitting at 390px and truncating to
+               "P.". -->
+          <span class="hidden text-[14px] text-ink-faint min-[490px]:inline" aria-hidden="true">/</span>
           <span class="truncate text-[14px] font-medium tracking-tight text-ink-muted">{{ breadcrumb }}</span>
         </template>
       </div>
@@ -73,6 +89,10 @@ const emit = defineEmits<{ signOut: [] }>();
       </nav>
 
       <div class="ml-auto flex shrink-0 items-center gap-2">
+        <!-- Ahead of the account cluster, and outside the signed-in branch: a login
+             screen is a screen someone reads too. -->
+        <ThemeToggle />
+
         <template v-if="signedIn">
           <NuxtLink
             v-if="allProductsTo"

@@ -218,13 +218,13 @@ useHead({ title: "Choose a new password" });
 
           <ul class="sec mt-10 grid gap-px border-t border-line-subtle sm:grid-cols-2" style="animation-delay: 160ms">
             <li v-for="[n, t] in FACTS" :key="n" class="flex items-baseline gap-2.5 border-b border-line-subtle py-3">
-              <span class="mono text-[11px] text-ink-faint">{{ n }}</span>
+              <span class="mono text-[12px] text-ink-faint">{{ n }}</span>
               <span :class="[MONO_LABEL, 'text-ink-muted']">{{ t }}</span>
             </li>
           </ul>
 
           <!-- A fragment, never the token. Enough to tell two links apart, useless to spend. -->
-          <p class="mono mt-6 text-[11px] tracking-[0.08em] text-ink-muted">
+          <p class="mono mt-6 text-[12px] tracking-[0.08em] text-ink-muted">
             token {{ fragment }} · never shown in full
           </p>
         </div>
@@ -268,7 +268,7 @@ useHead({ title: "Choose a new password" });
               Every session on the account was revoked, including any this link was not meant to reach. Sign in with the
               new password to start a fresh one.
             </p>
-            <p class="mono mt-4 text-[11px] tracking-[0.08em] text-ink-muted">link spent · token discarded</p>
+            <p class="mono mt-4 text-[12px] tracking-[0.08em] text-ink-muted">link spent · token discarded</p>
 
             <div class="mt-6">
               <NuxtLink to="/login" :class="[FOCUS, CTA_LINK, 'group/cta']">

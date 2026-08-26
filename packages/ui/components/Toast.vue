@@ -62,7 +62,7 @@ onBeforeUnmount(() => {
       data-toast
       :data-settled="settled ? 'true' : 'false'"
       :class="[
-        'pointer-events-auto flex max-w-[520px] items-center gap-3 rounded-md bg-surface px-4 py-2.5 shadow-2xl ring-1 ring-line transition-[opacity,transform] ease-[cubic-bezier(0.23,1,0.32,1)]',
+        'pointer-events-auto flex max-w-[520px] items-center gap-3 rounded-md bg-surface px-4 py-2.5 shadow-overlay ring-1 ring-line transition-[opacity,transform] ease-[cubic-bezier(0.23,1,0.32,1)]',
         leaving ? 'duration-200' : 'duration-[250ms]',
         settled ? 'translate-y-0 opacity-100' : 'translate-y-2 opacity-0',
       ]"

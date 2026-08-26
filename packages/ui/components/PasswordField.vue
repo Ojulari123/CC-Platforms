@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { ref } from "vue";
 import Icon from "./Icon.vue";
-import { FOCUS, MONO_LABEL, TAP } from "../utils/ui";
+import { DISABLED, FOCUS, MONO_LABEL, TAP } from "../utils/ui";
 
 /* Every password on the platform is typed into this, so the reveal behaves the same way
    everywhere. Three things it gets right that this control usually gets wrong:
@@ -79,7 +79,8 @@ defineExpose({ focus: () => field.value?.focus() });
           'mono',
           FOCUS,
           TAP,
-          'w-full rounded-md bg-app py-2.5 pl-3 pr-11 text-[13px] text-ink ring-1 ring-inset transition-colors hover:ring-line-strong disabled:opacity-60',
+          DISABLED,
+          'w-full rounded-md bg-app py-2.5 pl-3 pr-11 text-[13px] text-ink ring-1 ring-inset transition-colors enabled:hover:ring-line-strong disabled:ring-line',
           invalid ? 'ring-bad' : 'ring-line',
         ]"
         @input="emit('update:modelValue', ($event.target as HTMLInputElement).value)"
@@ -94,7 +95,8 @@ defineExpose({ focus: () => field.value?.focus() });
         :class="[
           FOCUS,
           TAP,
-          'absolute right-1 top-1/2 inline-flex -translate-y-1/2 items-center justify-center rounded-md p-2 text-ink-muted transition-colors hover:text-ink disabled:opacity-60',
+          DISABLED,
+          'absolute right-1 top-1/2 inline-flex -translate-y-1/2 items-center justify-center rounded-md p-2 text-ink-muted transition-colors enabled:hover:text-ink',
         ]"
         @click="revealed = !revealed"
       >

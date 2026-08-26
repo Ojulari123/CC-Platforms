@@ -4,131 +4,335 @@
    Tailwind v4 and declares these inside `@theme inline`; the three Nuxt apps are on
    Tailwind 3.4, so the custom properties live here and tailwind.config.js maps them
    onto utility names. No `@layer` or `@apply` in this file: it is not the file that
-   carries the `@tailwind` directives, and Tailwind 3 rejects both outside it. */
+   carries the `@tailwind` directives, and Tailwind 3 rejects both outside it.
 
-/* Dark is the designed default. A light theme exists in name only. */
+   Two themes now, selected by `data-theme` on <html>. `:root` still carries dark so a
+   hard load paints dark before any script runs; the inline boot script in the layer's
+   nuxt.config sets the attribute before first paint, so a light user never sees the
+   default. The old `.dark` class selector is gone — nothing ever added that class, so
+   it was dead, and keeping it as an alias would leave two ways to say the same thing. */
+
 :root,
-.dark {
+[data-theme='dark'] {
+  color-scheme: dark;
+
   --font-body: 'Inter', ui-sans-serif, system-ui, sans-serif;
   --font-heading: 'Inter', ui-sans-serif, system-ui, sans-serif;
   --font-mono: 'JetBrains Mono', ui-monospace, SFMono-Regular, monospace;
 
   /* Surfaces, on Radix's step roles: 1 app bg, 2 subtle, 3 raised, 4 hover,
-     5 selected. Depth comes from these, not from borders everywhere. */
-  --app: oklch(0.164 0.006 265);
-  --sunken: oklch(0.186 0.007 265);
-  --surface: oklch(0.213 0.008 265);
-  --surface-hover: oklch(0.243 0.009 265);
-  --surface-active: oklch(0.272 0.011 265);
+     5 selected. Depth comes from these, not from borders everywhere.
+
+     The page used to sit at oklch L 0.164 — near black — with the whole five-step ramp
+     packed into a 1.00–1.29 contrast band. That band was the actual complaint behind
+     "too dark to see": a card, a hovered row and a selected row were within 4% of each
+     other and of the page, so the depth system carried no information. The page is now
+     L 0.205 and the ramp is re-spaced to run 1.00 → 1.52, with every adjacent step at
+     least 1.08. Lifting the page costs contrast on every ink and status token, so the
+     rest of this file is re-tuned around it rather than left where it was. */
+  --app: oklch(0.205 0.006 265);
+  --sunken: oklch(0.238 0.007 265);
+  --surface: oklch(0.272 0.008 265);
+  --surface-hover: oklch(0.306 0.01 265);
+  --surface-active: oklch(0.34 0.012 265);
 
   /* Three weights of rule, split by job rather than by taste.
 
      `--line-subtle` is decoration: the hairline between table rows and under section
-     headings. It draws no control and carries no state, so WCAG 1.4.11 does not apply
-     to it and it stays at 1.36:1 — raising it would put a visible cage around every
-     row and cost the editorial character for no compliance gain. It is load-bearing
-     that nothing interactive uses it: a control drawn in `--line-subtle` is a 1.4.11
-     failure that no token value can fix without caging all 190-odd row rules.
+     headings. It drew at 1.37:1 on the page and 1.06:1 on a selected row, which is to
+     say it did not draw at all on the surface where a rule matters most — and it is
+     the single most repeated element in the product, at roughly 190 row rules plus
+     every panel edge. WCAG 1.4.11 does not bind a purely decorative rule, so this is
+     not a compliance number; it is a legibility one. It now runs 2.51 / 2.32 / 2.10 /
+     1.87 / 1.65 from `--app` to `--surface-active`. It is not raised further because
+     the value that would put it at 3:1 on `--surface-active` is oklch(0.602 0.012 265) —
+     `--line` itself, to two decimal places — so buying that cell costs the three-weight
+     system its middle weight and turns every table into a spreadsheet grid.
+
+     1.65 is therefore a cell that must not be drawn rather than a cell that is fine. A
+     hairline that lands on `--surface-active` uses `--line` (3.00) instead; the bulk bar
+     in identity's users table was the one place that did not, and no longer. It remains
+     load-bearing that nothing interactive uses `--line-subtle` at all.
 
      `--line` and `--line-strong` are structural: they are the only boundary some
      controls have, so 1.4.11 asks 3:1 of them. The measurement that matters is not
      3:1 against the page — it is 3:1 against every surface a control can land on,
      because a ring is judged against the fill it encloses as much as the background
-     it sits in. Both now clear it on all five: `--line` runs 3.88 / 3.75 / 3.54 /
-     3.28 / 3.02 from `--app` to `--surface-active`, `--line-strong` 4.87 / 4.70 /
-     4.44 / 4.12 / 3.78. Anything that draws a control must use one of these two.
+     it sits in. Both still clear it on all five after the page moved: `--line` runs
+     4.57 / 4.22 / 3.82 / 3.41 / 3.00, `--line-strong` 5.80 / 5.36 / 4.85 / 4.32 / 3.81.
+     Anything that draws a control must use one of these two.
 
-     Both still sit below `--ink-faint` (5.96), so structure stays quieter than the
-     type it contains. That ordering is the point: raising a rule until it out-reads
-     the text is how a table turns into a spreadsheet. */
-  --line-subtle: oklch(0.29 0.011 265);
-  --line: oklch(0.545 0.013 265);
-  --line-strong: oklch(0.6 0.016 265);
+     Both still sit below `--ink-faint` (7.06), so structure stays quieter than the
+     type it contains. That ordering is the point. */
+  --line-subtle: oklch(0.46 0.012 265);
+  --line: oklch(0.602 0.013 265);
+  --line-strong: oklch(0.662 0.016 265);
 
-  /* The reading ladder, measured against the page: 17.83 / 8.37 / 5.96. Every level
-     clears AA at the 11–13.5px this platform actually sets, and still clears it on
-     `--surface-active`, the lightest thing any of them ever sits on (13.84 / 6.50 /
-     4.62). `--ink-faint` used to be 4.24:1 and failed at every size it was used.
+  /* The reading ladder, measured against the page: 17.41 / 9.92 / 7.06. Every level
+     clears AA at the 12–14px this platform actually sets, and still clears it on
+     `--surface-active`, the lightest thing any of them ever sits on (11.43 / 6.51 /
+     4.64).
 
-     `--ink-faint` is now legible everywhere, but its job has not changed: labels,
-     units, row chrome. What separates it from `--ink-muted` is meant to be the mono
-     face, the uppercase and the 11px — not a further drop in brightness. There is no
-     room in this palette for a third grey dim enough to be obviously tertiary and
-     light enough to be readable, so type carries that distinction instead. */
-  --ink: oklch(0.972 0.004 265);
-  --ink-muted: oklch(0.74 0.014 265);
-  --ink-faint: oklch(0.65 0.014 265);
+     `--ink` is the one rung that did not go up: it was 17.80 and is now 17.41. The page
+     rose and pure white is the ceiling, so the last 2% is not available at any value.
+     Everything else gained — muted 8.37 → 9.92, faint 5.97 → 7.06 — and the ladder now
+     sits above the status hues instead of under them (see below), which is the ordering
+     the palette was always trying to reach.
+
+     `--ink-faint` is legible everywhere, but its job has not changed: labels, units,
+     row chrome. What separates it from `--ink-muted` is meant to be the mono face, the
+     uppercase and the 12px — not a further drop in brightness.
+
+     `--ink-disabled` is new. Disabled used to be expressed as raw element opacity in
+     three different strengths (40 / 50 / 60), and `disabled:opacity-*` fades the ring
+     as well as the label, so a disabled secondary button's only boundary fell from
+     4.89:1 to about 2.9:1 — it lost its edge before it lost its contrast. This token
+     dims the type on its own rather than fading the whole control, and leaves the
+     boundary to `--line`, which still clears 3:1 on every surface. It is measured
+     against the three *resting* surfaces only — 5.43 on the page, 5.01 on `--sunken`,
+     4.54 on `--surface`. `--surface-hover` and `--surface-active` are interaction fills
+     and a disabled control has no business in one; <Btn>'s disabled primary was in one
+     anyway, at 3.57, until it was moved to `--surface`.
+
+     Lifting the token instead was the other option and is worse: 4.5:1 on
+     `--surface-active` needs oklch(0.706 0.01 265), and `--ink-faint` is 0.714. Disabled
+     would become indistinguishable from a live label, which is the one thing it may not
+     be. The ratios above are asserted in test/tokens.spec.ts. */
+  --ink: oklch(0.99 0.003 265);
+  --ink-muted: oklch(0.81 0.014 265);
+  --ink-faint: oklch(0.714 0.014 265);
+  --ink-disabled: oklch(0.645 0.01 265);
 
   /* Reserved for the focus ring and text selection, and essentially nothing else.
-     The primary CTA is near-white on near-black, never a coloured fill. */
-  --accent: oklch(0.585 0.19 274);
-  --accent-hover: oklch(0.645 0.19 274);
-  --accent-ink: oklch(0.79 0.13 274);
-  --accent-surface: oklch(0.585 0.19 274 / 14%);
+     The primary CTA is near-white on near-black, never a coloured fill. `--accent` is
+     never set as body-size text anywhere in the platform — a scan of all three products
+     and this layer finds it only behind `::selection` and inside `--accent-surface` — so
+     its 4.69:1 on the page, and its 3.08:1 on `--surface-active`, are non-text numbers.
+     `--accent-ink` is the focus colour and measures 9.20 on the page, 6.04 on the
+     lightest surface. test/tokenUsage.spec.ts fails if either is ever set as text.
 
-  /* Status sits below the data it annotates. The four hues used to run 6.09 (bad) to
-     10.15 (warn) against the page, which put a repeated amber word in a table above
-     `--ink-muted` at 7.64 — the decoration outranked the figures, and warn shouted
-     over bad even though bad is the one that needs answering. All four now measure
-     6.5:1: under `--ink-muted` (8.37), so a status word can never be the brightest
-     thing in a row, and level with each other, so no single state shouts.
+     `--accent-hover` has no callers. It is kept because a coloured control is the
+     obvious next thing to need one, not because anything reads it today. */
+  --accent: oklch(0.62 0.19 274);
+  --accent-hover: oklch(0.68 0.185 274);
+  --accent-ink: oklch(0.8 0.13 274);
+  --accent-surface: oklch(0.62 0.19 274 / 16%);
 
-     Chroma comes down with lightness, because saturation reads as loudness at the
-     size these are set. The `-surface` tints keep the higher chroma: a 15% wash over
-     a near-black page needs it to register as a hue at all, and a large quiet field
-     is where colour is cheap. Text on its own tint measures 5.4:1 over the page and
-     4.8:1 over a card.
+  /* Status sits below the data it annotates. The four hues are level with each other
+     (6.86–6.88 on the page) so no single state shouts, and under `--ink-muted` (9.92)
+     so a status word can never be the brightest thing in a row.
 
-     6.5 is a floor, not a preference: the chip is the binding case. A status word on
-     its own 15% tint over `--surface` is already only 4.74:1, so dropping these hues
-     any further to clear `--ink-faint` (5.96) would fail the chip outright. That
-     leaves one ordering the tokens cannot fix by themselves — a status word still
-     out-reads a token used at `--ink-faint`. The fix is on the other side: an id, an
-     email, a timestamp or a count is data and belongs in `--ink-muted` (8.37), which
-     outranks status comfortably. `--ink-faint` is for labels, units and row chrome,
-     and chrome sitting under a status word is the correct way round. */
-  --ok: oklch(0.66 0.11 155);
-  --ok-surface: oklch(0.66 0.16 155 / 15%);
-  --warn: oklch(0.675 0.1 78);
-  --warn-surface: oklch(0.675 0.15 78 / 15%);
-  --bad: oklch(0.69 0.15 22);
-  --bad-surface: oklch(0.69 0.19 22 / 15%);
-  --info: oklch(0.67 0.1 245);
-  --info-surface: oklch(0.67 0.14 245 / 15%);
+     They are now also under `--ink-faint` (7.06), by a small margin. That inversion —
+     a status word out-reading a token used at `--ink-faint` — was called out here as
+     the one thing the tokens could not fix by themselves. Re-spacing the surfaces gave
+     the ink ramp room to move and closed it.
+
+     Chroma comes down with lightness, because saturation reads as loudness at the size
+     these are set. The four hues themselves are unchanged: at L 0.69–0.72 the sRGB slice
+     is wide enough that each one already reads as its colour, which is the thing the light
+     ramp could not do.
+
+     The tints did move, for the reason described in the light block: the coloured word is
+     thin strokes and the tint behind it is an area, and the area is what a hue is legible
+     in at this size. They were a 12% wash of a colour at the status lightness, compositing
+     to a 0.065–0.094 spread between the strongest and weakest channel — a card with a
+     rumour of a hue. They are now a darker, more saturated colour at 21–26%, which holds
+     the same luminance and roughly doubles that spread (0.12–0.18). The floor that pinned
+     them at 12% before was `--ok` on its own tint over `--surface`; it now measures 4.57
+     rather than 4.72, still over AA. */
+  --ok: oklch(0.694 0.11 155);
+  --ok-surface: oklch(0.57 0.14 155 / 21%);
+  --warn: oklch(0.709 0.1 78);
+  --warn-surface: oklch(0.57 0.119 78 / 22%);
+  --bad: oklch(0.724 0.15 22);
+  --bad-surface: oklch(0.56 0.2 22 / 26%);
+  --info: oklch(0.704 0.1 245);
+  --info-surface: oklch(0.57 0.143 245 / 22%);
 
   /* The prototype's CSS declared 5/7/10/14 while the design rule stated 6px for
      controls and 4px for chips. Resolved here in favour of the stated rule:
      `rounded` is 4px, `rounded-md` is 6px. `rounded-full` is for 6px dots and
      avatars only. lg/xl are kept so nothing that referenced them breaks. */
+  /* Elevation for the four things that float: the Select popup, the Modal panel, the
+     Toast and the row menus. Every one of them wore Tailwind's `shadow-2xl`
+     (`0 25px 50px -12px rgb(0 0 0 / 0.25)`), which is a single black ramp tuned for a
+     white page, and a black ramp cannot say "raised" on a near-black one.
+
+     Measured, by painting the Select popup with and without its shadow and reading the
+     same pixels back: on dark the shadow moved the pixel one row under the popup by
+     5/255 (1.054:1) and by 2/255 thirty pixels out — under the threshold of perception,
+     so the popup's separation was being carried entirely by its `ring-line` (4.57:1 on
+     the page). On light the same declaration moved it by 41/255 (1.471:1) and was still
+     13/255 deep thirty pixels out: a wide grey smudge rather than an edge.
+
+     So the two themes get different shadows, not one shadow at two opacities. Dark needs
+     far more alpha to darken anything at all and a tight radius so the effect is an
+     occlusion under the panel rather than a fog around it. Light needs much less alpha
+     than Tailwind's default and a shorter reach. Both keep their ring, which is what
+     actually draws the boundary in either theme; the shadow only has to say which
+     surface is on top. */
+  --shadow-overlay: 0 18px 40px -14px rgb(0 0 0 / 0.78), 0 4px 10px -3px rgb(0 0 0 / 0.6);
+
   --radius-sm: 4px;
   --radius-md: 6px;
   --radius-lg: 10px;
   --radius-xl: 14px;
 }
 
+/* Light is a designed palette, not the dark one inverted. Two things do not survive an
+   inversion. Hue: a blue at L 0.585 that reads as a confident accent on a dark page is
+   a washed-out pastel on a white one, so every coloured token here is roughly 0.2 L
+   darker and slightly more saturated. Direction: in dark, "more prominent" means
+   lighter, so the ramp climbs; in light it means darker, so the ramp descends — the
+   page is the lightest thing and a selected row is the darkest.
+
+   The page used to sit at L 0.995, pure white to within half a percent, and over a full
+   screen that reads as a lamp rather than as paper. It is now L 0.977, which is where the
+   off-whites people actually ship land, and the whole ramp is re-spaced under it rather
+   than left hanging off a page that moved.
+
+   The bottom of the ramp could not come with it. `--surface-active` is pinned at 0.872 by
+   two cells that are already on their floor: `--line` measures 3.01 on it against 1.4.11's
+   3:1, and `--warn` measures 4.50. Darkening it cascades into the status ramp, and the
+   status ramp cannot follow without rising above `--ink-faint`, which is the one inversion
+   this palette exists to prevent. So the span closes from 1.452 to 1.378, and the steps are
+   re-cut evenly across it (1.080 / 1.082 / 1.084 / 1.089) instead of staying back-loaded.
+   Every step is still at or above the 1.08 the dark ramp holds; what is spent is the old
+   1.120 between a hovered row and a selected one.
+
+   Chroma on the page went 0.001 → 0.004, matching the rest of the ramp. At this lightness
+   that is under one 8-bit step per channel: it keeps `--app` in the same hue family as
+   everything laid on it rather than being a visible tint, and the calm is bought by the
+   lightness, not by the colour.
+
+   Same bar as dark, measured against the page: ink 16.55, muted 8.99, faint 6.42,
+   disabled 5.36, status 6.32–6.39. Every one of those fell when the page did. Dark type
+   on a lighter ground is the opposite case to dark mode, so lowering a light page costs
+   contrast rather than buying it. Ink, muted, faint and status still clear AA on
+   `--surface-active`, which did not move (12.01 / 6.52 / 4.66 / 4.59–4.64). Disabled had
+   to be darkened, 0.525 → 0.511, to keep its 4.5 on `--surface`: it now runs 5.36 / 4.96 /
+   4.59 on the three resting surfaces, which are the only fills it lands on. The radii and
+   the type stack are deliberately not repeated: they are not theme-dependent and a second
+   copy would only drift. */
+[data-theme='light'] {
+  color-scheme: light;
+
+  --app: oklch(0.977 0.004 265);
+  --sunken: oklch(0.951 0.004 265);
+  --surface: oklch(0.925 0.005 265);
+  --surface-hover: oklch(0.899 0.006 265);
+  --surface-active: oklch(0.872 0.008 265);
+
+  /* 2.32 / 2.15 / 1.99 / 1.84 / 1.68 across the five surfaces — the same read as the
+     dark hairline, not a mechanical mirror of its lightness. `--line` runs 4.14 down to
+     3.01 and `--line-strong` 5.24 down to 3.81, so both clear 3:1 on every surface a
+     control can sit on, and both stay under `--ink-faint` (6.42). The bottom cell of each
+     is unchanged: it is measured against `--surface-active`, which the page move left
+     where it was. */
+  --line-subtle: oklch(0.72 0.012 265);
+  --line: oklch(0.572 0.012 265);
+  --line-strong: oklch(0.516 0.014 265);
+
+  --ink: oklch(0.211 0.01 265);
+  --ink-muted: oklch(0.39 0.012 265);
+  --ink-faint: oklch(0.469 0.012 265);
+  --ink-disabled: oklch(0.511 0.01 265);
+
+  --accent: oklch(0.55 0.2 274);
+  --accent-hover: oklch(0.49 0.2 274);
+  --accent-ink: oklch(0.463 0.16 274);
+  /* The tint keeps a light hue while the text on it is the dark one — a 16% wash of a
+     dark blue over white is grey, not blue. */
+  --accent-surface: oklch(0.62 0.18 274 / 16%);
+
+  /* Status in light used to read as tinted grey until you already knew what colour it
+     was meant to be. The lever is not chroma on its own: at the lightness this ramp is
+     pinned to, three of the four hues were already past the sRGB boundary and were being
+     clipped, so `--ok`'s declared 0.13 and `--warn`'s 0.12 painted the same pixel a
+     smaller number would have. Raising them again would have changed nothing on screen.
+
+     Lightness cannot move either. It is held from below by 4.45:1 on `--surface-active`
+     (`--warn` sat on 4.50) and from above by having to stay under `--ink-faint`.
+
+     What was actually available:
+
+     - Hue, where the hue was the problem. At L 0.48 the sRGB slice at h 78 tops out at
+       #7b5600, an olive brown; nobody reads that as amber. h 62 gives #894c00 at the same
+       lightness and contrast, which reads as amber. `--ok` and `--info` move 5 degrees for
+       the same reason, into slightly wider parts of the gamut. The dark hues stay where
+       they are: the number matching across themes is worth less than each theme's warning
+       looking like a warning.
+     - Chroma on `--bad` alone, which was the one hue with room left (0.17 → 0.20).
+     - The tints, which is where most of the gain is. A status word is a few hundred
+       pixels of thin stroke; the tint behind it is an area, and area is what carries a
+       hue at this size. The old 15% wash of a mid colour composited to roughly a 0.09
+       spread between the strongest and weakest channel — grey with an opinion. These are
+       lighter and more saturated at a higher alpha, which holds the same luminance while
+       roughly doubling that spread (0.12–0.19), so the chip reads as green, amber, red or
+       blue before the word is read. Contrast of the status colour on its own tint still
+       clears AA on all three resting surfaces.
+
+     Declared chroma is now the in-gamut maximum at each lightness rather than a number
+     the browser silently reduces, so the file says what it paints. */
+  --ok: oklch(0.457 0.126 150);
+  --ok-surface: oklch(0.75 0.2 150 / 24%);
+  --warn: oklch(0.48 0.111 62);
+  --warn-surface: oklch(0.78 0.16 62 / 26%);
+  --bad: oklch(0.497 0.2 22);
+  --bad-surface: oklch(0.76 0.14 22 / 28%);
+  --info: oklch(0.47 0.133 250);
+  --info-surface: oklch(0.74 0.139 250 / 28%);
+
+  /* The light half of the elevation note above. A third of Tailwind's alpha and half its
+     reach: enough to lift the panel off the page, short of the smudge. */
+  --shadow-overlay: 0 10px 22px -12px rgb(0 0 0 / 0.2), 0 2px 6px -2px rgb(0 0 0 / 0.12);
+}
+
 /* Someone who has asked the OS for more contrast gets it, and — this is the part worth
-   guarding — the ladder holds at the higher setting too. Against the page: ink 17.82,
-   muted 11.04, faint 8.98, status 7.85–8.21. Status stays under every ink, exactly as
-   it does at the normal setting. An earlier pass raised the four hues to ~9.4 here,
-   which put them back above `--ink-faint` and reinstated the inversion this palette
-   exists to remove; turning the contrast up must not turn the hierarchy over.
+   guarding — the ladder holds at the higher setting too. Status stays under every ink,
+   exactly as it does at the normal setting. An earlier pass raised the four hues above
+   `--ink-faint` here, which reinstated the inversion this palette exists to remove;
+   turning the contrast up must not turn the hierarchy over.
 
    Only the ramps move — hues, surfaces and radii stay where they are, so the platform
-   reads as the same product turned up rather than as a second theme. */
+   reads as the same product turned up rather than as a third theme. Both themes are
+   covered: an OS contrast preference is not a dark-mode preference. */
 @media (prefers-contrast: more) {
   :root,
-  .dark {
-    --line-subtle: oklch(0.52 0.013 265);
-    --line: oklch(0.62 0.014 265);
-    --line-strong: oklch(0.68 0.016 265);
+  [data-theme='dark'] {
+    /* Against the page: subtle 3.36, line 5.80, strong 7.01, muted 11.00, faint 9.01,
+       disabled 7.22, status 8.01–8.03 — all still under faint. */
+    --line-subtle: oklch(0.528 0.012 265);
+    --line: oklch(0.662 0.013 265);
+    --line-strong: oklch(0.712 0.016 265);
 
-    --ink-muted: oklch(0.82 0.012 265);
-    --ink-faint: oklch(0.76 0.012 265);
+    --ink-muted: oklch(0.841 0.012 265);
+    --ink-faint: oklch(0.782 0.012 265);
+    --ink-disabled: oklch(0.72 0.01 265);
 
-    --ok: oklch(0.72 0.12 155);
-    --warn: oklch(0.73 0.11 78);
-    --bad: oklch(0.745 0.16 22);
-    --info: oklch(0.725 0.11 245);
+    --ok: oklch(0.736 0.11 155);
+    --warn: oklch(0.752 0.1 78);
+    --bad: oklch(0.777 0.15 22);
+    --info: oklch(0.746 0.1 245);
+  }
+
+  [data-theme='light'] {
+    /* Against the page: subtle 3.33, line 5.71, strong 6.93, muted 10.42, faint 8.33,
+       disabled 6.96, status 7.93–8.15 — all still under faint. The status hues follow the
+       normal-contrast block's, so turning the OS contrast up does not turn amber back
+       into olive. */
+    --line-subtle: oklch(0.626 0.012 265);
+    --line: oklch(0.496 0.012 265);
+    --line-strong: oklch(0.451 0.014 265);
+
+    --ink-muted: oklch(0.354 0.012 265);
+    --ink-faint: oklch(0.408 0.012 265);
+    --ink-disabled: oklch(0.45 0.01 265);
+
+    --ok: oklch(0.401 0.111 150);
+    --warn: oklch(0.424 0.098 62);
+    --bad: oklch(0.442 0.178 22);
+    --info: oklch(0.414 0.118 250);
   }
 }
 

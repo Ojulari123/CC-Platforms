@@ -134,7 +134,7 @@ useHead({ title: "Reset your password" });
 
           <ul class="sec mt-10 grid gap-px border-t border-line-subtle sm:grid-cols-2" style="animation-delay: 160ms">
             <li v-for="[n, t] in FACTS" :key="n" class="flex items-baseline gap-2.5 border-b border-line-subtle py-3">
-              <span class="mono text-[11px] text-ink-faint">{{ n }}</span>
+              <span class="mono text-[12px] text-ink-faint">{{ n }}</span>
               <span :class="[MONO_LABEL, 'text-ink-muted']">{{ t }}</span>
             </li>
           </ul>
@@ -168,7 +168,7 @@ useHead({ title: "Reset your password" });
               If that address has an account, a link is on its way. It expires {{ EXPIRY_MINUTES }} minutes after it is
               sent and works once. Check the spam folder before assuming it never arrived.
             </p>
-            <p class="mono mt-4 text-[11px] tracking-[0.08em] text-ink-muted">requested for {{ sentTo }}</p>
+            <p class="mono mt-4 text-[12px] tracking-[0.08em] text-ink-muted">requested for {{ sentTo }}</p>
 
             <div class="mt-6 space-y-2.5">
               <NuxtLink to="/login" :class="[FOCUS, CTA_LINK, 'group/cta']">
@@ -220,7 +220,7 @@ useHead({ title: "Reset your password" });
                 >
                   {{ emailErr }}
                 </p>
-                <p v-else id="forgot-email-hint" class="mono mt-1.5 text-[11px] tracking-[0.08em] text-ink-muted">
+                <p v-else id="forgot-email-hint" class="mono mt-1.5 text-[12px] tracking-[0.08em] text-ink-muted">
                   link expires in {{ EXPIRY_MINUTES }} min · one use
                 </p>
               </div>
@@ -249,7 +249,7 @@ useHead({ title: "Reset your password" });
               </NuxtLink>
             </div>
 
-            <p class="mt-6 text-[11px] leading-relaxed text-ink-muted">
+            <p class="mt-6 text-[12px] leading-relaxed text-ink-muted">
               Never had an account? Accounts here are created by an invite from a department admin, so a reset link will
               not make one.
             </p>

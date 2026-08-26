@@ -114,7 +114,7 @@ onBeforeUnmount(release);
           :aria-label="title"
           :aria-describedby="description ? descId : undefined"
           tabindex="-1"
-          class="cc-modal-panel relative z-10 mt-[8vh] w-full max-w-[440px] overflow-hidden overscroll-contain rounded-md bg-surface shadow-2xl outline-none ring-1 ring-line"
+          class="cc-modal-panel relative z-10 mt-[8vh] w-full max-w-[440px] overflow-hidden overscroll-contain rounded-md bg-surface shadow-overlay outline-none ring-1 ring-line"
         >
           <div class="flex items-start justify-between gap-4 border-b border-line-subtle px-5 py-4">
             <div>

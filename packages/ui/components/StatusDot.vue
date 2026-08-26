@@ -13,7 +13,7 @@ const label = computed(() => (props.quiet ? "text-ink-muted" : DOT_TEXT[props.to
 </script>
 
 <template>
-  <span :class="['inline-flex items-center gap-1.5 text-[11px]', label]">
+  <span :class="['inline-flex items-center gap-1.5 text-[12px]', label]">
     <span :class="['h-1.5 w-1.5 shrink-0 rounded-full', DOT_BG[tone]]" />
     <slot />
   </span>

@@ -142,7 +142,7 @@ onMounted(async () => {
         <p role="alert" class="mt-5 max-w-[52ch] text-[13.5px] leading-relaxed text-ink-muted">{{ failure.text }}</p>
         <!-- The code, verbatim, so it can be read out or pasted into a message. It is the
              same string the console line carries. -->
-        <p class="mono mt-3 text-[11px] tracking-[0.06em] text-ink-muted">Reason: {{ failure.code }}</p>
+        <p class="mono mt-3 text-[12px] tracking-[0.06em] text-ink-muted">Reason: {{ failure.code }}</p>
         <p class="mt-6">
           <NuxtLink to="/login" :class="[FOCUS, 'inline-flex items-center gap-1.5 rounded text-[13px] font-medium text-ink hover:text-ink-muted']">
             Sign in here instead

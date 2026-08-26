@@ -12,7 +12,11 @@ withDefaults(defineProps<{ readout?: string }>(), { readout: ORIGIN });
   <div class="border-b border-line-subtle">
     <div :class="['flex h-9 items-center gap-5', CONTENT]">
       <TickRuler />
-      <span :class="['w-[150px] shrink-0 text-right text-ink-muted', MONO_LABEL]">{{ readout }}</span>
+      <!-- A min-width, not a width. At 11px a 20-character readout fitted 150px exactly.
+           At 12px it wraps, and the strip is a fixed h-9. The ruler beside it is
+           `flex-1 overflow-hidden`, so giving the readout its natural width costs ticks
+           rather than a second line. -->
+      <span :class="['min-w-[150px] shrink-0 whitespace-nowrap text-right text-ink-muted', MONO_LABEL]">{{ readout }}</span>
     </div>
   </div>
 </template>

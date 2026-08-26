@@ -2,7 +2,7 @@
 import { computed, nextTick, onBeforeUnmount, ref, useId, watch } from "vue";
 import Icon from "./Icon.vue";
 import type { SelectOption } from "../types/ui";
-import { FOCUS, TAP } from "../utils/ui";
+import { DISABLED, FOCUS, TAP } from "../utils/ui";
 
 /* A listbox, not a native <select>: the OS control brings its own chevron and its own
    font metrics, and was the only element on the site that looked borrowed. Focus stays
@@ -197,7 +197,8 @@ function onKeydown(event: KeyboardEvent) {
       :disabled="disabled"
       :class="[
         FOCUS,
-        'flex w-full items-center gap-2 rounded-md bg-sunken px-2.5 py-2 text-[12.5px] ring-1 ring-inset transition-colors disabled:opacity-60',
+        DISABLED,
+        'flex w-full items-center gap-2 rounded-md bg-sunken px-2.5 py-2 text-[12.5px] ring-1 ring-inset transition-colors disabled:ring-line',
         // `ring-line`, not `ring-line-subtle`: this ring is the control's only boundary, and
         // WCAG 1.4.11 wants 3:1 for that. Against its own `bg-sunken` fill `--line-subtle`
         // measures 1.32:1 and `--line` 3.75:1. The dividers keep the subtle line.
@@ -224,7 +225,7 @@ function onKeydown(event: KeyboardEvent) {
         :aria-label="label"
         tabindex="-1"
         :style="popupStyle"
-        class="xfade fixed z-[60] overflow-y-auto rounded-md bg-surface p-1 shadow-2xl outline-none ring-1 ring-line"
+        class="xfade fixed z-[60] overflow-y-auto rounded-md bg-surface p-1 shadow-overlay outline-none ring-1 ring-line"
       >
         <div
           v-for="(option, i) in options"

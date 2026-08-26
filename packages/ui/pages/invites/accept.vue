@@ -285,7 +285,7 @@ useHead({ title: "Accept your invitation" });
             A role is set by the department, not chosen here, and it can be changed later without touching your account.
           </p>
 
-          <p class="mono mt-6 text-[11px] tracking-[0.08em] text-ink-muted">invite {{ fragment }} · never shown in full</p>
+          <p class="mono mt-6 text-[12px] tracking-[0.08em] text-ink-muted">invite {{ fragment }} · never shown in full</p>
         </div>
 
         <!-- action column -->
@@ -458,7 +458,7 @@ useHead({ title: "Accept your invitation" });
               </p>
             </div>
 
-            <p class="mt-6 text-[11px] leading-relaxed text-ink-muted">
+            <p class="mt-6 text-[12px] leading-relaxed text-ink-muted">
               Not expecting this? Close the page and tell the sender. Nothing is created until the button above is
               pressed.
             </p>

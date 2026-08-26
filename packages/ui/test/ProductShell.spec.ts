@@ -50,11 +50,12 @@ describe("TopBar cross-product link", () => {
     expect(allProductsLink(wrapper)).toBeUndefined();
   });
 
+  // By text, not by position: the bar also carries the theme radiogroup's buttons.
   it("hides the sign-out button unless it is asked for", () => {
-    const off = mount(TopBar, { props: { signedIn: true } });
-    expect(off.find("button").exists()).toBe(false);
-    const on = mount(TopBar, { props: { signedIn: true, showSignOut: true } });
-    expect(on.find("button").text()).toBe("Sign out");
+    const signOut = (wrapper: ReturnType<typeof mount>) =>
+      wrapper.findAll("button").find((b) => b.text() === "Sign out");
+    expect(signOut(mount(TopBar, { props: { signedIn: true } }))).toBeUndefined();
+    expect(signOut(mount(TopBar, { props: { signedIn: true, showSignOut: true } }))).toBeDefined();
   });
 });
 
@@ -82,7 +83,7 @@ describe("ProductShell", () => {
   });
 });
 
-/* Pulse's five entries measure 416px and a phone gives 390. The strip scrolls rather than
+/* Pulse's six entries measure 485px and a phone gives 390. The strip scrolls rather than
    wrapping or clipping, and it keeps its own gutter when it does — an entry flush against
    the viewport edge has nowhere to draw the focus ring the FOCUS token puts outside it. */
 describe("ProductShell sub-nav", () => {
@@ -108,7 +109,7 @@ describe("ProductShell sub-nav", () => {
 
   it("keeps every section a real link, with aria-current on the open one", () => {
     const links = nav(shell({ current: "/sync" })).findAll("a");
-    expect(links.map((a) => a.text())).toEqual(["Overview", "Activity", "Reports", "Repositories", "Sync"]);
+    expect(links.map((a) => a.text())).toEqual(["Overview", "Activity", "Reports", "Repositories", "Journal", "Assistant", "Sync", "Settings"]);
     expect(links.filter((a) => a.attributes("aria-current") === "page").map((a) => a.text())).toEqual(["Sync"]);
   });
 

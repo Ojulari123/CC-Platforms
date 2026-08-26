@@ -11,7 +11,7 @@ const box = computed(() => (props.size === "sm" ? "h-5 w-5" : "h-7 w-7"));
 <template>
   <span
     :class="[
-      'mono grid shrink-0 place-items-center rounded-full bg-surface text-[11px] uppercase tracking-wide text-ink-muted ring-1 ring-inset ring-line-subtle',
+      'mono grid shrink-0 place-items-center rounded-full bg-surface text-[12px] uppercase tracking-wide text-ink-muted ring-1 ring-inset ring-line-subtle',
       box,
     ]"
     aria-hidden="true"

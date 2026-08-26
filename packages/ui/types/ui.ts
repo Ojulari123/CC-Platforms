@@ -48,7 +48,10 @@ export type IconName =
   | "clock"
   | "plus"
   | "eye"
-  | "eyeOff";
+  | "eyeOff"
+  | "sun"
+  | "moon"
+  | "monitor";
 
 export interface ToastMessage {
   message: string;

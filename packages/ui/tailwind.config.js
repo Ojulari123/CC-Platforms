@@ -46,6 +46,7 @@ export default {
           DEFAULT: token("ink"),
           muted: token("ink-muted"),
           faint: token("ink-faint"),
+          disabled: token("ink-disabled"),
         },
         accent: {
           DEFAULT: token("accent"),
@@ -63,6 +64,12 @@ export default {
         body: ["var(--font-body)"],
         heading: ["var(--font-heading)"],
         mono: ["var(--font-mono)"],
+      },
+      /* One elevation, theme-aware, for anything that floats over the page. Tailwind's
+         own shadow scale is a black ramp and stays available, but nothing on this
+         platform should reach for it — see the note in tokens.css. */
+      boxShadow: {
+        overlay: "var(--shadow-overlay)",
       },
       // 6px controls and containers, 4px chips, full on 6px dots and avatars. No others.
       borderRadius: {

@@ -33,7 +33,7 @@ const route = useRoute();
 const items = computed(() => props.navItems ?? PRODUCT_NAV[props.product]);
 const active = computed(() => navMatch(props.current ?? route.path, items.value));
 
-/* The sub-nav is a scrolling strip, not a wrap: five Pulse entries need 416px and a phone
+/* The sub-nav is a scrolling strip, not a wrap: six Pulse entries need 485px and a phone
    gives 390, and wrapping them onto a second line moves the page down by a row on the one
    screen size with the least of it. Scrolling costs nothing on desktop, where they fit.
 
@@ -107,7 +107,7 @@ watch(active, () => nextTick(revealActive));
           {{ item.label }}
           <span v-if="item.to === active" class="rule-draw absolute inset-x-0 bottom-0 h-px bg-ink" />
         </NuxtLink>
-        <span class="mono ml-auto hidden shrink-0 pl-4 text-[11px] uppercase tracking-[0.08em] text-ink-faint sm:inline">
+        <span class="mono ml-auto hidden shrink-0 pl-4 text-[12px] uppercase tracking-[0.08em] text-ink-faint sm:inline">
           {{ PRODUCT_LABEL[product] }} console
         </span>
       </nav>

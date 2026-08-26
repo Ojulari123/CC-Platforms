@@ -97,8 +97,8 @@ describe("PasswordField", () => {
   it("is keyboard reachable with a visible focus ring and a tap target", () => {
     const toggle = mountField().get("button");
     expect(toggle.attributes("tabindex")).toBeUndefined();
-    expect(toggle.classes()).toContain("focus-visible:ring-2");
-    expect(toggle.classes()).toContain("focus-visible:ring-[var(--accent-ink)]");
+    expect(toggle.classes()).toContain("focus-visible:outline-2");
+    expect(toggle.classes()).toContain("focus-visible:outline-[color:var(--accent-ink)]");
     expect(toggle.classes()).toContain("tap");
   });
 

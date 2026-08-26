@@ -32,8 +32,8 @@ describe("Btn", () => {
 
   it("carries a visible focus ring", () => {
     const wrapper = mount(Btn);
-    expect(wrapper.classes()).toContain("focus-visible:ring-2");
-    expect(wrapper.classes()).toContain("focus-visible:ring-[var(--accent-ink)]");
+    expect(wrapper.classes()).toContain("focus-visible:outline-2");
+    expect(wrapper.classes()).toContain("focus-visible:outline-[color:var(--accent-ink)]");
   });
 
   it("does not emit click while disabled", async () => {
@@ -41,6 +41,19 @@ describe("Btn", () => {
     expect(wrapper.attributes("disabled")).toBeDefined();
     await wrapper.trigger("click");
     expect(wrapper.emitted("click")).toBeUndefined();
+  });
+
+  /* A disabled primary keeps a boundary and a legible label. It rests on `--surface`, not
+     on `--surface-active`: an interaction fill is the wrong thing to say about a control
+     that cannot be interacted with, and `--ink-disabled` measures 3.57:1 on it against
+     4.54:1 on `--surface`. */
+  it("gives a disabled primary a resting fill, a ring and a dimmed label", () => {
+    const classes = mount(Btn, { props: { disabled: true, variant: "primary" } }).classes();
+    expect(classes).toContain("disabled:bg-surface");
+    expect(classes).not.toContain("disabled:bg-surface-active");
+    expect(classes).toContain("disabled:ring-line");
+    expect(classes).toContain("disabled:text-ink-disabled");
+    expect(classes.filter((c) => /opacity-\d/.test(c))).toEqual([]);
   });
 
   it("does not emit click while busy, and marks itself aria-busy", async () => {
