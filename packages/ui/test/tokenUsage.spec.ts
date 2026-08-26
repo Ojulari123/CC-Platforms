@@ -1,3 +1,5 @@
+import { existsSync, readdirSync, readFileSync, type Dirent } from "node:fs";
+import { dirname, join, relative } from "node:path";
 import { describe, expect, it } from "vitest";
 
 /* The other half of the contrast contract. tokens.spec.ts proves the palette is sound;
@@ -10,18 +12,53 @@ import { describe, expect, it } from "vitest";
    `--surface-active`, and the moment someone reaches for it as a link colour the platform
    quietly fails AA on every screen that uses it. `--accent-ink` is the colour they want. */
 
-const SOURCES: Record<string, string> = {
-  ...import.meta.glob(["../components/**/*.vue", "../composables/**/*.ts", "../utils/**/*.ts", "../types/**/*.ts"], {
-    query: "?raw",
-    import: "default",
-    eager: true,
-  }),
-  ...import.meta.glob(["../../../services/*/frontend/**/*.vue", "../../../services/*/frontend/**/*.ts", "!**/node_modules/**", "!**/.nuxt/**"], {
-    query: "?raw",
-    import: "default",
-    eager: true,
-  }),
-};
+/* Read as plain text off disk rather than through `import.meta.glob`. A `?raw` glob still
+   sends every matched `.ts` file through vite:esbuild, which loads the nearest tsconfig for
+   it, and Forge's extends `./.nuxt/tsconfig.json`, a file Nuxt generates. A clean checkout
+   has never run Nuxt, so the glob crashed on CI while passing on a machine that had built
+   Forge. Nothing here needs the bundler; it needs the bytes. */
+function repoRoot(): string {
+  let dir = process.cwd(); // vitest sets this to the project root, packages/ui
+  for (let i = 0; i < 6; i += 1) {
+    if (existsSync(join(dir, "packages")) && existsSync(join(dir, "services"))) return dir;
+    dir = dirname(dir);
+  }
+  throw new Error(`could not find the repo root above ${process.cwd()}`);
+}
+
+const ROOT = repoRoot();
+
+const SKIP = new Set(["node_modules", ".nuxt", ".output", "dist", ".git"]);
+
+function walk(dir: string, extensions: string[], found: Record<string, string>): void {
+  let entries: Dirent[];
+  try {
+    entries = readdirSync(dir, { withFileTypes: true });
+  } catch {
+    return; // a directory one product has and another does not
+  }
+  for (const entry of entries) {
+    const full = join(dir, entry.name);
+    if (entry.isDirectory()) {
+      if (!SKIP.has(entry.name)) walk(full, extensions, found);
+    } else if (extensions.some((ext) => entry.name.endsWith(ext))) {
+      found[relative(ROOT, full)] = readFileSync(full, "utf8");
+    }
+  }
+}
+
+const SOURCES: Record<string, string> = {};
+for (const [dir, extensions] of [
+  ["packages/ui/components", [".vue"]],
+  ["packages/ui/composables", [".ts"]],
+  ["packages/ui/utils", [".ts"]],
+  ["packages/ui/types", [".ts"]],
+  ["services/forge/frontend", [".vue", ".ts"]],
+  ["services/identity/frontend", [".vue", ".ts"]],
+  ["services/pulse/frontend", [".vue", ".ts"]],
+] as const) {
+  walk(join(ROOT, dir), [...extensions], SOURCES);
+}
 
 // Every colour token tailwind.config.js exposes, longest first so `accent-ink` is matched
 // before `accent` would swallow it.
