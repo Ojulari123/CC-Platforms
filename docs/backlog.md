@@ -8,8 +8,14 @@ something's still open. **Updated per session, not per commit.**
 
 ## Next up
 
-- **Department admins are never emailed when a repo has no lead or deputy; taking
-  this on 2026-08-11.** `notify_report_ready`
+- ~~**Department admins are never emailed when a repo has no lead or deputy.**~~
+  **DELIVERED.** `email._approver_emails` is now `reports._can_approve` read back out:
+  lead and deputy, else every active admin of the report's department, else the platform
+  admins. Identity grew `GET /internal/departments/{dept_id}/admins` and
+  `GET /internal/platform-admins` on a new `admins:read` scope, added to `PULSE_SCOPES`
+  and granted by the boot re-seed (`seed_service_client` rewrites scopes every start), so
+  no migration. Nobody is mailed about their own report. Original entry:
+  `notify_report_ready`
   (`services/pulse/app/services/email.py:92`) emails only the repo's named lead and
   deputy. A repo with a department but neither named takes the `else` branch, logs
   "no approvers to notify" (`email.py:99`) and mails **nobody**, even though
@@ -57,15 +63,18 @@ something's still open. **Updated per session, not per commit.**
   and drive login → dataset upload → preview → delete end to end in a browser (the
   backend + UI are built; a full click-through hasn't been recorded).
 - **Repo visibility should follow current GitHub access, not commit history.**
-  Pulse lets you see a repo if your commits/PRs/issues/reviews appear in it
-  (`repo_ids_worked_in_q`). That activity is historical and never expires, so
-  someone who moves to another department keeps seeing their old team's repo rows
-  (name, owner, private flag, lead/deputy ids) permanently. The correct rule is
-  *current* GitHub access. GitHub can report who currently has access to a repo,
-  but sync only pulls commits, PRs, reviews and issues, never the collaborator
-  list. Needs a collaborator sync step plus somewhere to store it. Exposure today
-  is mild: someone who leaves the company is deactivated in identity and can't log
-  in at all, so the realistic case is an internal department move.
+  **PARTLY CLOSED — the unbounded grant is gone, the GitHub check is not built.**
+  `repo_ids_worked_in_q` now takes a `since`, and `_can_see_repo` /
+  `visible_repo_scope` / `may_write_on_repo` / `_has_activity` / `visible_repo_ids` all
+  pass `activity.visibility_activity_cutoff()` (`REPO_VISIBILITY_ACTIVITY_DAYS`, default
+  90), so authorship stops granting read *or write* once it is stale instead of never. The chatbot follows the same rule: `repo_index._queue`
+  refuses a tracked private repo the requester can't see, and
+  `chat._searchable_indexes` drops its stored chunks from retrieval even when the index
+  was built while they could. What is still open is the accurate answer: asking GitHub who
+  currently has access. Sync still never pulls the collaborator list, storing it needs a
+  table, and `GITHUB_OAUTH_SCOPES` couldn't read a private one anyway (below). Until
+  then two holes stay open — someone who keeps their department but is dropped from a
+  GitHub repo keeps the department grant, and the activity grant lives out its window.
   - **`GITHUB_OAUTH_SCOPES` defaults to `read:user`**, which grants no repository
     content access, so private-repo sync can't work as configured and would return
     empty results rather than an error (public repos work today, which is why this
@@ -89,9 +98,13 @@ something's still open. **Updated per session, not per commit.**
   repositories with `dept_id`/`lead_user_id`/`deputy_user_id` left null
   (`sync.py:_upsert_repository`), and `_can_approve` (`app/services/reports.py:49`)
   only admits the lead, the deputy, a dept admin of the repo's department, or a platform
-  admin, so until an admin files the repo, only a platform admin can approve. The author
-  now gets a "no approver" email on submit (`app/services/email.py:_notify_no_approver`),
-  but filing the repo is still a manual step nothing schedules or chases.
+  admin, so until an admin files the repo, only a platform admin can approve. **Now closed
+  on the "somebody can act" side:** those platform admins are emailed on submit
+  (`email._approver_emails` → `resolve_platform_admin_emails`), and the author's warning
+  (`email._notify_author_of_unfiled_repo`) says so rather than sending them to find one.
+  Submission is still allowed rather than refused, because refusing strands finished work
+  behind an admin task the author can't perform. Filing the repo is still a manual step
+  nothing schedules or chases; `GET /github/repositories/unfiled` is the only prompt.
 - ~~**Week 5: real approver email (service-to-service auth)**~~:
   **DELIVERED.** Route B is real, not stubbed: on submit, Pulse resolves the repo's
   approvers (lead + deputy) `user_id → email` by authenticating as the **`pulse`
@@ -129,7 +142,8 @@ something's still open. **Updated per session, not per commit.**
   422 and no LLM call; existing non-editable report → 409; LLM error after one retry
   → 502). `GET /reports/{id}/pdf` exports via reportlab (same read permission as
   viewing). Token usage rolls up into a new `llm_usage` ledger read by
-  `GET /admin/llm-usage` (platform admin only), deliberately **not** per-report, so
+  `GET /admin/llm-usage` (platform admin only at the time; now scoped by who pays,
+  see the entry below), deliberately **not** per-report, so
   viewers never see model/tokens. Migration `0004` (`reports.generated_at` +
   `llm_usage` table). Email-on-submit fires but is **stubbed** (logs which approver
   user_ids would be notified). Provider locked to **OpenAI** (`gpt-4o-mini` default).
@@ -379,10 +393,32 @@ is confirmed sending for real.
   date-bounded, on purpose, because queued work stays queued
   (`services/pulse/app/services/generation.py:86`). The effect is the same issue repeated
   across consecutive reports with nothing marking it as already mentioned.
-- **A week with journal entries but no GitHub activity still refuses to generate.**
-  `_total_items` counts commits, pull requests, reviews and issues only
-  (`services/pulse/app/services/generation.py:156`), so a week spent blocked and written
-  up in the journal produces `NoActivityError` rather than a short report that says so.
+- ~~**A week with journal entries but no GitHub activity still refuses to generate.**~~
+  **CLOSED.** Generation now proceeds on journal entries alone
+  (`generation._journal_items`), and the report says so: `JOURNAL_ONLY_NOTE` is prepended
+  to `summary_manager` by Pulse rather than left to the model, and the payload carries
+  `no_github_activity` so the prompt stops describing commits that are not there. A week
+  with nothing at all is still refused, and an assigned open issue on its own does not
+  count — those are not week-scoped, so one assigned in March would let every silent week
+  since generate a report about nothing anybody said.
+- ~~**The token usage ledger showed one figure to one person.**~~ **CLOSED.**
+  `GET /admin/llm-usage` was platform-admin only, which was backwards on both sides: the
+  one person spending nobody's money but the platform's saw every figure, and the people
+  funding calls with their own or their department's key saw none of theirs. It now
+  follows `llm_budget.may_see_figures` like the budget messages do — platform key gets
+  403, own key sees own spend, an admin of a department sees what that department's key
+  paid for plus their own, platform admin sees everything, and `scope` in the response
+  says which. Needed `llm_usage.dept_id` (migration `0018`), stamped from the paying key,
+  because Pulse must not read identity's database and so cannot ask which department a
+  `user_id` belongs to. Rows written before it carry null and count towards their own
+  user and the platform total only.
+- **Dated activity fixtures in `test_adhoc_reports.py` will age out.** Visibility and
+  write access are a rolling window off the clock
+  (`REPO_VISIBILITY_ACTIVITY_DAYS`, default 90). Every other suite's activity fixtures
+  were made relative; `test_adhoc_reports.py` still seeds July 2026 activity and sends
+  `range_start` / `range_end` as fixed strings in the request body, so making it relative
+  means rewriting the ranges and the assertions on them together. It passes today and
+  starts 403ing once that July activity falls outside the window.
 - **Playwright is not in the repo or in CI.** The browser check of the chat page
   (`services/pulse/frontend/pages/chat.vue:308-330`) was run from a throwaway install
   outside the tree, so nothing reproduces it. The Vitest component tests cover the same
@@ -393,10 +429,26 @@ is confirmed sending for real.
 - **No application service has a Docker healthcheck.** Only `postgres` and `redis`
   have one, so `depends_on: service_started` means "the process launched", not
   "it's ready to serve".
-- **No Python linter, formatter or typechecker anywhere in CI.** No ruff / flake8 /
-  mypy / eslint / prettier config exists in the repo. ~~Nothing at all~~: the one
-  exception is CI's `forge-frontend` job, which runs `vue-tsc` in strict mode
-  (`npm run typecheck`); the Python services have no equivalent.
+- ~~**No Python linter, formatter or typechecker anywhere in CI.**~~ **MOSTLY CLOSED.**
+  `ruff.toml` at the repo root and a `ruff` CI job lint `services/*` and `packages/core`.
+  The ruleset is deliberately narrow — ruff's default (`E4`, `E7`, `E9`, `F`) plus
+  bugbear (`B`) — chosen to catch defects rather than argue about layout. `B008` is
+  waived for FastAPI's `Depends`/`Query` (its dependency system is a function call in a
+  default argument by design) and `E401` for the repo's one-line imports. `mypy` gates
+  `packages/core` only, via its `pyproject.toml`, because that package already passes.
+  What is left:
+  - **The formatter is not a gate.** `ruff format --check` wants to rewrite **218 of 240
+    files, 43,879 diff lines**, almost all of it the repo's one blank line between defs
+    and its single-line function signatures. Widening `line-length` does not help (216
+    files at 200 or 300). Adopting it is a decision about house style, not a fix, and a
+    diff that size would bury every other change in flight.
+  - **`B904` (`raise ... from`) is waived**, 52 sites, all of them a service converting a
+    domain error into an `HTTPException`. Mechanical, and nothing a caller sees changes.
+  - **mypy on the services is not gated**: 121 errors in identity, 193 in pulse, 9 in
+    forge under `--ignore-missing-imports`. Most are the SQLAlchemy 1.x `Column` API
+    typing as `Column` where a scalar is expected, so closing it is a modelling decision
+    (2.0 `Mapped[...]` annotations), not an afternoon of annotations. Forge's 9 are small
+    enough to be worth doing on their own.
 - **Local Postgres reuses the Neon password.** `CC_POSTGRES_PASSWORD` in the
   root `.env` is the same string as the Neon connection password. Nothing leaks
   today (both are git-ignored) but they should be different secrets.

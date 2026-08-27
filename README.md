@@ -163,6 +163,8 @@ CC-Platforms/
 | POST | `/oauth/token` | client id + secret | Service-to-service token (OAuth2 client credentials, scoped, short-lived) |
 | POST | `/internal/users/emails` | service token | Batch `user_id` → email (scope `users:read:email`) |
 | POST | `/internal/users/profiles` | service token | Batch `user_id` → name / avatar / `is_active` (scope `users:read:profile`) |
+| GET | `/internal/departments/{id}/admins` | service token | Active admins of one department, id + email (scope `admins:read`) |
+| GET | `/internal/platform-admins` | service token | Active platform admins, id + email (scope `admins:read`) |
 
 **Department actions name the `dept_id` in the path** (e.g. `PATCH
 /departments/12`), and permission is checked against *that* department, so
