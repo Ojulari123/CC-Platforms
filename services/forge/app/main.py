@@ -6,7 +6,7 @@ from slowapi.errors import RateLimitExceeded
 from app.config import settings
 from app.db import SessionLocal
 from app.rate_limit import limiter
-from app.routes import datasets, health
+from app.routes import datasets, health, workflows
 from app.services.datasets import seed_sample_datasets
 
 @asynccontextmanager
@@ -34,6 +34,7 @@ app.add_middleware(
 
 app.include_router(health.router)
 app.include_router(datasets.router)
+app.include_router(workflows.router)
 
 @app.get("/")
 def root():

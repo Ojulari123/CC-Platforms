@@ -7,6 +7,14 @@ pydantic-settings>=2.6,<3.0
 python-multipart>=0.0.19,<1.0  # FastAPI needs this for UploadFile / multipart form uploads
 redis>=5.0,<6.0
 slowapi>=0.1.9,<0.2
+celery>=5.4,<6.0
+openai>=1.0,<2.0
+# The tabular workflows. scikit-learn brings scipy and joblib with it. Deliberately not
+# torch: image classification would add ~2 GB to an image that has no ML deps today, and
+# it is parked in docs/backlog.md instead.
+scikit-learn>=1.6,<2.0
+pandas>=2.2,<3.0
+numpy>=2.0,<3.0
 # crescent-core (the shared token verifier + pagination) is installed
 # separately, from the monorepo path — it is not on PyPI:
 #   Docker: pip install /packages/core      (see Dockerfile)

@@ -44,6 +44,21 @@ class Settings(BaseSettings):
     DATASET_PREVIEW_ROWS: int = 10
     MAX_UPLOAD_MB: int = 5
 
+    # Training runs on the same small box as everything else, so a run is refused before
+    # it starts rather than after it has taken the worker down. Cells, not just rows: a
+    # 2,000-row file with 900 one-hot columns costs the same as a huge one.
+    MAX_TRAIN_ROWS: int = 200_000
+    MAX_TRAIN_CELLS: int = 5_000_000
+    MIN_TRAIN_ROWS: int = 10
+
+    # LLM playground. Blank key means the playground answers "not set up" and nothing else
+    # in Forge changes, so CI and imports never need a key.
+    LLM_API_KEY: str = ""
+    LLM_MODEL: str = "gpt-4o-mini"
+    LLM_TIMEOUT_SECONDS: int = 60
+    # Daily ceiling per user across every playground call. 0 turns the cap off.
+    LLM_DAILY_TOKEN_CAP: int = 100_000
+
     @field_validator("DATABASE_URL")
     @classmethod
     def _pin_postgres_driver(cls, value: str) -> str:
