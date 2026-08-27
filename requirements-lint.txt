@@ -1,0 +1,3 @@
+# Just the linter, pinned, so CI's ruff job installs nothing else. Kept at the repo root
+# because ruff runs across every service and packages/core in one pass.
+ruff==0.16.4

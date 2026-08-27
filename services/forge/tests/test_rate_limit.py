@@ -128,7 +128,8 @@ def _keypair():
         format=serialization.PublicFormat.SubjectPublicKeyInfo,
     ).decode()
     numbers = key.public_key().public_numbers()
-    b64 = lambda n: base64.urlsafe_b64encode(n.to_bytes((n.bit_length() + 7) // 8, "big")).rstrip(b"=").decode()
+    def b64(n):
+        return base64.urlsafe_b64encode(n.to_bytes((n.bit_length() + 7) // 8, "big")).rstrip(b"=").decode()
     kid = hashlib.sha256(pub_pem.encode()).hexdigest()[:16]
     return pem, {"kty": "RSA", "use": "sig", "alg": "RS256", "kid": kid, "n": b64(numbers.n), "e": b64(numbers.e)}
 

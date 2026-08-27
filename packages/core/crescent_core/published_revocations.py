@@ -69,7 +69,8 @@ class PublishedRevocations:
             self._log(e)
             return Published.UNAVAILABLE
 
-        found = dict(zip(keys, values or []))
+        # strict=False on purpose: the `or []` fallback is deliberately shorter than keys.
+        found = dict(zip(keys, values or [], strict=False))
         if session_id and found.get(f"{SESSION_KEY_PREFIX}{session_id}") is not None:
             return Published.REVOKED
 

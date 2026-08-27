@@ -1,0 +1,52 @@
+# Ruff for services/* and packages/core. Deliberately a bug-catching ruleset, not a
+# style one: this repo has conventions ruff's formatter disagrees with (single-line
+# function signatures, one blank line between defs) and enforcing those would produce a
+# 200-file diff that buries real work. Formatting is not gated — see docs/backlog.md.
+
+target-version = "py314"
+# Not enforced (E501 is not selected). Set so the few layout rules that do read it agree
+# with what the code already looks like.
+line-length = 200
+extend-exclude = ["alembic/versions", "**/node_modules", "**/.nuxt"]
+
+[lint]
+# E4/E7/E9 + F is ruff's default: undefined names, unused imports and variables, broken
+# except clauses, syntax-level mistakes. B (bugbear) is the one addition, and it is here
+# for the handful of rules that catch real defects — mutable default arguments, a zip
+# over sequences of different lengths, an assert on a tuple that is always true.
+select = ["E4", "E7", "E9", "F", "B"]
+
+ignore = [
+    # `import base64, hashlib` on one line. Layout, not a defect, and the repo writes its
+    # imports on one line on purpose — see CLAUDE.md.
+    "E401",
+    # raise ... from err inside an except block. Not a defect here: the services raise
+    # HTTPException to convert a domain error into a status code, and chaining the
+    # original onto it changes nothing a caller sees. 52 call sites, mechanical, and a
+    # diff that size across every route file would bury the rest of this round. Recorded
+    # in docs/backlog.md instead.
+    "B904",
+]
+
+[lint.per-file-ignores]
+# Tests assert on the objects they build, so a "useless expression" or an unused local
+# in a test is usually the point of the test.
+"**/tests/**" = ["B011"]
+# Every conftest blocks outbound HTTP by patching httpx's transports, and that has to
+# happen before the app is imported or the app's own client is built against the real
+# one. The imports below it are late on purpose.
+"**/conftest.py" = ["B011", "E402"]
+
+[lint.flake8-bugbear]
+# FastAPI's whole dependency system is a function call in a default argument, which is
+# exactly what B008 exists to catch everywhere else.
+extend-immutable-calls = [
+    "fastapi.Body",
+    "fastapi.Depends",
+    "fastapi.File",
+    "fastapi.Form",
+    "fastapi.Header",
+    "fastapi.Path",
+    "fastapi.Query",
+    "fastapi.Security",
+]

@@ -18,11 +18,20 @@ dependencies = [
 # Not a hard dependency: published_revocations imports redis lazily and returns None
 # without it, which leaves a product on the identity HTTP lookup alone.
 redis = ["redis>=5.0,<7.0"]
-dev = ["pytest>=8.3,<9.0", "redis>=5.0,<7.0"]
+dev = ["pytest>=8.3,<9.0", "redis>=5.0,<7.0", "mypy>=1.11,<3.0"]
 
 [tool.setuptools.packages.find]
 where = ["."]
 include = ["crescent_core*"]
+
+# Typechecked because this is the library every product verifies tokens with, and
+# because it already passes: gating it costs nothing and stops the next change to it
+# being the one that introduces a type hole. The services are not gated — see
+# docs/backlog.md for what that would cost today.
+[tool.mypy]
+files = ["crescent_core"]
+python_version = "3.11"
+ignore_missing_imports = true
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
