@@ -14,7 +14,9 @@ import { MODULE_GROUPS } from "~/constants/canvasModules";
 
    Every control inside stays disabled while collapsed: clipped content is still in the
    tab order otherwise, and an aria-hidden region you can tab into is worse than one you
-   cannot see. Dashed hairlines mean "not built yet" and are used nowhere else. */
+   cannot see. Dashed hairlines mean "not built yet" and are used nowhere else, and they
+   mark the guided walkthrough rather than the task: every task below runs on the canvas
+   today, so each one links to the screen that does it. */
 
 const LEDGER: { label: string; live: boolean }[] = [
   { label: "CSV upload, 5 MB cap", live: true },
@@ -23,12 +25,13 @@ const LEDGER: { label: string; live: boolean }[] = [
   { label: "Shared sample datasets", live: true },
   { label: "Workflow canvas", live: true },
   { label: "Train, score, forecast", live: true },
+  { label: "LLM playground", live: true },
   { label: "Generated Python and notebook", live: true },
   { label: "Guided learning paths", live: false },
 ];
 
 const NOT_YET = [
-  "The four learning paths are still a written specification. None of them can be started.",
+  "The four guided walkthroughs are still a written specification. All four tasks they cover run on the canvas; what is missing is being walked through one.",
   "No feature importance, joins, filters or CSV export.",
   "A fitted model is scored and then thrown away. Nothing is saved for reuse.",
   "No two-way editing: changing the generated Python does not change the canvas.",
@@ -51,7 +54,7 @@ const path = computed(() => LEARNING_PATHS.find((p) => p.slug === pathSlug.value
       :class="[FOCUS, TAP, 'flex w-full flex-wrap items-baseline gap-x-3 gap-y-1.5 rounded px-1 py-2 text-left transition-colors hover:bg-surface-hover/40']"
       @click="open = !open"
     >
-      <Eyebrow>Not built yet</Eyebrow>
+      <Eyebrow>Build status</Eyebrow>
       <span class="text-[13.5px] font-medium text-ink">
         What runs today, and what is still only written down
       </span>
@@ -63,7 +66,7 @@ const path = computed(() => LEARNING_PATHS.find((p) => p.slug === pathSlug.value
     <!-- The manifest stays outside the collapse so what is inside is readable while
          it is shut. Discoverability was the whole objection to closing it. -->
     <p :class="[MONO_LABEL, 'mt-1 px-1 text-ink-faint']">
-      build ledger · four learning paths · canvas vocabulary · not-yet list
+      build ledger · four tasks · canvas vocabulary · not-yet list
     </p>
 
     <div id="forge-not-built" class="sec-collapse" :data-open="open ? 'true' : 'false'" :aria-hidden="!open">
@@ -95,20 +98,22 @@ const path = computed(() => LEARNING_PATHS.find((p) => p.slug === pathSlug.value
         <div class="mt-12 border-t border-line-subtle pt-10">
           <div class="flex flex-wrap items-center gap-3">
             <Eyebrow>Next</Eyebrow>
-            <span :class="WEEK6_TAG">Learning paths · not built</span>
+            <span :class="WEEK6_TAG">Guided walkthroughs · not built</span>
           </div>
           <h3 class="mt-2.5 max-w-[48ch] text-[clamp(1.35rem,2.4vw,1.75rem)] font-semibold leading-[1.15] tracking-[-0.025em]">
-            The guided paths, written down before they exist
+            The four tasks run. Being walked through them does not.
           </h3>
           <p class="mt-3 max-w-[64ch] text-[13px] leading-relaxed text-ink-muted">
-            The canvas is built and runs. The four paths below are still a specification you can
-            read: none of them can be started, and each one has to be assembled by hand for now.
+            Every task below is on the canvas today: pick it, attach a CSV, run it and read the
+            Python it generates. What is still only written down is the guided version, which
+            would carry you through one end to end. Until it exists you assemble the steps
+            yourself, and each task links to the canvas that does it.
           </p>
         </div>
 
         <div class="mt-8 grid gap-6 lg:grid-cols-12 lg:gap-10">
           <div class="lg:col-span-5">
-            <h4 :class="[MONO_LABEL, 'text-ink-muted']">Four learning paths</h4>
+            <h4 :class="[MONO_LABEL, 'text-ink-muted']">Four tasks, all runnable today</h4>
             <ul class="mt-3 space-y-1.5">
               <li v-for="p in LEARNING_PATHS" :key="p.slug">
                 <button
@@ -138,7 +143,7 @@ const path = computed(() => LEARNING_PATHS.find((p) => p.slug === pathSlug.value
             <div class="rounded-md border border-dashed border-line bg-app/40 p-5">
               <div class="flex flex-wrap items-center justify-between gap-3">
                 <h4 class="text-[15px] font-semibold tracking-[-0.015em]">{{ path.title }}</h4>
-                <span :class="WEEK6_TAG">Not built</span>
+                <span :class="WEEK6_TAG">Walkthrough not built</span>
               </div>
               <p class="mt-2.5 max-w-[56ch] text-[13px] leading-relaxed text-ink-muted">{{ path.summary }}</p>
 
@@ -152,9 +157,23 @@ const path = computed(() => LEARNING_PATHS.find((p) => p.slug === pathSlug.value
                     {{ i + 1 }}
                   </span>
                   <span class="text-[12.5px] text-ink-muted">{{ step.title }}</span>
-                  <span :class="[MONO_LABEL, 'ml-auto text-ink-faint']">not runnable</span>
+                  <span :class="[MONO_LABEL, 'ml-auto text-ink-faint']">no walkthrough</span>
                 </li>
               </ol>
+
+              <!-- Rendered only while open. An anchor cannot be disabled the way the path
+                   buttons are, and FOCUSABLE matches `a[href]` whatever its tabindex, so the
+                   only way it stays out of the tab order while collapsed is to not exist. -->
+              <p v-if="open" class="mt-5 max-w-[56ch] text-[12.5px] leading-relaxed text-ink-muted">
+                These steps are not guided yet. The task itself runs:
+                <NuxtLink
+                  :to="`/canvas?task=${path.workflowKind}`"
+                  :class="[FOCUS, 'rounded font-medium text-ink underline underline-offset-4']"
+                >
+                  open {{ path.title }} on the canvas
+                </NuxtLink>
+                and assemble it yourself.
+              </p>
 
               <div class="mt-5 border-t border-line-subtle pt-4">
                 <p :class="[MONO_LABEL, 'text-ink-faint']">For example</p>
@@ -169,11 +188,11 @@ const path = computed(() => LEARNING_PATHS.find((p) => p.slug === pathSlug.value
             <div>
               <h4 :class="[MONO_LABEL, 'text-ink-muted']">Canvas vocabulary</h4>
               <p class="mt-2 max-w-[52ch] text-[13px] leading-relaxed text-ink-muted">
-                The groups the steps fall into. The canvas itself is built: pick a task, assemble
-                the steps, run it and read the Python it generates.
+                The groups the steps fall into. Nine have a step on the canvas today; the three
+                marked planned do not exist yet.
               </p>
             </div>
-            <span :class="[MONO_LABEL, 'shrink-0 text-ink-muted']">built · under Canvas</span>
+            <span :class="[MONO_LABEL, 'shrink-0 text-ink-muted']">nine of twelve built</span>
           </div>
 
           <div class="mt-6 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
@@ -187,13 +206,21 @@ const path = computed(() => LEARNING_PATHS.find((p) => p.slug === pathSlug.value
                 <span class="mono text-[12px] text-ink-faint">{{ `0${gi + 1}` }}</span>
               </div>
               <ul class="mt-3 space-y-1.5">
+                <!-- A built module takes the solid hairline the rest of the product uses for
+                     things that work; the dashed one stays on the three that do not exist. -->
                 <li
                   v-for="m in g.modules"
-                  :key="m"
-                  class="mono flex items-center gap-2 rounded-md border border-dashed border-line-subtle bg-surface/25 px-2.5 py-[7px] text-[12px] text-ink-faint"
+                  :key="m.name"
+                  :class="[
+                    'mono flex items-center gap-2 rounded-md px-2.5 py-[7px] text-[12px]',
+                    m.live
+                      ? 'border border-line-subtle bg-surface/40 text-ink-muted'
+                      : 'border border-dashed border-line-subtle bg-surface/25 text-ink-faint',
+                  ]"
                 >
-                  <span class="h-1 w-1 rounded-full bg-line-strong" aria-hidden="true" />
-                  {{ m }}
+                  <StatusDot :tone="m.live ? 'ok' : 'warn'" quiet class="shrink-0" />
+                  {{ m.name }}
+                  <span v-if="!m.live" :class="[MONO_LABEL, 'ml-auto text-ink-faint']">planned</span>
                 </li>
               </ul>
             </div>
@@ -223,7 +250,7 @@ const path = computed(() => LEARNING_PATHS.find((p) => p.slug === pathSlug.value
         </div>
 
         <p :class="[MONO_LABEL, 'mt-8 border-t border-line-subtle pt-4 text-ink-muted']">
-          upload · canvas · runs · code export live · learning paths still written down
+          upload · canvas · runs · code export · four tasks live · guided walkthroughs not built
         </p>
       </div>
     </div>

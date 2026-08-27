@@ -17,8 +17,8 @@ describe("RoadmapPanel", () => {
 
   it("keeps a manifest of what is inside visible while it is shut", () => {
     const wrapper = mount(RoadmapPanel);
-    expect(wrapper.text()).toContain("Not built yet");
-    expect(wrapper.text()).toContain("build ledger · four learning paths · canvas vocabulary · not-yet list");
+    expect(wrapper.text()).toContain("Build status");
+    expect(wrapper.text()).toContain("build ledger · four tasks · canvas vocabulary · not-yet list");
   });
 
   it("leaves nothing focusable inside the collapsed region", () => {
@@ -67,6 +67,40 @@ describe("RoadmapPanel", () => {
     expect(text).toContain("CSV upload, 5 MB cap");
     expect(text).toContain("Workflow canvas");
     expect(text).toContain("Anything marked planned is written down and not built");
-    expect(text).toContain("The four learning paths are still a written specification.");
+    expect(text).toContain("The four guided walkthroughs are still a written specification.");
+  });
+
+  /* The panel used to mark all four tasks "Not built", which read as "Forge cannot do
+     classification" rather than "there is no walkthrough for it". These two pin the
+     distinction so it cannot quietly rot back. */
+  it("marks the walkthrough as missing without claiming the task does not run", async () => {
+    const wrapper = mount(RoadmapPanel);
+    await wrapper.get('[aria-controls="forge-not-built"]').trigger("click");
+    const text = wrapper.get("#forge-not-built").text().replace(/\s+/g, " ");
+
+    expect(text).toContain("Walkthrough not built");
+    expect(text).toContain("Four tasks, all runnable today");
+    expect(text).toContain("Every task below is on the canvas today");
+    expect(text).not.toContain("none of them can be started");
+  });
+
+  it("sends a person to the canvas that runs the task they are reading about", async () => {
+    const wrapper = mount(RoadmapPanel);
+    await wrapper.get('[aria-controls="forge-not-built"]').trigger("click");
+
+    const link = wrapper.get('#forge-not-built a[href="/canvas?task=tabular_classification"]');
+    expect(link.text()).toContain("open Classification on the canvas");
+
+    // Switching path switches where the link points.
+    const paths = wrapper.findAll("#forge-not-built button[aria-pressed]");
+    await paths[1]!.trigger("click");
+    expect(wrapper.get('#forge-not-built a[href="/canvas?task=tabular_regression"]').text())
+      .toContain("open Regression on the canvas");
+  });
+
+  it("counts the LLM playground among what is live", async () => {
+    const wrapper = mount(RoadmapPanel);
+    await wrapper.get('[aria-controls="forge-not-built"]').trigger("click");
+    expect(wrapper.get("#forge-not-built").text()).toContain("LLM playground");
   });
 });

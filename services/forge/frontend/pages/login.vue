@@ -46,7 +46,7 @@ const GUARANTEES: [string, string][] = [
 
 const FORGE_STATE: { tone: Tone; label: string }[] = [
   { tone: "ok", label: "Upload, canvas, runs and code export are live" },
-  { tone: "muted", label: "Guided learning paths are still written down" },
+  { tone: "muted", label: "Guided walkthroughs are still written down" },
 ];
 
 onMounted(() => {

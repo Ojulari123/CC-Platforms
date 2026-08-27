@@ -121,7 +121,8 @@ const counts = computed(() => {
       <p class="mt-5 max-w-[54ch] text-[13.5px] leading-relaxed text-ink-muted">
         Bring a CSV and you see it immediately: columns, row count, real rows. From there the
         canvas turns it into a workflow you can run, and shows you the Python it generates. The
-        guided paths are still written down rather than built, and this page says so where they appear.
+        four tasks all run; what is still written down rather than built is the guided walkthrough
+        that would carry you through one, and this page says so where it appears.
       </p>
     </section>
 

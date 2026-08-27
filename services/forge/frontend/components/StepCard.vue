@@ -6,7 +6,13 @@ import { ALGORITHMS_FOR_KIND, ALLOWED_HYPERPARAMETERS, STEP_FIELDS, describeStep
 
 /* One step of the workflow, drawn as its own thing with its parameters on show. Nothing
    here is hidden behind a details toggle: the point of the canvas is that a learner can
-   read down it and know what will happen to the data before pressing Run. */
+   read down it and know what will happen to the data before pressing Run.
+
+   Hierarchy is what makes that readable, and it runs outside-in. The card's own edge is
+   `--line`; every divider inside it is `--line-subtle`, so the boundary between two steps
+   is always heavier than any boundary within one. The gap between cards is larger than any
+   gap inside a card, so proximity groups the right things. The number sits in a chip at a
+   fixed x, which turns six cards into a countable 1..6 rail. */
 const props = withDefaults(
   defineProps<{
     kind: string;
@@ -31,7 +37,12 @@ const emit = defineEmits<{
   focus: [];
 }>();
 
-const FIELD_CLASS = `${FOCUS} w-full rounded-md bg-sunken px-3 py-2 text-[12.5px] text-ink ring-1 ring-inset ring-line transition-colors placeholder:text-ink-faint hover:ring-line-strong`;
+const FIELD_CLASS = `${FOCUS} w-full rounded-md bg-sunken px-3 py-2.5 text-[13.5px] text-ink ring-1 ring-inset ring-line transition-colors placeholder:text-ink-faint hover:ring-line-strong`;
+
+// Label, control, note. The three read as three different things or the card turns into a
+// wall: a label at ink weight, the control, then the consequence in muted body text.
+const FIELD_LABEL = "block text-[13px] font-medium text-ink";
+const FIELD_NOTE = "mt-2 max-w-[62ch] text-[12.5px] leading-relaxed text-ink-muted";
 
 const fields = computed(() => STEP_FIELDS[props.kind] ?? []);
 const visible = computed(() => fields.value.filter((f) => !f.when || f.when(props.params)));
@@ -84,162 +95,191 @@ function dropHyperparameter(name: string) {
 </script>
 
 <template>
-  <article
-    :class="[
-      'rounded-md bg-surface/40 ring-1 ring-inset transition-colors',
-      active ? 'ring-accent-ink' : 'ring-line-subtle',
-    ]"
-    @focusin="emit('focus')"
-    @mouseenter="emit('focus')"
-  >
-    <header class="flex flex-wrap items-baseline gap-x-3 gap-y-1 border-b border-line-subtle px-4 py-3">
-      <span :class="[MONO_LABEL, 'text-ink-faint']">step {{ position }} of {{ total }}</span>
-      <h3 class="text-[14px] font-semibold leading-tight tracking-[-0.01em] text-ink">{{ label }}</h3>
-      <span class="mono text-[12px] text-ink-faint">{{ kind }}</span>
-      <button
-        v-if="removable"
-        type="button"
-        :class="[FOCUS, 'mono ml-auto rounded px-2 py-1 text-[12px] text-ink-muted transition-colors hover:bg-surface-hover hover:text-ink']"
-        @click="emit('remove')"
-      >
-        Remove
-      </button>
-    </header>
+  <li class="relative list-none">
+    <!-- The steps run in order, so they are drawn joined. The rule lines up with the number
+         chip below it, which is what makes the sequence readable as a sequence. -->
+    <div v-if="position > 1" aria-hidden="true" class="ml-[35px] h-7 w-px bg-line" />
 
-    <div class="px-4 py-3">
-      <p class="text-[12.5px] leading-relaxed text-ink-muted">{{ summary }}</p>
-      <p v-if="detail" class="mono mt-1.5 text-[12px] text-ink">{{ detail }}</p>
+    <article
+      :class="[
+        'rounded-lg bg-surface ring-1 ring-inset transition-colors',
+        active ? 'ring-accent-ink' : 'ring-line',
+      ]"
+      @focusin="emit('focus')"
+      @mouseenter="emit('focus')"
+    >
+      <header class="flex items-start gap-3 px-4 py-4">
+        <span
+          :class="[
+            'mono grid h-[38px] w-[38px] shrink-0 place-items-center rounded-md bg-sunken text-[14px] font-medium ring-1 ring-inset',
+            active ? 'text-ink ring-accent-ink' : 'text-ink-muted ring-line',
+          ]"
+          aria-hidden="true"
+        >
+          {{ position }}
+        </span>
 
-      <div v-if="visible.length" class="mt-4 space-y-4">
-        <div v-for="field in visible" :key="field.key">
-          <label
-            v-if="field.type !== 'toggle' && field.type !== 'columns'"
-            :class="[MONO_LABEL, 'block text-ink-muted']"
-            :for="`step-${position}-${field.key}`"
-          >
-            {{ field.label }}
-          </label>
-          <p v-else :class="[MONO_LABEL, 'text-ink-muted']">{{ field.label }}</p>
+        <div class="min-w-0 flex-1">
+          <h3 class="text-[15px] font-semibold leading-tight tracking-[-0.01em] text-ink">
+            <span class="sr-only">step {{ position }} of {{ total }}: </span>{{ label }}
+          </h3>
+          <p class="mono mt-1 truncate text-[12px] text-ink-faint">{{ kind }}</p>
+        </div>
 
-          <div class="mt-1.5">
-            <Select
-              v-if="field.type === 'select'"
-              :model-value="String(params[field.key] ?? '')"
-              :options="optionsFor(field.key, field.options)"
-              :label="field.label"
-              @update:model-value="set(field.key, $event)"
-            />
+        <button
+          v-if="removable"
+          type="button"
+          :class="[FOCUS, 'mono shrink-0 rounded px-2 py-1 text-[12px] text-ink-muted transition-colors hover:bg-surface-hover hover:text-ink']"
+          @click="emit('remove')"
+        >
+          Remove
+        </button>
+      </header>
 
-            <Select
-              v-else-if="field.type === 'column' && columns.length"
-              :model-value="String(params[field.key] ?? '')"
-              :options="columns.map((c) => ({ value: c, label: c }))"
-              :label="field.label"
-              placeholder="Choose a column"
-              @update:model-value="set(field.key, $event)"
-            />
+      <div class="border-t border-line-subtle px-4 py-4">
+        <p class="max-w-[62ch] text-[13px] leading-relaxed text-ink-muted">{{ summary }}</p>
 
-            <input
-              v-else-if="field.type === 'column' || field.type === 'text'"
-              :id="`step-${position}-${field.key}`"
-              :class="FIELD_CLASS"
-              type="text"
-              :value="String(params[field.key] ?? '')"
-              :placeholder="field.placeholder"
-              @input="set(field.key, ($event.target as HTMLInputElement).value)"
+        <!-- What this step does with the settings as they stand now, as against the summary
+             above, which is fixed. Given its own surface so the two never read as one. -->
+        <p v-if="detail" class="mono mt-3 rounded-md bg-sunken px-3 py-2.5 text-[12.5px] leading-relaxed text-ink ring-1 ring-inset ring-line-subtle">
+          {{ detail }}
+        </p>
+      </div>
+
+      <section v-if="visible.length" class="border-t border-line-subtle px-4 py-4">
+        <p :class="[MONO_LABEL, 'text-ink-faint']">Settings</p>
+
+        <div class="mt-4 space-y-6">
+          <div v-for="field in visible" :key="field.key">
+            <label
+              v-if="field.type !== 'toggle' && field.type !== 'columns'"
+              :class="FIELD_LABEL"
+              :for="`step-${position}-${field.key}`"
             >
-
-            <input
-              v-else-if="field.type === 'number'"
-              :id="`step-${position}-${field.key}`"
-              :class="FIELD_CLASS"
-              type="number"
-              :min="field.min"
-              :max="field.max"
-              :step="field.step"
-              :value="params[field.key] as number"
-              @input="set(field.key, Number(($event.target as HTMLInputElement).value))"
-            >
-
-            <textarea
-              v-else-if="field.type === 'textarea'"
-              :id="`step-${position}-${field.key}`"
-              :class="[FIELD_CLASS, 'resize-y leading-relaxed']"
-              :rows="field.rows ?? 3"
-              :placeholder="field.placeholder"
-              :value="String(params[field.key] ?? '')"
-              @input="set(field.key, ($event.target as HTMLTextAreaElement).value)"
-            />
-
-            <label v-else-if="field.type === 'toggle'" class="flex items-center gap-2.5 text-[12.5px] text-ink">
-              <input
-                :class="[FOCUS, 'h-4 w-4 rounded-sm accent-[color:var(--ink)]']"
-                type="checkbox"
-                :checked="Boolean(params[field.key])"
-                @change="set(field.key, ($event.target as HTMLInputElement).checked)"
-              >
               {{ field.label }}
             </label>
+            <p v-else :class="FIELD_LABEL">{{ field.label }}</p>
 
-            <div v-else-if="field.type === 'columns'">
-              <div v-if="columns.length" class="flex flex-wrap gap-1.5">
-                <button
-                  v-for="column in columns"
-                  :key="column"
-                  type="button"
-                  :aria-pressed="asColumns(field.key).includes(column)"
-                  :class="[
-                    FOCUS,
-                    'mono rounded px-2 py-1 text-[12px] ring-1 ring-inset transition-colors',
-                    asColumns(field.key).includes(column)
-                      ? 'bg-surface-active text-ink ring-line-strong'
-                      : 'text-ink-muted ring-line hover:bg-surface-hover hover:text-ink',
-                  ]"
-                  @click="toggleColumn(field.key, column)"
-                >
-                  {{ column }}
-                </button>
-              </div>
-              <p v-else class="mono text-[12px] text-ink-faint">Attach a dataset to pick columns.</p>
-            </div>
-
-            <div v-else-if="field.type === 'hyperparameters'" class="space-y-2">
-              <div v-for="(value, name) in hyperparameters" :key="name" class="flex items-center gap-2">
-                <span class="mono w-36 shrink-0 text-[12px] text-ink-muted">{{ name }}</span>
-                <input
-                  :class="[FIELD_CLASS, 'max-w-[10rem]']"
-                  type="number"
-                  :aria-label="name"
-                  :value="String(value)"
-                  @input="setHyperparameter(name, ($event.target as HTMLInputElement).value)"
-                >
-                <button
-                  type="button"
-                  :class="[FOCUS, 'mono rounded px-2 py-1 text-[12px] text-ink-muted transition-colors hover:bg-surface-hover hover:text-ink']"
-                  @click="dropHyperparameter(name)"
-                >
-                  Remove
-                </button>
-              </div>
+            <div class="mt-2">
               <Select
-                v-if="unusedHyperparameters.length"
-                model-value=""
-                :options="unusedHyperparameters.map((n) => ({ value: n, label: n }))"
-                label="Add a hyperparameter"
-                placeholder="Add a setting"
-                @update:model-value="addHyperparameter($event)"
+                v-if="field.type === 'select'"
+                :model-value="String(params[field.key] ?? '')"
+                :options="optionsFor(field.key, field.options)"
+                :label="field.label"
+                @update:model-value="set(field.key, $event)"
               />
-            </div>
-          </div>
 
-          <p v-if="strategyNote(params[field.key])" class="mt-1.5 max-w-[62ch] text-[12px] leading-relaxed text-ink-muted">
-            {{ strategyNote(params[field.key]) }}
-          </p>
-          <p v-else-if="field.note" class="mt-1.5 max-w-[62ch] text-[12px] leading-relaxed text-ink-muted">
-            {{ field.note }}
-          </p>
+              <Select
+                v-else-if="field.type === 'column' && columns.length"
+                :model-value="String(params[field.key] ?? '')"
+                :options="columns.map((c) => ({ value: c, label: c }))"
+                :label="field.label"
+                placeholder="Choose a column"
+                @update:model-value="set(field.key, $event)"
+              />
+
+              <input
+                v-else-if="field.type === 'column' || field.type === 'text'"
+                :id="`step-${position}-${field.key}`"
+                :class="FIELD_CLASS"
+                type="text"
+                :value="String(params[field.key] ?? '')"
+                :placeholder="field.placeholder"
+                @input="set(field.key, ($event.target as HTMLInputElement).value)"
+              >
+
+              <input
+                v-else-if="field.type === 'number'"
+                :id="`step-${position}-${field.key}`"
+                :class="[FIELD_CLASS, 'max-w-[12rem] tabular-nums']"
+                type="number"
+                :min="field.min"
+                :max="field.max"
+                :step="field.step"
+                :value="params[field.key] as number"
+                @input="set(field.key, Number(($event.target as HTMLInputElement).value))"
+              >
+
+              <textarea
+                v-else-if="field.type === 'textarea'"
+                :id="`step-${position}-${field.key}`"
+                :class="[FIELD_CLASS, 'resize-y leading-relaxed']"
+                :rows="field.rows ?? 3"
+                :placeholder="field.placeholder"
+                :value="String(params[field.key] ?? '')"
+                @input="set(field.key, ($event.target as HTMLTextAreaElement).value)"
+              />
+
+              <label v-else-if="field.type === 'toggle'" class="flex items-center gap-2.5 text-[13px] text-ink">
+                <input
+                  :class="[FOCUS, 'h-4 w-4 rounded-sm accent-[color:var(--ink)]']"
+                  type="checkbox"
+                  :checked="Boolean(params[field.key])"
+                  @change="set(field.key, ($event.target as HTMLInputElement).checked)"
+                >
+                {{ field.label }}
+              </label>
+
+              <div v-else-if="field.type === 'columns'">
+                <div v-if="columns.length" class="flex flex-wrap gap-2">
+                  <button
+                    v-for="column in columns"
+                    :key="column"
+                    type="button"
+                    :aria-pressed="asColumns(field.key).includes(column)"
+                    :class="[
+                      FOCUS,
+                      'mono rounded px-2.5 py-1.5 text-[12px] ring-1 ring-inset transition-colors',
+                      asColumns(field.key).includes(column)
+                        ? 'bg-surface-active text-ink ring-line-strong'
+                        : 'text-ink-muted ring-line hover:bg-surface-hover hover:text-ink',
+                    ]"
+                    @click="toggleColumn(field.key, column)"
+                  >
+                    {{ column }}
+                  </button>
+                </div>
+                <p v-else class="text-[12.5px] leading-relaxed text-ink-muted">Attach a dataset to pick columns.</p>
+              </div>
+
+              <div v-else-if="field.type === 'hyperparameters'" class="space-y-2.5">
+                <div v-for="(value, name) in hyperparameters" :key="name" class="flex items-center gap-3">
+                  <span class="mono w-36 shrink-0 text-[12.5px] text-ink">{{ name }}</span>
+                  <input
+                    :class="[FIELD_CLASS, 'max-w-[10rem] tabular-nums']"
+                    type="number"
+                    :aria-label="name"
+                    :value="String(value)"
+                    @input="setHyperparameter(name, ($event.target as HTMLInputElement).value)"
+                  >
+                  <button
+                    type="button"
+                    :class="[FOCUS, 'mono rounded px-2 py-1 text-[12px] text-ink-muted transition-colors hover:bg-surface-hover hover:text-ink']"
+                    @click="dropHyperparameter(name)"
+                  >
+                    Remove
+                  </button>
+                </div>
+                <Select
+                  v-if="unusedHyperparameters.length"
+                  model-value=""
+                  :options="unusedHyperparameters.map((n) => ({ value: n, label: n }))"
+                  label="Add a hyperparameter"
+                  placeholder="Add a setting"
+                  @update:model-value="addHyperparameter($event)"
+                />
+              </div>
+            </div>
+
+            <p v-if="strategyNote(params[field.key])" :class="FIELD_NOTE">
+              {{ strategyNote(params[field.key]) }}
+            </p>
+            <p v-else-if="field.note" :class="FIELD_NOTE">
+              {{ field.note }}
+            </p>
+          </div>
         </div>
-      </div>
-    </div>
-  </article>
+      </section>
+    </article>
+  </li>
 </template>

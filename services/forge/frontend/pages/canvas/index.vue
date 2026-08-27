@@ -12,7 +12,13 @@ const queryClient = useQueryClient();
 const { toast, show, clear } = useToast();
 
 const name = ref("");
-const kind = ref<WorkflowKind>("tabular_classification");
+
+// `?task=` lets the learning pages send someone to the task they were just reading about
+// with it already picked. An unknown value falls back rather than throwing.
+const route = useRoute();
+const requested = KIND_OPTIONS.find((option) => option.value === route.query.task);
+
+const kind = ref<WorkflowKind>(requested?.value ?? "tabular_classification");
 const datasetId = ref("");
 
 const chosen = computed(() => KIND_OPTIONS.find((option) => option.value === kind.value)!);
@@ -200,28 +206,45 @@ function kindLabel(value: string): string {
       <p v-else-if="!items.length" class="mt-4 rounded-md bg-surface/40 px-5 py-8 text-[12.5px] text-ink-muted ring-1 ring-inset ring-line-subtle">
         Nothing saved yet. The workflow you start above will be here when you come back.
       </p>
-      <ul v-else class="mt-4 divide-y divide-line-subtle">
-        <li v-for="workflow in items" :key="workflow.id" class="flex flex-wrap items-baseline gap-x-4 gap-y-1 py-3">
-          <NuxtLink
-            :to="`/canvas/${workflow.id}`"
-            :class="[FOCUS, 'rounded text-[13.5px] font-medium text-ink underline-offset-4 hover:underline']"
-          >
-            {{ workflow.name }}
-          </NuxtLink>
-          <span class="mono text-[12px] text-ink-muted">{{ kindLabel(workflow.kind) }}</span>
-          <span class="mono text-[12px] text-ink-faint">
-            {{ workflow.steps.length }} {{ workflow.steps.length === 1 ? "step" : "steps" }}
-          </span>
-          <span class="mono text-[12px] text-ink-faint">{{ formatStamp(workflow.created_at) }}</span>
-          <button
-            type="button"
-            :class="[FOCUS, 'mono ml-auto rounded px-2 py-1 text-[12px] text-ink-muted transition-colors hover:bg-surface-hover hover:text-ink']"
-            @click="remove.mutate(workflow)"
-          >
-            Delete
-          </button>
-        </li>
-      </ul>
+      <!-- A table rather than a row of spans. Name, task, step count and date read as four
+           unlabelled values otherwise, and the columns have to line up between rows. Same
+           shape as the dataset list on the overview. -->
+      <table v-else class="mt-4 w-full border-collapse text-left">
+        <caption class="sr-only">Workflows you have saved, with the task each one runs and when it was made.</caption>
+        <thead>
+          <tr class="border-y border-line-subtle">
+            <th scope="col" :class="[MONO_LABEL, 'py-2 pr-3 font-normal text-ink-faint']">Workflow</th>
+            <th scope="col" :class="[MONO_LABEL, 'whitespace-nowrap px-3 py-2 font-normal text-ink-faint']">Task</th>
+            <th scope="col" :class="[MONO_LABEL, 'whitespace-nowrap px-3 py-2 text-right font-normal text-ink-faint']">Steps</th>
+            <th scope="col" :class="[MONO_LABEL, 'hidden whitespace-nowrap px-3 py-2 font-normal text-ink-faint sm:table-cell']">Created</th>
+            <th scope="col" class="py-2 pl-3"><span class="sr-only">Actions</span></th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr v-for="workflow in items" :key="workflow.id" class="border-b border-line-subtle">
+            <td class="w-full max-w-0 py-3.5 pr-3">
+              <NuxtLink
+                :to="`/canvas/${workflow.id}`"
+                :class="[FOCUS, 'block truncate rounded text-[13.5px] font-medium text-ink underline-offset-4 hover:underline']"
+              >
+                {{ workflow.name }}
+              </NuxtLink>
+            </td>
+            <td class="mono whitespace-nowrap px-3 py-3.5 text-[12px] text-ink-muted">{{ kindLabel(workflow.kind) }}</td>
+            <td class="mono whitespace-nowrap px-3 py-3.5 text-right text-[12px] tabular-nums text-ink-muted">
+              {{ workflow.steps.length }}
+            </td>
+            <td class="mono hidden whitespace-nowrap px-3 py-3.5 text-[12px] text-ink-muted sm:table-cell">
+              {{ formatStamp(workflow.created_at) }}
+            </td>
+            <td class="whitespace-nowrap py-3.5 pl-3 text-right">
+              <Btn variant="ghost" size="sm" :aria-label="`Delete ${workflow.name}`" @click="remove.mutate(workflow)">
+                Delete
+              </Btn>
+            </td>
+          </tr>
+        </tbody>
+      </table>
     </section>
 
     <Toast v-if="toast" :message="toast.message" :tone="toast.tone" @dismiss="clear" />

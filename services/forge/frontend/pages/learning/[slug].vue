@@ -34,12 +34,15 @@ const WEEK6_TAG = `${MONO_LABEL} inline-flex shrink-0 items-center rounded borde
         <Eyebrow>Forge · learning path</Eyebrow>
         <div class="mt-3 flex flex-wrap items-center gap-3">
           <h1 class="text-[clamp(1.5rem,2.2vw,1.9rem)] font-semibold tracking-[-0.035em]">{{ path.title }}</h1>
-          <span :class="WEEK6_TAG">Not built yet</span>
+          <span :class="WEEK6_TAG">No walkthrough yet</span>
         </div>
         <p class="mt-3 max-w-[64ch] text-[13px] leading-relaxed text-ink-muted">{{ path.summary }}</p>
         <p :class="[MONO_LABEL, 'mt-5 border-y border-line-subtle py-3 text-ink-muted']">
-          specification only · nothing on this page runs · no run button exists
+          this page is a description · the task itself runs on the canvas
         </p>
+        <NuxtLink :to="`/canvas?task=${path.workflowKind}`" class="mt-5 inline-block">
+          <Btn arrow>Open {{ path.title }} on the canvas</Btn>
+        </NuxtLink>
       </section>
 
       <section class="mt-10 grid gap-8 border-t border-line-subtle pt-8 lg:grid-cols-12 lg:gap-12">
@@ -57,7 +60,7 @@ const WEEK6_TAG = `${MONO_LABEL} inline-flex shrink-0 items-center rounded borde
 
       <section class="mt-12 border-t border-line-subtle pt-8">
         <div class="flex flex-wrap items-baseline justify-between gap-3">
-          <h2 class="text-[18px] font-semibold leading-tight tracking-[-0.02em] text-ink">How it will work</h2>
+          <h2 class="text-[18px] font-semibold leading-tight tracking-[-0.02em] text-ink">How it works</h2>
           <span :class="[MONO_LABEL, 'text-ink-muted']">{{ path.steps.length }} steps</span>
         </div>
         <ol class="mt-5">
@@ -75,17 +78,21 @@ const WEEK6_TAG = `${MONO_LABEL} inline-flex shrink-0 items-center rounded borde
                 {{ step.detail }}
               </span>
             </span>
-            <span :class="[MONO_LABEL, 'hidden shrink-0 text-ink-faint sm:inline']">not runnable</span>
+            <span :class="[MONO_LABEL, 'hidden shrink-0 text-ink-faint sm:inline']">not guided</span>
           </li>
         </ol>
       </section>
 
       <section class="mt-12 border-t border-line-subtle pt-8">
-        <h2 class="text-[18px] font-semibold leading-tight tracking-[-0.02em] text-ink">These steps become canvas modules</h2>
+        <h2 class="text-[18px] font-semibold leading-tight tracking-[-0.02em] text-ink">These steps are canvas steps</h2>
         <p class="mt-2.5 max-w-[64ch] text-[13px] leading-relaxed text-ink-muted">
-          Each step above is one block on the workflow canvas, pre-filled so only the dataset and
-          the columns are left to pick. The canvas is a sketch too — see it under Canvas.
+          Each step above is one card on the workflow canvas, which is built and runs. Opening this
+          task there fills in the shortest set of steps that will run, and leaves you the dataset
+          and the columns to pick. What is missing is a guided version that walks you through it.
         </p>
+        <NuxtLink :to="`/canvas?task=${path.workflowKind}`" class="mt-5 inline-block">
+          <Btn variant="secondary" size="sm">Open {{ path.title }} on the canvas</Btn>
+        </NuxtLink>
       </section>
     </template>
   </div>

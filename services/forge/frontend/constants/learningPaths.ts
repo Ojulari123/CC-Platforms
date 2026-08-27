@@ -1,5 +1,7 @@
-// The four paths named in the platform plan. Descriptions only; none of these
-// run yet, and the pages that render them say so.
+/* The four paths named in the platform plan. What is not built is the *guided* path:
+   the walkthrough that holds your hand through one of these end to end. The thing each
+   path describes runs on the canvas today, which is what `workflowKind` points at, so
+   these pages can send a person to the working screen instead of a dead end. */
 
 export interface LearningPath {
   slug: string;
@@ -7,12 +9,15 @@ export interface LearningPath {
   summary: string;
   question: string;
   example: string;
+  /** The canvas task that does this today. `/canvas?task=<kind>` opens pre-selected. */
+  workflowKind: string;
   steps: { title: string; detail: string }[];
 }
 
 export const LEARNING_PATHS: LearningPath[] = [
   {
     slug: "classification",
+    workflowKind: "tabular_classification",
     title: "Classification",
     summary: "Sort rows into categories you already know the names of.",
     question: "Which bucket does this row belong to?",
@@ -44,6 +49,7 @@ export const LEARNING_PATHS: LearningPath[] = [
   },
   {
     slug: "regression",
+    workflowKind: "tabular_regression",
     title: "Regression",
     summary: "Predict a number rather than a category.",
     question: "How much, given everything else in the row?",
@@ -71,6 +77,7 @@ export const LEARNING_PATHS: LearningPath[] = [
   },
   {
     slug: "time-series",
+    workflowKind: "timeseries_forecast",
     title: "Time series",
     summary: "Use the shape of the past to say something about the near future.",
     question: "Where is this heading over the next N periods?",
@@ -101,6 +108,7 @@ export const LEARNING_PATHS: LearningPath[] = [
   },
   {
     slug: "llm-playground",
+    workflowKind: "llm_playground",
     title: "LLM playground",
     summary: "Ask questions of your data in plain English.",
     question: "What does this dataset actually say?",

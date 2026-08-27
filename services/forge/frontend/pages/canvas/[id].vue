@@ -278,12 +278,13 @@ const comparedMetrics = computed(() => {
       <section class="mt-10 grid gap-8 lg:grid-cols-2 lg:gap-10">
         <div>
           <h2 class="text-[18px] font-semibold leading-tight tracking-[-0.02em] text-ink">The canvas</h2>
-          <p class="mt-2 max-w-[58ch] text-[12.5px] leading-relaxed text-ink-muted">
-            In the order they will run. A pipeline only works one way round, so the canvas sorts
-            itself rather than trusting the order the steps were added in.
+          <p class="mt-2 max-w-[58ch] text-[13px] leading-relaxed text-ink-muted">
+            {{ ordered.length }} {{ ordered.length === 1 ? "step" : "steps" }}, numbered in the order
+            they will run. A pipeline only works one way round, so the canvas sorts itself rather
+            than trusting the order the steps were added in.
           </p>
 
-          <div class="mt-5 space-y-3">
+          <ol class="mt-6 space-y-0">
             <StepCard
               v-for="(step, index) in ordered"
               :key="`${step.kind}-${index}`"
@@ -301,11 +302,11 @@ const comparedMetrics = computed(() => {
               @remove="removeStep(index)"
               @focus="activeKind = step.kind"
             />
-          </div>
+          </ol>
 
-          <div v-if="available.length" class="mt-4">
-            <p :class="[MONO_LABEL, 'text-ink-muted']">Add a step</p>
-            <div class="mt-2 flex flex-wrap gap-2">
+          <div v-if="available.length" class="mt-8 border-t border-line-subtle pt-5">
+            <p :class="[MONO_LABEL, 'text-ink-faint']">Add a step</p>
+            <div class="mt-3 flex flex-wrap gap-2">
               <button
                 v-for="step in available"
                 :key="step"
@@ -324,12 +325,12 @@ const comparedMetrics = computed(() => {
             <h2 class="text-[18px] font-semibold leading-tight tracking-[-0.02em] text-ink">The Python it becomes</h2>
             <span v-if="code.data.value" class="mono text-[12px] text-ink-muted">{{ code.data.value.filename }}</span>
           </div>
-          <p class="mt-2 max-w-[58ch] text-[12.5px] leading-relaxed text-ink-muted">
+          <p class="mt-2 max-w-[58ch] text-[13px] leading-relaxed text-ink-muted">
             One block per step, in the same order and carrying the same numbers. Save the canvas to
             regenerate it, then download it and run it yourself.
           </p>
 
-          <div class="mt-5 overflow-hidden rounded-md bg-sunken ring-1 ring-inset ring-line-subtle">
+          <div class="mt-6 overflow-hidden rounded-lg bg-sunken ring-1 ring-inset ring-line">
             <CodeView
               v-if="code.data.value"
               :code="code.data.value.code"
@@ -370,30 +371,60 @@ const comparedMetrics = computed(() => {
         <p v-if="!runs.data.value?.items?.length" class="mt-4 rounded-md bg-surface/40 px-5 py-8 text-[12.5px] text-ink-muted ring-1 ring-inset ring-line-subtle">
           No runs yet.
         </p>
-        <ul v-else class="mt-4 divide-y divide-line-subtle">
-          <li v-for="run in runs.data.value.items" :key="run.id" class="flex flex-wrap items-center gap-x-4 gap-y-1 py-2.5">
-            <input
-              :class="[FOCUS, 'h-4 w-4 rounded-sm accent-[color:var(--ink)]']"
-              type="checkbox"
-              :aria-label="`Compare run ${run.id}`"
-              :checked="compare.includes(run.id)"
-              :disabled="run.status !== 'succeeded'"
-              @change="toggleCompare(run.id)"
-            >
-            <StatusDot :tone="RUN_TONES[run.status]" />
-            <button
-              type="button"
-              :class="[FOCUS, 'mono rounded text-[12px] font-medium text-ink underline-offset-4 hover:underline']"
-              @click="activeRunId = run.id"
-            >
-              run {{ run.id }}
-            </button>
-            <span class="mono text-[12px] text-ink-muted">{{ run.status }}</span>
-            <span class="mono text-[12px] text-ink-faint">{{ formatStamp(run.created_at) }}</span>
-            <span v-if="run.duration_ms" class="mono text-[12px] text-ink-faint">{{ formatDuration(run.duration_ms) }}</span>
-            <span v-if="run.error" class="max-w-[46ch] truncate text-[12px] text-ink-muted">{{ run.error }}</span>
-          </li>
-        </ul>
+        <!-- Status, id, time and duration are four unlabelled values in a row otherwise, and
+             a run that carries an error message must not shift the columns of one that does
+             not. Same shape as the dataset list on the overview. -->
+        <table v-else class="mt-4 w-full border-collapse text-left">
+          <caption class="sr-only">Runs of this workflow, newest first, with how each one ended and how long it took.</caption>
+          <thead>
+            <tr class="border-y border-line-subtle">
+              <th scope="col" class="py-2 pr-3"><span class="sr-only">Compare</span></th>
+              <th scope="col" :class="[MONO_LABEL, 'whitespace-nowrap py-2 pr-3 font-normal text-ink-faint']">Run</th>
+              <th scope="col" :class="[MONO_LABEL, 'whitespace-nowrap px-3 py-2 font-normal text-ink-faint']">Outcome</th>
+              <th scope="col" :class="[MONO_LABEL, 'hidden whitespace-nowrap px-3 py-2 font-normal text-ink-faint sm:table-cell']">Started</th>
+              <th scope="col" :class="[MONO_LABEL, 'whitespace-nowrap px-3 py-2 text-right font-normal text-ink-faint']">Took</th>
+              <th scope="col" :class="[MONO_LABEL, 'w-full py-2 pl-3 font-normal text-ink-faint']">Message</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr v-for="run in runs.data.value.items" :key="run.id" class="border-b border-line-subtle">
+              <td class="py-3 pr-3">
+                <input
+                  :class="[FOCUS, 'h-4 w-4 rounded-sm accent-[color:var(--ink)]']"
+                  type="checkbox"
+                  :aria-label="`Compare run ${run.id}`"
+                  :checked="compare.includes(run.id)"
+                  :disabled="run.status !== 'succeeded'"
+                  @change="toggleCompare(run.id)"
+                >
+              </td>
+              <td class="whitespace-nowrap py-3 pr-3">
+                <button
+                  type="button"
+                  :class="[FOCUS, 'mono rounded text-[12.5px] font-medium text-ink underline-offset-4 hover:underline']"
+                  @click="activeRunId = run.id"
+                >
+                  run {{ run.id }}
+                </button>
+              </td>
+              <td class="whitespace-nowrap px-3 py-3">
+                <span class="flex items-center gap-2">
+                  <StatusDot :tone="RUN_TONES[run.status]" />
+                  <span class="mono text-[12px] text-ink-muted">{{ run.status }}</span>
+                </span>
+              </td>
+              <td class="mono hidden whitespace-nowrap px-3 py-3 text-[12px] text-ink-muted sm:table-cell">
+                {{ formatStamp(run.created_at) }}
+              </td>
+              <td class="mono whitespace-nowrap px-3 py-3 text-right text-[12px] tabular-nums text-ink-muted">
+                {{ run.duration_ms ? formatDuration(run.duration_ms) : "" }}
+              </td>
+              <td class="max-w-0 py-3 pl-3">
+                <span class="block truncate text-[12.5px] text-ink-muted">{{ run.error ?? "" }}</span>
+              </td>
+            </tr>
+          </tbody>
+        </table>
 
         <div v-if="comparedRuns.length === 2" class="mt-6 overflow-x-auto">
           <table class="w-full border-collapse text-left">
