@@ -18,7 +18,13 @@ dependencies = [
 # Not a hard dependency: published_revocations imports redis lazily and returns None
 # without it, which leaves a product on the identity HTTP lookup alone.
 redis = ["redis>=5.0,<7.0"]
-dev = ["pytest>=8.3,<9.0", "redis>=5.0,<7.0", "mypy>=1.11,<3.0"]
+# types-python-jose is here rather than left to `ignore_missing_imports`, because that
+# setting does not cover jose: typeshed publishes stubs for it, so mypy raises
+# `import-untyped` and tells you to install them instead of staying quiet. Without the
+# stubs installed, `mypy packages/core` from the repo root fails on verify.py:1 while the
+# same check passes from inside this directory, which is a failure a developer cannot act
+# on. With them installed both paths agree, and jose is genuinely typechecked.
+dev = ["pytest>=8.3,<9.0", "redis>=5.0,<7.0", "mypy>=1.11,<3.0", "types-python-jose>=3.3,<4.0"]
 
 [tool.setuptools.packages.find]
 where = ["."]
