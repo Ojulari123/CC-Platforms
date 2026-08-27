@@ -3,10 +3,16 @@
 Product 2. Guided environment for classification, regression, time-series, and
 LLM workflows without writing code first.
 
-**Weeks 5–7 in the internship plan.** Week 5 is up: the service boots on port
-**8003**, owns its own `forge` database, verifies identity's JWTs locally, and
-serves a real **datasets** API (upload / list / view / preview / delete) plus a
-Nuxt frontend foundation. Visual ML workflows come in Week 6.
+**Weeks 5–7 in the internship plan.** Weeks 5 to 7 are up: the service boots on
+port **8003**, owns its own `forge` database, verifies identity's JWTs locally,
+serves a **datasets** API (upload / list / view / preview / delete), builds
+**workflows** out of ordered steps, runs them on a **Celery worker**, keeps the
+**run history**, and exports **readable Python** from the same step rows the
+canvas shows.
+
+Two modalities are built: **tabular** (classification, regression, time-series
+forecast) and the **LLM playground**. Image classification is not built and is
+recorded in `docs/backlog.md` with the reason.
 
 Sits alongside the other product, **Pulse** (`services/pulse/`).
 
@@ -31,6 +37,48 @@ Same rules as Pulse:
 | GET | `/datasets/{id}` | owner or sample | One dataset's metadata |
 | GET | `/datasets/{id}/preview` | owner or sample | First `rows` data rows (`?rows=`, default `DATASET_PREVIEW_ROWS`, 1–500) + column headers |
 | DELETE | `/datasets/{id}` | owner only | Delete your dataset (204). Samples are owner-less, so nobody can delete them |
+
+**Workflows**: every route needs a signed-in identity user, and every route is
+scoped to what that user owns.
+
+| Method | Path | Purpose |
+|---|---|---|
+| POST | `/workflows` | Create a workflow: `name`, `kind`, `dataset_id`, and the ordered `steps` |
+| GET | `/workflows` | Your workflows, paginated, newest first |
+| GET | `/workflows/steps` | The step vocabulary the canvas draws its palette from |
+| GET | `/workflows/{id}` | One workflow with every step row |
+| PUT | `/workflows/{id}/steps` | Replace the whole step list |
+| DELETE | `/workflows/{id}` | Delete the workflow, its steps and its runs (204) |
+| POST | `/workflows/{id}/runs` | Queue a run (202). Training happens on the worker, never in the request |
+| GET | `/workflows/{id}/runs` | Run history, so nothing is lost when a tab closes |
+| GET | `/workflows/{id}/runs/{run_id}` | One run: status, metrics, result, error, timing |
+| GET | `/workflows/{id}/code` | The generated Python (`?fmt=script` or `?fmt=notebook`) |
+| GET | `/workflows/{id}/code/raw` | The same script as a file download |
+
+Workflow kinds: `tabular_classification`, `tabular_regression`,
+`timeseries_forecast`, `llm_playground`.
+
+Step kinds: `load_csv`, `handle_missing`, `encode_categorical`, `scale_features`,
+`select_features`, `select_target`, `lag_features`, `train_test_split`,
+`train_model`, `evaluate`, `prompt`. One row per step, `params` as JSON text.
+The steps are stored in the order the learner built them and sorted into
+pipeline order by `app/services/steps.py:ordered_steps`, which both the runner
+and the code generator use, so what runs and what is exported cannot disagree.
+
+Metrics: classification reports accuracy, macro precision, macro recall, macro
+F1 and a confusion matrix. Regression reports R², MAE and RMSE. A forecast adds
+MAPE.
+
+A workflow that isn't yours is a **404**, not a 403. A step or parameter the
+server will not accept is a **400** carrying a sentence naming the fix. A run
+that fails stores a message a learner can act on, never a traceback.
+
+**LLM playground**: `llm_playground` workflows send a system prompt, a question
+and optional grounding text to OpenAI through `app/services/ai_provider.py` — a
+small copy of the shape Pulse uses, not an import, because services do not
+depend on each other's code. Every call is metered into Forge's own `llm_usage`
+table and checked against `LLM_DAILY_TOKEN_CAP` **before** the call, so the cap
+prevents overspending rather than reporting it. Over the cap is a **429**.
 
 Access rules (in `app/services/datasets.py`): a caller sees their own datasets
 plus every `is_sample` dataset and nothing else. A dataset that isn't yours and
@@ -124,8 +172,12 @@ cd services/forge && pytest
 ```
 
 SQLite-based; the auth dependency is overridden so tests inject token claims
-directly. No DB server or identity instance needed.
+directly. No DB server or identity instance needed. The code-generation tests
+write a generated script to a temporary directory and **run it in a subprocess**
+against a real CSV, so an export that stops working fails the suite.
 
 ## Stack
-FastAPI + PostgreSQL + SQLAlchemy + Alembic. Frontend: Nuxt 3 + TypeScript +
+FastAPI + PostgreSQL + SQLAlchemy + Alembic. Training runs on Celery over Redis
+(`forge-worker` in `docker-compose.yml`), the same pattern Pulse uses. Models are
+scikit-learn; frames are pandas. Frontend: Nuxt 3 + TypeScript +
 Tailwind + TanStack Query, to keep component reuse with Pulse cheap.

@@ -1,0 +1,54 @@
+# The backend images and the three frontend images all build from the repo ROOT, because
+# they copy shared code (packages/core, packages/ui) that sits outside their own folder.
+# Without this file every one of those builds ships the whole working tree: .git, three
+# node_modules trees, .nuxt, .venv and the coverage files came to roughly 615 MB and over
+# twenty minutes just to hand the context to the daemon.
+#
+# Anything a Dockerfile actually copies must stay: packages/core, packages/ui,
+# services/*/app, services/*/alembic, services/*/requirements*.txt and the frontend
+# sources including their package.json and package-lock.json. Check the Dockerfile before
+# adding a line here.
+#
+# services/identity builds from services/identity instead, so it reads that folder's own
+# .dockerignore, not this one.
+
+.git
+.gitignore
+.github
+
+# Dependency and build output. Every image installs its own inside the build.
+**/node_modules
+**/.nuxt
+**/.output
+**/.nitro
+**/.venv
+**/venv
+**/*.egg-info
+
+# Python and tooling caches.
+**/__pycache__
+**/*.pyc
+**/*.pyo
+**/.pytest_cache
+**/.mypy_cache
+**/.ruff_cache
+**/.coverage*
+**/htmlcov
+**/.DS_Store
+
+# Real secrets. Runtime config arrives through env_file / the platform's env vars, never
+# baked into a layer. The examples are text and stay.
+**/.env
+**/.env.*
+!**/.env.example
+
+# Docs, notes and local scratch. No image reads them.
+docs
+graphify-out
+scripts
+tests
+.claude
+*.pdf
+# Root-level .md only: docker matches a slash-free pattern against the top level, so
+# packages/core/README.md and the services' READMEs are untouched.
+*.md

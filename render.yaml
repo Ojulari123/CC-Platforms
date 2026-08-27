@@ -279,6 +279,8 @@ services:
     plan: starter
     dockerContext: .
     dockerfilePath: services/pulse/Dockerfile
+    # No -Q here either: celery_app.py sets task_default_queue to "pulse", and a worker
+    # with no queue flag consumes exactly that. Forge, when it deploys, gets its own.
     dockerCommand: celery -A app.celery_app.celery worker --beat --loglevel=info
     autoDeployTrigger: commit
     # A GitHub sync or a repo index can run for minutes. The 30s default would SIGKILL it

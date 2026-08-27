@@ -123,6 +123,8 @@ services:
     volumes:
       - ./services/pulse:/app
       - ./packages/core:/packages/core
+    # No -Q: the worker consumes task_default_queue, which celery_app.py pins to "pulse".
+    # That is what keeps it off Forge's messages while both share one Redis.
     command: celery -A app.celery_app.celery worker --loglevel=info
 
   pulse-beat:
@@ -141,12 +143,13 @@ services:
     volumes:
       - ./services/pulse:/app
       - ./packages/core:/packages/core
+    # Beat publishes with the same app config, so the daily sync is queued on "pulse" too.
     command: celery -A app.celery_app.celery beat --loglevel=info
 
   forge:
     # Build context is the repo ROOT (not services/forge) so the image can pull
-    # in the shared packages/core. See services/forge/Dockerfile. No worker/beat —
-    # Forge has no background jobs yet; it uses Redis only for rate-limit counters.
+    # in the shared packages/core. See services/forge/Dockerfile. Training runs on
+    # forge-worker below, not here; Redis is both the rate-limit store and the queue.
     build:
       context: .
       dockerfile: services/forge/Dockerfile
@@ -178,6 +181,32 @@ services:
     # before `--reload` (YAML `>` does not fold a more-indented line), so sh saw
     # the flags as a second command and uvicorn ran with no reloader at all.
     command: ["sh", "-c", "alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload --reload-dir app"]
+
+  forge-worker:
+    # Runs the training jobs. Same image and env as forge, different command.
+    # Migrations are applied by the `forge` service, not here. No beat: every run
+    # is started by a person clicking Run, so there is nothing on a schedule.
+    build:
+      context: .
+      dockerfile: services/forge/Dockerfile
+    env_file:
+      - ./services/forge/.env
+    environment:
+      DATABASE_URL: postgresql+psycopg://${CC_POSTGRES_USER:-crescent}:${CC_POSTGRES_PASSWORD:-crescent}@postgres:5432/forge
+      IDENTITY_JWKS_URL: http://identity:8000/.well-known/jwks.json
+      REDIS_URL: redis://redis:6379/0
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    volumes:
+      - ./services/forge:/app
+      - ./packages/core:/packages/core
+    # --concurrency=1: a fit can take every core it is given, and this worker shares
+    # a small box with two other services. No -Q, same as pulse-worker: the queue name
+    # comes from task_default_queue in celery_app.py, so this worker only sees Forge work.
+    command: celery -A app.celery_app.celery worker --loglevel=info --concurrency=1
 
   # ---------------------------------------------------------------------------
   # The three Nuxt front ends.

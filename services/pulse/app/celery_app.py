@@ -21,8 +21,14 @@ celery = Celery(
 _FAIL_FAST_RETRY = {"max_retries": 1, "interval_start": 0, "interval_step": 0.2, "interval_max": 0.5}
 _CONNECT_TIMEOUT = 2
 
+# Pulse and Forge share one Redis. They used to share celery's default queue name too,
+# so whichever worker popped a message first tried to run it and Pulse answered a Forge
+# task with NotRegistered. The queue name lives here rather than on the worker command
+# line on purpose: a worker started with no -Q consumes task_default_queue, so a task
+# added later lands on the right queue without anyone remembering a flag.
 celery.conf.update(
     task_track_started=True,
+    task_default_queue="pulse",
     timezone="UTC",
     broker_connection_timeout=_CONNECT_TIMEOUT,
     broker_transport_options={"socket_connect_timeout": _CONNECT_TIMEOUT},

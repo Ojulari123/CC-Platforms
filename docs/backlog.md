@@ -8,6 +8,18 @@ something's still open. **Updated per session, not per commit.**
 
 ## Next up
 
+- **Forge: image classification is not built.** Week 6 named four modalities; Forge
+  shipped two of them, tabular (classification, regression, forecast) and the LLM
+  playground. Image classification was left out on cost: it needs torch or
+  tensorflow, which is roughly 2 GB added to a service image whose entire ML stack
+  is currently scikit-learn, pandas and numpy at about 90 MB, and the Week 6 bar was
+  tabular plus one other modality. The step vocabulary
+  (`services/forge/app/services/steps.py`) is a flat kind + JSON params table, so
+  adding `load_images`, `resize`, `augment` and a `train_model` algorithm for a small
+  CNN is additive: no migration, and the code generator picks up a new block per new
+  kind. Decide first whether the images live in Postgres like the CSVs do, which will
+  not scale, or in object storage, which Forge has none of yet.
+
 - ~~**Department admins are never emailed when a repo has no lead or deputy.**~~
   **DELIVERED.** `email._approver_emails` is now `reports._can_approve` read back out:
   lead and deputy, else every active admin of the report's department, else the platform
