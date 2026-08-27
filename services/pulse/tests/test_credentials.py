@@ -799,6 +799,7 @@ class TestBudgetAccess:
             "daily_token_cap": 900_000, "source": "department",
             "inherited_cap": 900_000, "inherited_source": "department",
             "tokens_used_today": 1_234, "may_raise": False, "show_figures": True,
+            "dept_admins_see_platform_figures": False,
         }
 
     def test_a_user_under_a_department_key_sees_the_figures_without_being_able_to_raise_the_cap(self, client, act_as, db, platform_key, monkeypatch):

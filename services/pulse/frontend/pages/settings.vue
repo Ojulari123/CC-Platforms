@@ -10,6 +10,7 @@ import type {
   EffectiveCredentialResponse,
   Page,
   PersonaResponse,
+  PlatformSettingsResponse,
 } from "~/types/api";
 
 definePageMeta({ middleware: "auth" });
@@ -258,6 +259,36 @@ const myBudget = computed<BudgetResponse | null>(
 );
 
 const mayRaise = computed(() => budget.value?.may_raise === true);
+
+/* A platform-wide decision, so only a platform admin gets the control. The current value
+   rides along on the effective-budget response rather than costing a second request: the
+   same call already tells this page whether figures are shown, and this switch is why. */
+const isPlatformAdmin = computed(() => me.value?.is_platform_admin === true);
+const deptFiguresOn = computed(() => budget.value?.dept_admins_see_platform_figures === true);
+const platformError = ref<string | null>(null);
+
+const toggleDeptFigures = useMutation({
+  mutationFn: (next: boolean) =>
+    api.request<PlatformSettingsResponse>("/settings/credentials/platform", {
+      method: "PUT",
+      body: { dept_admins_see_platform_figures: next },
+    }),
+  onMutate: () => {
+    platformError.value = null;
+  },
+  onSuccess: (saved) => {
+    queryClient.invalidateQueries({ queryKey: ["budgets", "effective"] });
+    showToast(
+      saved.dept_admins_see_platform_figures
+        ? "Department admins can now see their department's token figures."
+        : "Department admins can no longer see token figures on the platform key.",
+      "muted",
+    );
+  },
+  onError: (err) => {
+    platformError.value = apiMessage(err, "Could not change that setting.");
+  },
+});
 const showsFigures = computed(() => budget.value?.show_figures === true);
 
 // `v-model` on <input type="number"> hands back a number, and an empty box hands back
@@ -855,6 +886,50 @@ function scopeLabel(credential: CredentialResponse): string {
             class="mt-3 max-w-[74ch] rounded-md bg-bad-surface px-4 py-3 text-[13px] leading-relaxed text-ink"
           >{{ capError }}</p>
         </template>
+      </section>
+
+      <!-- Platform-wide, so it sits under the allowance it changes the reading of, and
+           only a platform admin sees it. Everyone else has no decision to make here. -->
+      <section
+        v-if="isPlatformAdmin"
+        data-test="platform-figures"
+        class="mt-4 rounded-md bg-surface/40 px-5 py-5 ring-1 ring-inset ring-line-subtle"
+        aria-labelledby="platform-figures-heading"
+      >
+        <p :class="[MONO_LABEL, 'text-ink-faint']">Platform setting</p>
+        <h2 id="platform-figures-heading" class="mt-2.5 max-w-[40ch] text-balance text-[22px] font-semibold leading-[1.2] tracking-[-0.025em] text-ink">
+          Who sees spend on the platform key
+        </h2>
+        <p class="mt-1.5 max-w-[74ch] text-[13px] leading-relaxed text-ink-muted">
+          Token figures normally go to whoever pays, so a department drawing on the platform's
+          key sees none. Turn this on to let each department admin read what their own
+          department spent. It changes nothing for anyone who is not a department admin, and
+          no department admin sees another department's figures.
+        </p>
+        <label class="mt-4 flex max-w-[74ch] items-start gap-2.5">
+          <input
+            type="checkbox"
+            data-test="platform-figures-toggle"
+            :checked="deptFiguresOn"
+            :disabled="toggleDeptFigures.isPending.value"
+            :class="[FOCUS, 'mt-0.5 h-4 w-4 shrink-0 rounded ring-1 ring-inset ring-line']"
+            @change="toggleDeptFigures.mutate(!deptFiguresOn)"
+          >
+          <span class="text-[13px] leading-relaxed text-ink" data-test="platform-figures-label">
+            <template v-if="deptFiguresOn">
+              Department admins can see their department's token figures on the platform key.
+            </template>
+            <template v-else>
+              Department admins cannot see token figures while the platform key is paying.
+            </template>
+          </span>
+        </label>
+        <p
+          v-if="platformError"
+          role="alert"
+          data-test="platform-figures-error"
+          class="mt-3 max-w-[74ch] rounded-md bg-bad-surface px-4 py-3 text-[13px] leading-relaxed text-ink"
+        >{{ platformError }}</p>
       </section>
 
       <p

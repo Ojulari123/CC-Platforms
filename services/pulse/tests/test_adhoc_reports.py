@@ -1,4 +1,4 @@
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 import httpx
 import pytest
 from app import crypto
@@ -25,14 +25,30 @@ LEAD = dict(user_id=LEAD_ID, memberships=[{"dept_id": DEPT, "team_id": None, "ro
 OUTSIDER = dict(user_id=40, memberships=[{"dept_id": 2, "team_id": None, "role": "engineer"}])
 ADMIN = dict(user_id=99, is_platform_admin=True)
 
-START = "2026-07-01"
-END = "2026-07-14"
+# Every date here hangs off the clock, the way test_repositories.py builds RECENT and
+# STALE, so no fixture ages out of the repo-access window as the calendar moves. DAY_ZERO
+# sits far enough back that the whole two-week range is in the past and near enough that
+# it stays inside the window. `day` numbers below are offsets from it, not July dates.
+DAY_ZERO = (datetime.now(timezone.utc) - timedelta(days=40)).replace(hour=0, minute=0, second=0, microsecond=0)
 
 SECTION = AIResult(text="Opened PR #7 and pushed two commits to the auth module.", model="gpt-4o-mini", token_count=120)
 
 
 def _dt(day, hour=12):
-    return datetime(2026, 7, day, hour, tzinfo=timezone.utc)
+    return DAY_ZERO + timedelta(days=day, hours=hour)
+
+
+def _day(day):
+    return _dt(day).date().isoformat()
+
+
+def _stamp(day, hour=12):
+    """How the request payload renders a timestamp for the model."""
+    return _dt(day, hour).strftime("%Y-%m-%d %H:%M:%S")
+
+
+START = _day(1)
+END = _day(14)
 
 
 @pytest.fixture
@@ -202,7 +218,7 @@ class TestModeASynced:
     def test_only_activity_inside_the_range_is_sent(self, client, act_as, db, repo, mock_ai, platform_key):
         _seed_activity(db, repo.id, user_id=SUBJECT_ID, day=3)
         db.add(Commit(repo_id=repo.id, sha="outside", author_user_id=SUBJECT_ID,
-                      message="much later", committed_at=datetime(2026, 9, 1, tzinfo=timezone.utc)))
+                      message="much later", committed_at=_dt(30)))
         db.commit()
         act_as(**AUTHOR)
         assert client.post("/reports/adhoc", json=_body(repo_id=repo.id)).status_code == 201
@@ -422,7 +438,7 @@ class TestValidation:
 
     def test_range_end_before_range_start_is_422(self, client, act_as, db, repo, mock_ai, platform_key):
         act_as(**AUTHOR)
-        r = client.post("/reports/adhoc", json=_body(repo_id=repo.id, range_start="2026-07-14", range_end="2026-07-01"))
+        r = client.post("/reports/adhoc", json=_body(repo_id=repo.id, range_start=END, range_end=START))
         assert r.status_code == 422, r.text
 
     def test_a_single_day_range_is_allowed(self, client, act_as, db, repo, mock_ai, platform_key):
@@ -432,12 +448,12 @@ class TestValidation:
 
     def test_a_range_longer_than_180_days_is_422(self, client, act_as, db, repo, mock_ai, platform_key):
         act_as(**AUTHOR)
-        r = client.post("/reports/adhoc", json=_body(repo_id=repo.id, range_start="2026-01-01", range_end="2026-12-31"))
+        r = client.post("/reports/adhoc", json=_body(repo_id=repo.id, range_start=_day(-180), range_end=END))
         assert r.status_code == 422, r.text
 
     def test_exactly_180_days_is_allowed(self, client, act_as, db, repo, mock_ai, platform_key):
         act_as(**AUTHOR)
-        r = client.post("/reports/adhoc", json=_body(repo_id=repo.id, range_start="2026-01-01", range_end="2026-06-30"))
+        r = client.post("/reports/adhoc", json=_body(repo_id=repo.id, range_start=_day(-166), range_end=END))
         assert r.status_code == 201, r.text
 
     def test_it_needs_a_token(self, client, db, repo):
@@ -866,8 +882,8 @@ class TestClosureDatesReachTheModel:
         assert client.post("/reports/adhoc", json=_body(repo_id=repo.id)).status_code == 201
 
         payload = mock_ai["users"][0]
-        assert '"closed_at": "2026-07-09 12:00:00"' in payload
-        assert '"created_at": "2026-07-03 12:00:00"' in payload
+        assert f'"closed_at": "{_stamp(9)}"' in payload
+        assert f'"created_at": "{_stamp(3)}"' in payload
 
     def test_a_synced_pull_request_carries_both_merged_at_and_closed_at(self, client, act_as, db, repo, mock_ai, platform_key):
         db.add(PullRequest(repo_id=repo.id, github_pr_id=6096, number=6096, title="fix partition",
@@ -879,8 +895,8 @@ class TestClosureDatesReachTheModel:
         assert client.post("/reports/adhoc", json=_body(repo_id=repo.id)).status_code == 201
 
         payload = mock_ai["users"][0]
-        assert '"merged_at": "2026-07-09 12:00:00"' in payload
-        assert '"closed_at": "2026-07-09 12:00:00"' in payload
+        assert f'"merged_at": "{_stamp(9)}"' in payload
+        assert f'"closed_at": "{_stamp(9)}"' in payload
 
     def test_a_synced_pull_request_closed_without_merging_still_carries_a_closure_date(self, client, act_as, db, repo, mock_ai, platform_key):
         db.add(PullRequest(repo_id=repo.id, github_pr_id=6097, number=6097, title="abandoned",
@@ -893,7 +909,7 @@ class TestClosureDatesReachTheModel:
 
         payload = mock_ai["users"][0]
         assert '"merged_at": null' in payload
-        assert '"closed_at": "2026-07-09 12:00:00"' in payload
+        assert f'"closed_at": "{_stamp(9)}"' in payload
 
     def test_an_open_synced_item_says_null_rather_than_dropping_the_key(self, client, act_as, db, repo, mock_ai, platform_key):
         _seed_activity(db, repo.id, user_id=SUBJECT_ID, day=3)
@@ -972,11 +988,11 @@ class TestCommitDatesAreWhenTheWorkLanded:
         assert _dt(2).isoformat() not in payload
 
     def test_the_range_filter_selects_on_the_same_date_the_report_describes(self, client, act_as, db, mock_ai, platform_key, monkeypatch):
-        """Written in June, landed inside the range. A filter reading the author date
-        would drop a commit the report is meant to cover."""
+        """Written well before the range, landed inside it. A filter reading the author
+        date would drop a commit the report is meant to cover."""
         act_as(**AUTHOR)
 
-        r = self._report(client, monkeypatch, [self._commit(datetime(2026, 6, 11, 12, tzinfo=timezone.utc), _dt(4))])
+        r = self._report(client, monkeypatch, [self._commit(_dt(-20), _dt(4))])
 
         assert r.status_code == 201, r.text
         assert "rebased work" in mock_ai["users"][0]
@@ -987,7 +1003,7 @@ class TestCommitDatesAreWhenTheWorkLanded:
         act_as(**AUTHOR)
 
         r = self._report(client, monkeypatch, [
-            self._commit(_dt(4), datetime(2026, 8, 11, 12, tzinfo=timezone.utc), message="landed later"),
+            self._commit(_dt(4), _dt(30), message="landed later"),
             self._commit(_dt(5), _dt(6), message="landed in range"),
         ])
 

@@ -166,3 +166,88 @@ class TestScoping:
         _seed_key(db, scope=SCOPE_DEPARTMENT, dept=DEPT, key="sk-dept-2222")
         act_as(**DEPT_ADMIN)
         assert client.get("/admin/llm-usage").json()["total_tokens"] == 0
+
+class TestDeptAdminsSeePlatformFiguresSwitch:
+    """The platform switch that turns the 403 above into a decision. Off by default, so
+    the tests in TestLlmUsage still describe what happens out of the box."""
+
+    def _set(self, client, value):
+        return client.put("/settings/credentials/platform", json={"dept_admins_see_platform_figures": value})
+
+    def test_off_by_default_a_dept_admin_on_the_platform_key_is_refused(self, client, act_as, db):
+        db.add(LlmUsage(report_id=1, kind=LLM_KIND_REPORT, user_id=10, dept_id=DEPT, tokens=100))
+        db.commit()
+        act_as(**ADMIN)
+        assert client.get("/settings/credentials/platform").json() == {"dept_admins_see_platform_figures": False}
+        act_as(**DEPT_ADMIN)
+        r = client.get("/admin/llm-usage")
+        assert r.status_code == 403, r.text
+        assert "whoever is paying" in r.json()["detail"]
+
+    def test_on_the_same_dept_admin_sees_their_departments_figures(self, client, act_as, db):
+        db.add(LlmUsage(report_id=1, kind=LLM_KIND_REPORT, user_id=10, dept_id=DEPT, tokens=100))
+        db.add(LlmUsage(report_id=2, kind=LLM_KIND_REPORT, user_id=11, dept_id=2, tokens=500))
+        db.commit()
+        act_as(**ADMIN)
+        assert self._set(client, True).status_code == 200
+
+        act_as(**DEPT_ADMIN)
+        r = client.get("/admin/llm-usage")
+        assert r.status_code == 200, r.text
+        body = r.json()
+        assert body["scope"] == "department"
+        # Their own department only. The switch widens who may look, not at what.
+        assert body["total_tokens"] == 100
+
+    def test_an_engineer_gains_nothing_from_the_switch(self, client, act_as, db):
+        """It is a department admin's visibility, not everyone's."""
+        db.add(LlmUsage(report_id=1, kind=LLM_KIND_REPORT, user_id=10, dept_id=DEPT, tokens=100))
+        db.commit()
+        act_as(**ADMIN)
+        self._set(client, True)
+        act_as(**ENGINEER)
+        assert client.get("/admin/llm-usage").status_code == 403
+
+    def test_a_dept_admin_cannot_turn_it_on_for_themselves(self, client, act_as, db):
+        act_as(**DEPT_ADMIN)
+        r = self._set(client, True)
+        assert r.status_code == 403, r.text
+        assert "platform admin" in r.json()["detail"]
+        act_as(**ADMIN)
+        assert client.get("/settings/credentials/platform").json()["dept_admins_see_platform_figures"] is False
+
+    def test_an_engineer_cannot_change_it_either(self, client, act_as, db):
+        act_as(**ENGINEER)
+        assert self._set(client, True).status_code == 403
+
+    def test_it_needs_a_token(self, client, db):
+        assert client.put("/settings/credentials/platform", json={"dept_admins_see_platform_figures": True}).status_code == 401
+        assert client.get("/settings/credentials/platform").status_code == 401
+
+    def test_turning_it_back_off_restores_the_refusal(self, client, act_as, db):
+        db.add(LlmUsage(report_id=1, kind=LLM_KIND_REPORT, user_id=10, dept_id=DEPT, tokens=100))
+        db.commit()
+        act_as(**ADMIN)
+        self._set(client, True)
+        assert self._set(client, False).json() == {"dept_admins_see_platform_figures": False}
+        act_as(**DEPT_ADMIN)
+        assert client.get("/admin/llm-usage").status_code == 403
+
+    def test_a_field_left_out_leaves_the_switch_alone(self, client, act_as, db):
+        act_as(**ADMIN)
+        self._set(client, True)
+        assert client.put("/settings/credentials/platform", json={}).json() == {"dept_admins_see_platform_figures": True}
+
+    def test_the_effective_budget_endpoint_carries_the_switch(self, client, act_as, db):
+        act_as(**ADMIN)
+        self._set(client, True)
+        act_as(**DEPT_ADMIN)
+        body = client.get("/settings/credentials/budgets/effective").json()
+        assert body["dept_admins_see_platform_figures"] is True
+        assert body["show_figures"] is True
+
+    def test_with_it_off_the_effective_budget_endpoint_says_so(self, client, act_as, db):
+        act_as(**DEPT_ADMIN)
+        body = client.get("/settings/credentials/budgets/effective").json()
+        assert body["dept_admins_see_platform_figures"] is False
+        assert body["show_figures"] is False

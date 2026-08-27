@@ -577,3 +577,26 @@ class ApiCredential(Base):
     __table_args__ = (
         UniqueConstraint("scope", "owner_user_id", "dept_id", "provider", name="uq_api_credential_scope_provider"),
     )
+
+class PlatformSetting(Base):
+    """One row per platform-wide switch, keyed by name.
+
+    Not a column on token_budgets, even though that table already carries a
+    platform-scope row: what it holds is a daily cap, and the only payload it has is an
+    integer. A visibility switch is not a cap, and hanging it off that row would mean a
+    nullable column that means nothing on the user and department rows beside it.
+    Neither is it an environment variable, because a platform admin has to be able to
+    change it from the product rather than wait for a redeploy.
+
+    The value is stored as text and read through typed accessors in
+    services/platform_settings.py, so the next switch needs a constant rather than a
+    migration.
+    """
+    __tablename__ = "platform_settings"
+
+    id = Column(Integer, primary_key=True)
+    key = Column(String(100), nullable=False, unique=True, index=True)
+    value = Column(String(255), nullable=False)
+    updated_by_user_id = Column(Integer, nullable=False)
+    created_at = Column(TIMESTAMP(timezone=True), server_default=func.now(), nullable=False)
+    updated_at = Column(TIMESTAMP(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)

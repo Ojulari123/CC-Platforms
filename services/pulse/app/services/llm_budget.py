@@ -130,15 +130,28 @@ def _may_bypass(credential: "ResolvedCredential | None") -> bool:
         return False
     return bool(credential.bypass_token_cap)
 
-def may_see_figures(credential: "ResolvedCredential | None", *, is_platform_admin: bool = False) -> bool:
+def may_see_figures(credential: "ResolvedCredential | None", *, is_platform_admin: bool = False, is_dept_admin: bool = False, dept_admins_see_platform_figures: bool = False) -> bool:
     """Whether this person is funding the calls, so token figures are theirs to see.
 
     A key of their own or their department's is money they can be shown an invoice for;
     the platform's key is not theirs, and a platform admin is told because the platform's
     spend IS theirs. Separate from whether they may raise a cap: a user under a
     department key sees the figures without being able to spend more of that money.
+
+    The last two arguments are the one exception, and it is a decision rather than a
+    rule: a platform admin can choose to let department admins read what their department
+    spent on the platform's key. Both have to be true — being a department admin is not
+    enough on its own, and the switch does nothing for anyone who is not one. Default off,
+    so a caller that knows nothing about either gets the behaviour above unchanged.
+
+    This is the only place the question is answered. Callers pass facts in; they do not
+    write a second version of the rule beside it.
     """
-    return is_platform_admin or (credential is not None and credential.source != SOURCE_PLATFORM)
+    if is_platform_admin:
+        return True
+    if credential is not None and credential.source != SOURCE_PLATFORM:
+        return True
+    return is_dept_admin and dept_admins_see_platform_figures
 
 def _estimate_one(text: str) -> int:
     word_chars = punctuation = whitespace_runs = 0

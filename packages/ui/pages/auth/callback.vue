@@ -132,7 +132,14 @@ onMounted(async () => {
 
 <template>
   <div class="min-h-screen bg-app font-sans text-ink">
-    <main id="main" :class="['flex min-h-screen flex-col justify-center py-20', CONTENT]">
+    <!-- The other three shared screens carry this. Without it the failure state had no
+         skip link, no theme control and no wordmark, which is a strange place to strand
+         someone whose sign-in just failed. No `sign-in-to`: the panel below already makes
+         that the next step, and two identical "Sign in" links on one screen is a choice
+         that isn't one. -->
+    <TopBar :signed-in="false" home-to="/" />
+    <!-- The bar is h-14, so the panel keeps the rest of the viewport to centre in. -->
+    <main id="main" :class="['flex min-h-[calc(100vh-3.5rem)] flex-col justify-center py-20', CONTENT]">
       <p :class="[MONO_LABEL, 'text-ink-faint']">{{ status }}</p>
 
       <template v-if="failure">

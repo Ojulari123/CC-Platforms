@@ -5,7 +5,7 @@ from sqlalchemy.orm import Session
 from crescent_core import TokenClaims
 from app.models import LlmUsage
 from app.schemas.admin import LlmUsageByKind, LlmUsageSummary
-from app.services import credentials, llm_budget
+from app.services import credentials, llm_budget, platform_settings
 
 SCOPE_SELF = "self"
 SCOPE_DEPARTMENT = "department"
@@ -26,11 +26,21 @@ def _scope(db: Session, user: TokenClaims) -> tuple[str, list]:
 
     A department admin does NOT see a member's personal-key spend: that is the member's
     money, and it is on nobody's departmental invoice.
+
+    A department admin on the platform's key is refused unless a platform admin has
+    turned that on; the decision belongs to may_see_figures, which is why the department
+    admin list is worked out before the gate rather than after it.
     """
     if user.is_platform_admin:
         return SCOPE_PLATFORM, []
     credential = credentials.resolve_credential(db, user)
-    if not llm_budget.may_see_figures(credential, is_platform_admin=False):
+    admin_dept_ids = [m.dept_id for m in user.memberships if m.role == "admin"]
+    if not llm_budget.may_see_figures(
+        credential,
+        is_platform_admin=False,
+        is_dept_admin=bool(admin_dept_ids),
+        dept_admins_see_platform_figures=platform_settings.get_bool(db, platform_settings.DEPT_ADMINS_SEE_PLATFORM_FIGURES),
+    ):
         raise HTTPException(
             status_code=403,
             detail=(
@@ -38,7 +48,6 @@ def _scope(db: Session, user: TokenClaims) -> tuple[str, list]:
                 "the platform's key, so there is no bill of yours to show."
             ),
         )
-    admin_dept_ids = [m.dept_id for m in user.memberships if m.role == "admin"]
     if admin_dept_ids:
         return SCOPE_DEPARTMENT, [or_(LlmUsage.dept_id.in_(admin_dept_ids), LlmUsage.user_id == user.user_id)]
     return SCOPE_SELF, [LlmUsage.user_id == user.user_id]

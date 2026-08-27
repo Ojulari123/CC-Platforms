@@ -7,7 +7,7 @@ import type { UserMeResponse } from "~/types/api";
 withDefaults(defineProps<{ readout?: string }>(), {});
 
 const auth = useAuth();
-const router = useRouter();
+const signOut = useSignOut();
 const { toast, clear } = useToast();
 
 // The directory lives at /users in this app, not the /people PRODUCT_NAV assumes
@@ -35,9 +35,10 @@ onMounted(async () => {
   }
 });
 
+// useSignOut revokes the refresh family on the server first. auth.logout() on its own only
+// clears this browser and leaves the family usable.
 function onSignOut() {
-  auth.logout();
-  router.push("/login");
+  void signOut();
 }
 </script>
 
@@ -47,7 +48,9 @@ function onSignOut() {
     :nav-items="NAV"
     :user-name="userName"
     :readout="readout"
+    home-to="/products"
     account-to="/account"
+    all-products-to="/products"
     @sign-out="onSignOut"
   >
     <slot :me="me" />

@@ -95,3 +95,16 @@ class EffectiveBudgetResponse(BaseModel):
     # Whether the figures above mean anything to this person, which is a different
     # question from whether the cap is theirs to raise. Same rule the 429 messages use.
     show_figures: bool
+    # The platform switch that feeds into show_figures for a department admin. Sent to
+    # everyone because the settings page renders the control from it, and it is a fact
+    # about the platform rather than about the person reading it.
+    dept_admins_see_platform_figures: bool
+
+class PlatformSettingsResponse(BaseModel):
+    """Every platform-wide switch in one object, so the settings page makes one call."""
+    dept_admins_see_platform_figures: bool
+
+class PlatformSettingsUpdate(BaseModel):
+    """Fields left out are left alone, so a page that only knows about one switch cannot
+    reset another it has never heard of."""
+    dept_admins_see_platform_figures: bool | None = None

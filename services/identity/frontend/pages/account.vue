@@ -717,6 +717,16 @@ useHead({ title: "Account" });
 
           <div class="mt-5 flex flex-wrap items-center gap-3">
             <Btn variant="destructive" @click="confirmAll = true">Sign out everywhere</Btn>
+            <!-- /sessions is everyone's own screen, but the product picker only offers the
+                 identity console to admins, so without this link the only way to it was to
+                 type the address. -->
+            <NuxtLink
+              to="/sessions"
+              :class="[FOCUS, 'group/s inline-flex items-center gap-1.5 rounded text-[13px] font-medium text-ink transition-colors hover:text-ink-muted']"
+            >
+              End one session
+              <Icon name="arrow" class="h-3.5 w-3.5 transition-transform group-hover/s:translate-x-0.5" />
+            </NuxtLink>
             <span v-if="!sessions.isError.value" :class="[MONO_LABEL, 'text-ink-muted']">{{ live.length }} live · {{ rows.length }} total</span>
           </div>
         </div>

@@ -151,6 +151,15 @@ export interface EffectiveBudgetResponse {
      API's own refusal messages follow. A user under a department key gets this without
      `may_raise`: the money is being spent on them, but it is not theirs to spend more of. */
   show_figures: boolean;
+  /* The platform switch behind `show_figures` for a department admin on the platform key.
+     Sent to everyone so the settings page can render the control from one request. */
+  dept_admins_see_platform_figures: boolean;
+}
+
+export interface PlatformSettingsResponse {
+  /* Whether a department admin may read their department's token figures while the
+     platform's key is the one paying. Off unless a platform admin turns it on. */
+  dept_admins_see_platform_figures: boolean;
 }
 
 export interface ApprovalResponse {

@@ -423,8 +423,9 @@ def effective_budget(db: Session, user: TokenClaims) -> dict:
     `may_raise` and `show_figures` answer different questions and diverge for a user
     under a department key: the department's money is not theirs to spend more of, but it
     is being spent on them, so the figures are theirs to see."""
-    from app.services import llm_budget
+    from app.services import llm_budget, platform_settings
 
+    dept_admins_see_platform_figures = platform_settings.get_bool(db, platform_settings.DEPT_ADMINS_SEE_PLATFORM_FIGURES)
     cap, source = resolve_cap(db, user.user_id, dept_ids=user.dept_ids)
     inherited, inherited_source = _inherited_cap(db, scope=SCOPE_USER, owner_user_id=user.user_id, dept_id=None, dept_ids=user.dept_ids)
     used = llm_budget.tokens_used_today(db, user.user_id)
@@ -435,5 +436,11 @@ def effective_budget(db: Session, user: TokenClaims) -> dict:
         "inherited_source": inherited_source,
         "tokens_used_today": used,
         "may_raise": user.is_platform_admin or _pays_for_own_spend(db, scope=SCOPE_USER, owner_user_id=user.user_id, dept_id=None),
-        "show_figures": llm_budget.may_see_figures(resolve_credential(db, user), is_platform_admin=user.is_platform_admin),
+        "show_figures": llm_budget.may_see_figures(
+            resolve_credential(db, user),
+            is_platform_admin=user.is_platform_admin,
+            is_dept_admin=any(m.role == "admin" for m in user.memberships),
+            dept_admins_see_platform_figures=dept_admins_see_platform_figures,
+        ),
+        "dept_admins_see_platform_figures": dept_admins_see_platform_figures,
     }

@@ -334,6 +334,7 @@ export function makeEffectiveBudget(over: Partial<EffectiveBudgetResponse> = {})
     tokens_used_today: 12500,
     may_raise: true,
     show_figures: true,
+    dept_admins_see_platform_figures: false,
     ...over,
   };
 }

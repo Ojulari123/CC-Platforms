@@ -25,6 +25,7 @@ const MEMBER = makeUser({
   id: 1042,
   memberships: [{ dept_id: 3, dept_name: "Engineering", team_id: null, team_name: null, role: "member" }],
 });
+const PLATFORM_ADMIN = makeUser({ id: 1042, is_platform_admin: true, memberships: [] });
 
 const PRESETS = [
   makePreset({ id: 1, name: "Concise", length: "brief" }),
@@ -44,6 +45,8 @@ interface State {
   budgetError?: unknown;
   personaError?: unknown;
   defaultError?: unknown;
+  /** Thrown by PUT /settings/credentials/platform instead of saving. */
+  platformError?: unknown;
 }
 
 function stub(over: Partial<State> = {}) {
@@ -120,6 +123,19 @@ function stub(over: Partial<State> = {}) {
         source: state.effectiveBudget.inherited_source,
       };
       return undefined;
+    }
+
+    // Before the /{credential_id} routes, same as the API declares it.
+    if (path === "/settings/credentials/platform" && method === "PUT") {
+      if (state.platformError) throw state.platformError;
+      const sent = body as { dept_admins_see_platform_figures?: boolean };
+      if (sent.dept_admins_see_platform_figures !== undefined) {
+        state.effectiveBudget = {
+          ...state.effectiveBudget,
+          dept_admins_see_platform_figures: sent.dept_admins_see_platform_figures,
+        };
+      }
+      return { dept_admins_see_platform_figures: state.effectiveBudget.dept_admins_see_platform_figures };
     }
 
     if (path === "/settings/credentials" && method === "GET") return { items: state.credentials };
@@ -638,6 +654,60 @@ describe("/settings · the daily AI allowance", () => {
       await flush();
 
       expect(wrapper.get('[data-test="cap-error"]').text()).toBe(detail);
+    });
+  });
+
+  describe("who sees spend on the platform key", () => {
+    it("is not offered to anyone but a platform admin", async () => {
+      const engineer = await keys({}, { me: MEMBER });
+      expect(engineer.wrapper.find('[data-test="platform-figures"]').exists()).toBe(false);
+
+      const deptAdmin = await keys({}, { me: ADMIN });
+      expect(deptAdmin.wrapper.find('[data-test="platform-figures"]').exists()).toBe(false);
+    });
+
+    it("shows a platform admin the switch and what it currently means", async () => {
+      const { wrapper } = await keys({}, { me: PLATFORM_ADMIN });
+      const toggle = wrapper.get('[data-test="platform-figures-toggle"]');
+      expect((toggle.element as HTMLInputElement).checked).toBe(false);
+      expect(wrapper.get('[data-test="platform-figures-label"]').text()).toContain("cannot see token figures");
+    });
+
+    it("turns it on and reads the new state back off the API", async () => {
+      const { wrapper, request } = await keys({}, { me: PLATFORM_ADMIN });
+
+      await wrapper.get('[data-test="platform-figures-toggle"]').trigger("change");
+      await flush();
+
+      const put = request.mock.calls.find(([path]) => path === "/settings/credentials/platform");
+      expect(put?.[1]).toMatchObject({ method: "PUT", body: { dept_admins_see_platform_figures: true } });
+      expect(wrapper.get('[data-test="platform-figures-label"]').text()).toContain("can see their department's token figures");
+      expect((wrapper.get('[data-test="platform-figures-toggle"]').element as HTMLInputElement).checked).toBe(true);
+    });
+
+    it("turns it back off again", async () => {
+      const { wrapper, request } = await keys(
+        { effectiveBudget: makeEffectiveBudget({ dept_admins_see_platform_figures: true }) },
+        { me: PLATFORM_ADMIN },
+      );
+      expect((wrapper.get('[data-test="platform-figures-toggle"]').element as HTMLInputElement).checked).toBe(true);
+
+      await wrapper.get('[data-test="platform-figures-toggle"]').trigger("change");
+      await flush();
+
+      const put = request.mock.calls.find(([path]) => path === "/settings/credentials/platform");
+      expect(put?.[1]).toMatchObject({ method: "PUT", body: { dept_admins_see_platform_figures: false } });
+    });
+
+    it("shows the API's refusal rather than pretending the change took", async () => {
+      const detail = "Only a platform admin can change a platform setting";
+      const { wrapper } = await keys({ platformError: apiError(403, detail) }, { me: PLATFORM_ADMIN });
+
+      await wrapper.get('[data-test="platform-figures-toggle"]').trigger("change");
+      await flush();
+
+      expect(wrapper.get('[data-test="platform-figures-error"]').text()).toBe(detail);
+      expect(wrapper.get('[data-test="platform-figures-label"]').text()).toContain("cannot see token figures");
     });
   });
 });
