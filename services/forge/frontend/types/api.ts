@@ -3,7 +3,6 @@
 export type {
   MembershipResponse,
   Page,
-  SignupPayload,
   TokenPair,
   UserMeResponse,
   UserResponse,
