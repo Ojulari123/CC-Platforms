@@ -106,7 +106,12 @@ export const PRODUCT_NAV: Record<ProductKey, NavItem[]> = {
     { label: "Sync", to: "/sync" },
     { label: "Settings", to: "/settings" },
   ],
-  forge: [{ label: "Overview", to: "/" }],
+  forge: [
+    { label: "Overview", to: "/" },
+    { label: "Datasets", to: "/datasets" },
+    { label: "Canvas", to: "/canvas" },
+    { label: "Learning", to: "/learning" },
+  ],
   identity: [
     // /users, not /people: the page ships at /users and other screens already link to
     // it. Renaming a live route to match a constant is how links rot.

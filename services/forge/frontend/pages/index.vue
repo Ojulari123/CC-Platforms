@@ -119,9 +119,9 @@ const counts = computed(() => {
         <span>delete your own</span>
       </p>
       <p class="mt-5 max-w-[54ch] text-[13.5px] leading-relaxed text-ink-muted">
-        Bring a CSV and you see it immediately: columns, row count, real rows. The guided paths
-        and the workflow canvas are described further down but do not run yet — they land in
-        week 6, and this page says so everywhere they appear.
+        Bring a CSV and you see it immediately: columns, row count, real rows. From there the
+        canvas turns it into a workflow you can run, and shows you the Python it generates. The
+        guided paths are still written down rather than built, and this page says so where they appear.
       </p>
     </section>
 

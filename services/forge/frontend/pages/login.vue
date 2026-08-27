@@ -45,8 +45,8 @@ const GUARANTEES: [string, string][] = [
 ];
 
 const FORGE_STATE: { tone: Tone; label: string }[] = [
-  { tone: "ok", label: "Upload, preview and delete are live" },
-  { tone: "muted", label: "Guided paths and canvas land in week 6" },
+  { tone: "ok", label: "Upload, canvas, runs and code export are live" },
+  { tone: "muted", label: "Guided learning paths are still written down" },
 ];
 
 onMounted(() => {

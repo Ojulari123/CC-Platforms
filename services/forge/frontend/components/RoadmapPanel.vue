@@ -21,16 +21,17 @@ const LEDGER: { label: string; live: boolean }[] = [
   { label: "Column + row preview", live: true },
   { label: "Dataset list and delete", live: true },
   { label: "Shared sample datasets", live: true },
+  { label: "Workflow canvas", live: true },
+  { label: "Train, score, forecast", live: true },
+  { label: "Generated Python and notebook", live: true },
   { label: "Guided learning paths", live: false },
-  { label: "Workflow canvas", live: false },
-  { label: "Train, score, forecast", live: false },
 ];
 
 const NOT_YET = [
-  "No model training, scoring, forecasting or inference of any kind.",
-  "No LLM calls inside Forge yet.",
-  "No saved workflows, runs or models — the only table is datasets.",
-  "No charts, feature importance, joins, filters or CSV export.",
+  "The four learning paths are still a written specification. None of them can be started.",
+  "No feature importance, joins, filters or CSV export.",
+  "A fitted model is scored and then thrown away. Nothing is saved for reuse.",
+  "No two-way editing: changing the generated Python does not change the canvas.",
 ];
 
 const WEEK6_TAG = `${MONO_LABEL} inline-flex shrink-0 items-center gap-1.5 rounded border border-dashed border-line px-2 py-[3px] text-ink-muted`;
@@ -52,7 +53,7 @@ const path = computed(() => LEARNING_PATHS.find((p) => p.slug === pathSlug.value
     >
       <Eyebrow>Not built yet</Eyebrow>
       <span class="text-[13.5px] font-medium text-ink">
-        What runs today, and what week 6 is meant to add
+        What runs today, and what is still only written down
       </span>
       <span :class="[MONO_LABEL, 'ml-auto inline-flex shrink-0 items-center gap-1.5 text-ink-muted']">
         {{ open ? "hide" : "show" }}
@@ -81,12 +82,12 @@ const path = computed(() => LEARNING_PATHS.find((p) => p.slug === pathSlug.value
               >
                 <StatusDot :tone="row.live ? 'ok' : 'warn'" quiet class="shrink-0" />
                 <span :class="['text-[12.5px]', row.live ? 'text-ink' : 'text-ink-muted']">{{ row.label }}</span>
-                <span :class="[MONO_LABEL, 'ml-auto text-ink-muted']">{{ row.live ? "live" : "week 6" }}</span>
+                <span :class="[MONO_LABEL, 'ml-auto text-ink-muted']">{{ row.live ? "live" : "planned" }}</span>
               </li>
             </ul>
             <p class="border-t border-line-subtle px-4 py-3 text-[12.5px] leading-relaxed text-ink-muted">
-              No ML libraries are installed yet, so nothing here trains a model. Anything marked
-              <span class="mono text-ink">week 6</span> is a plan, not a feature.
+              Anything marked <span class="mono text-ink">planned</span> is written down and not
+              built. Everything marked live has a screen you can use now.
             </p>
           </div>
         </div>
@@ -94,14 +95,14 @@ const path = computed(() => LEARNING_PATHS.find((p) => p.slug === pathSlug.value
         <div class="mt-12 border-t border-line-subtle pt-10">
           <div class="flex flex-wrap items-center gap-3">
             <Eyebrow>Next</Eyebrow>
-            <span :class="WEEK6_TAG">Week 6 · not built</span>
+            <span :class="WEEK6_TAG">Learning paths · not built</span>
           </div>
           <h3 class="mt-2.5 max-w-[48ch] text-[clamp(1.35rem,2.4vw,1.75rem)] font-semibold leading-[1.15] tracking-[-0.025em]">
-            The guided paths and the canvas, written down before they exist
+            The guided paths, written down before they exist
           </h3>
           <p class="mt-3 max-w-[64ch] text-[13px] leading-relaxed text-ink-muted">
-            Everything below is a specification you can read, not software you can run. No path can
-            be started, nothing on the canvas moves, and there is no Run button to press.
+            The canvas is built and runs. The four paths below are still a specification you can
+            read: none of them can be started, and each one has to be assembled by hand for now.
           </p>
         </div>
 
@@ -137,7 +138,7 @@ const path = computed(() => LEARNING_PATHS.find((p) => p.slug === pathSlug.value
             <div class="rounded-md border border-dashed border-line bg-app/40 p-5">
               <div class="flex flex-wrap items-center justify-between gap-3">
                 <h4 class="text-[15px] font-semibold tracking-[-0.015em]">{{ path.title }}</h4>
-                <span :class="WEEK6_TAG">Week 6 · not built</span>
+                <span :class="WEEK6_TAG">Not built</span>
               </div>
               <p class="mt-2.5 max-w-[56ch] text-[13px] leading-relaxed text-ink-muted">{{ path.summary }}</p>
 
@@ -168,12 +169,11 @@ const path = computed(() => LEARNING_PATHS.find((p) => p.slug === pathSlug.value
             <div>
               <h4 :class="[MONO_LABEL, 'text-ink-muted']">Canvas vocabulary</h4>
               <p class="mt-2 max-w-[52ch] text-[13px] leading-relaxed text-ink-muted">
-                Twelve modules in four groups. Today this is a static sketch — nothing is draggable,
-                nothing connects, nothing runs. It is here so you can see the shape of what is being
-                built.
+                The groups the steps fall into. The canvas itself is built: pick a task, assemble
+                the steps, run it and read the Python it generates.
               </p>
             </div>
-            <span :class="WEEK6_TAG">Week 6 · not built</span>
+            <span :class="[MONO_LABEL, 'shrink-0 text-ink-muted']">built · under Canvas</span>
           </div>
 
           <div class="mt-6 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
@@ -223,7 +223,7 @@ const path = computed(() => LEARNING_PATHS.find((p) => p.slug === pathSlug.value
         </div>
 
         <p :class="[MONO_LABEL, 'mt-8 border-t border-line-subtle pt-4 text-ink-muted']">
-          upload + preview live · paths and canvas week 6 · no ml libraries installed
+          upload · canvas · runs · code export live · learning paths still written down
         </p>
       </div>
     </div>

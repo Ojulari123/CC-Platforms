@@ -22,7 +22,7 @@ const WEEK6_TAG = `${MONO_LABEL} inline-flex shrink-0 items-center rounded borde
         reading it back is what works today.
       </p>
       <p :class="[MONO_LABEL, 'mt-5 border-y border-line-subtle py-3 text-ink-muted']">
-        specification only · week 6 · no run affordance anywhere on these pages
+        specification only · no run affordance anywhere on these pages
       </p>
     </section>
 
@@ -35,7 +35,7 @@ const WEEK6_TAG = `${MONO_LABEL} inline-flex shrink-0 items-center rounded borde
           >
             <div class="flex flex-wrap items-center justify-between gap-3">
               <h2 class="text-[18px] font-semibold leading-tight tracking-[-0.02em] text-ink">{{ path.title }}</h2>
-              <span :class="WEEK6_TAG">Week 6 · not built</span>
+              <span :class="WEEK6_TAG">Not built yet</span>
             </div>
             <p class="mt-2.5 max-w-[52ch] text-[13px] leading-relaxed text-ink-muted">{{ path.summary }}</p>
             <p :class="[MONO_LABEL, 'mt-4 text-ink-muted']">{{ path.steps.length }} steps · read only</p>

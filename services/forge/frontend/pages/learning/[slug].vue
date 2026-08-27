@@ -34,7 +34,7 @@ const WEEK6_TAG = `${MONO_LABEL} inline-flex shrink-0 items-center rounded borde
         <Eyebrow>Forge · learning path</Eyebrow>
         <div class="mt-3 flex flex-wrap items-center gap-3">
           <h1 class="text-[clamp(1.5rem,2.2vw,1.9rem)] font-semibold tracking-[-0.035em]">{{ path.title }}</h1>
-          <span :class="WEEK6_TAG">Week 6 · not built</span>
+          <span :class="WEEK6_TAG">Not built yet</span>
         </div>
         <p class="mt-3 max-w-[64ch] text-[13px] leading-relaxed text-ink-muted">{{ path.summary }}</p>
         <p :class="[MONO_LABEL, 'mt-5 border-y border-line-subtle py-3 text-ink-muted']">

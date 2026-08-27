@@ -66,7 +66,7 @@ describe("RoadmapPanel", () => {
 
     expect(text).toContain("CSV upload, 5 MB cap");
     expect(text).toContain("Workflow canvas");
-    expect(text).toContain("No ML libraries are installed yet");
-    expect(text).toContain("No model training, scoring, forecasting or inference of any kind.");
+    expect(text).toContain("Anything marked planned is written down and not built");
+    expect(text).toContain("The four learning paths are still a written specification.");
   });
 });
