@@ -8,17 +8,27 @@ something's still open. **Updated per session, not per commit.**
 
 ## Next up
 
-- **Forge: image classification is not built.** Week 6 named four modalities; Forge
-  shipped two of them, tabular (classification, regression, forecast) and the LLM
-  playground. Image classification was left out on cost: it needs torch or
-  tensorflow, which is roughly 2 GB added to a service image whose entire ML stack
-  is currently scikit-learn, pandas and numpy at about 90 MB, and the Week 6 bar was
-  tabular plus one other modality. The step vocabulary
-  (`services/forge/app/services/steps.py`) is a flat kind + JSON params table, so
-  adding `load_images`, `resize`, `augment` and a `train_model` algorithm for a small
-  CNN is additive: no migration, and the code generator picks up a new block per new
-  kind. Decide first whether the images live in Postgres like the CSVs do, which will
-  not scale, or in object storage, which Forge has none of yet.
+- ~~**Forge: image classification is not built.**~~ **DELIVERED.** Built without torch:
+  images are resized small, optionally turned grayscale, flattened to one row of pixel
+  values and handed to the same scikit-learn classifiers the CSV workflows already use.
+  Pillow (about 3 MB) is the only dependency added. New workflow kinds
+  `image_classification` and `llm_vision`, new steps `load_images`, `resize_images`,
+  `grayscale_images` and `flatten_images` (`services/forge/app/services/steps.py`), and
+  the code generator emits a runnable script for both. Datasets are a ZIP with one folder
+  per class, uploaded to `POST /datasets/images`; a loose image is accepted too and gets
+  wrapped into a one-entry archive so captioning does not need a ZIP.
+
+  Two open follow-ons this leaves behind:
+
+  - **Images live in Postgres, in `datasets.content_blob`.** The same call that was made
+    for the CSVs, and it has the same ceiling: the limits (25 MB per upload, 100 MB
+    unpacked, 2,000 images) are what keep it survivable rather than a design that scales.
+    Object storage is still the answer at real size, and Forge has none yet.
+  - **Flattened pixels are a weak classifier and the product says so.** On a synthetic
+    3-class shape set (180 images, 32x32 grayscale, logistic regression) it scores 0.556
+    accuracy. The caveat is on the step catalog, the dataset manifest, the run result and
+    in a comment inside the generated script. A convolutional path is the upgrade, and it
+    is still a ~2 GB dependency, so it stays deferred rather than hidden.
 
 - ~~**Department admins are never emailed when a repo has no lead or deputy.**~~
   **DELIVERED.** `email._approver_emails` is now `reports._can_approve` read back out:

@@ -11,11 +11,13 @@ from fastapi import HTTPException
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 from app.celery_app import BrokerUnavailableError, dispatch
-from app.models import KIND_LLM_PLAYGROUND, RUN_FAILED, RUN_QUEUED, RUN_RUNNING, RUN_SUCCEEDED, Dataset, Workflow, WorkflowRun
+from app.config import settings
+from app.models import DATASET_IMAGE, KIND_IMAGE_CLASSIFICATION, KIND_LLM_PLAYGROUND, KIND_LLM_VISION, LLM_KIND_VISION, LLM_KINDS, RUN_FAILED, RUN_QUEUED, RUN_RUNNING, RUN_SUCCEEDED, Dataset, Workflow, WorkflowRun
 from app.services import llm_budget
-from app.services.ai_provider import AIError, generate
-from app.services.execution import ExecutionError, run_tabular
-from app.services.steps import STEP_PROMPT
+from app.services import images
+from app.services.ai_provider import AIError, describe_image, generate
+from app.services.execution import ExecutionError, run_image_classification, run_tabular
+from app.services.steps import STEP_PROMPT, STEP_VISION_PROMPT
 from app.services.workflows import get_workflow
 
 logger = logging.getLogger(__name__)
@@ -28,19 +30,27 @@ def start_run(db: Session, workflow_id: int, user_id: int) -> WorkflowRun:
     workflow = get_workflow(db, workflow_id, user_id)
     if not workflow.steps:
         raise HTTPException(status_code=400, detail="This workflow has no steps yet, so there is nothing to run.")
-    if workflow.kind == KIND_LLM_PLAYGROUND:
+    if workflow.kind in LLM_KINDS:
         # Refused before the money is spent, not reported after. Same reason Pulse checks
         # up front: a cap that only notices afterwards is not a cap.
         params = json.loads(workflow.steps[0].params or "{}")
         about_to_spend = llm_budget.estimate_tokens(f"{params.get('system', '')}\n{params.get('prompt', '')}\n{params.get('context', '')}") + int(params.get("max_tokens", 500))
+        if workflow.kind == KIND_LLM_VISION:
+            # An image is billed by how many tiles it covers, and none of that shows up in
+            # the text, so it is added as a flat figure rather than left out of the cap.
+            about_to_spend += settings.CAPTION_IMAGE_TOKEN_ESTIMATE
         try:
             llm_budget.check_budget(db, user_id, about_to_spend=about_to_spend)
         except llm_budget.BudgetExceeded as exc:
             raise HTTPException(status_code=429, detail=str(exc))
-    elif workflow.dataset_id is None or db.get(Dataset, workflow.dataset_id) is None:
-        # The row, not just the id: a deleted dataset only nulls the column where foreign
-        # keys are enforced, and the learner should hear about it before a run is queued.
-        raise HTTPException(status_code=400, detail="The dataset this workflow used has been deleted. Attach another one before running it.")
+    # The playground is the only kind with nothing attached. An image question needs the
+    # dataset the image lives in, the same as a training run needs its data.
+    if workflow.kind != KIND_LLM_PLAYGROUND:
+        if workflow.dataset_id is None or db.get(Dataset, workflow.dataset_id) is None:
+            # The row, not just the id: a deleted dataset only nulls the column where
+            # foreign keys are enforced, and the learner should hear about it before a run
+            # is queued.
+            raise HTTPException(status_code=400, detail="The dataset this workflow used has been deleted. Attach another one before running it.")
 
     run = WorkflowRun(workflow_id=workflow.id, owner_user_id=user_id, status=RUN_QUEUED)
     db.add(run)
@@ -85,6 +95,33 @@ def _run_llm(db: Session, workflow: Workflow, run: WorkflowRun) -> tuple[dict, d
     llm_budget.record_usage(db, user_id=run.owner_user_id, run_id=run.id, tokens=tokens)
     return {"tokens": tokens}, {"model": result.model, "reply": result.text[:MAX_STORED_REPLY], "prompt": prompt, "grounded": bool(context)}
 
+def _run_vision(db: Session, workflow: Workflow, run: WorkflowRun) -> tuple[dict, dict]:
+    step = next(s for s in workflow.steps if s.kind == STEP_VISION_PROMPT)
+    params = json.loads(step.params or "{}")
+    dataset = db.get(Dataset, workflow.dataset_id) if workflow.dataset_id else None
+    if dataset is None or dataset.kind != DATASET_IMAGE or not dataset.content_blob:
+        raise ExecutionError("The image dataset this workflow used is gone. Attach another one before running it.")
+    try:
+        raw = images.read_image_bytes(dataset.content_blob, params["image"])
+        prepared, mime = images.shrink_for_vision(raw)
+    except images.ImageDatasetError as exc:
+        raise ExecutionError(str(exc))
+    prompt = params.get("prompt") or ""
+    try:
+        result = describe_image(params.get("system") or "", prompt, prepared, mime=mime, max_tokens=params.get("max_tokens", 300))
+    except AIError as exc:
+        raise ExecutionError(str(exc))
+    tokens = result.token_count or llm_budget.estimate_tokens(prompt) + settings.CAPTION_IMAGE_TOKEN_ESTIMATE
+    llm_budget.record_usage(db, user_id=run.owner_user_id, run_id=run.id, tokens=tokens, kind=LLM_KIND_VISION)
+    return {"tokens": tokens}, {
+        "model": result.model,
+        "reply": result.text[:MAX_STORED_REPLY],
+        "prompt": prompt,
+        "image": params["image"],
+        "sent_bytes": len(prepared),
+        "sent_max_edge": settings.CAPTION_MAX_EDGE,
+    }
+
 def execute_run(db: Session, run_id: int) -> WorkflowRun:
     run = db.get(WorkflowRun, run_id)
     if run is None:
@@ -100,6 +137,18 @@ def execute_run(db: Session, run_id: int) -> WorkflowRun:
     try:
         if workflow.kind == KIND_LLM_PLAYGROUND:
             metrics, result = _run_llm(db, workflow, run)
+        elif workflow.kind == KIND_LLM_VISION:
+            metrics, result = _run_vision(db, workflow, run)
+        elif workflow.kind == KIND_IMAGE_CLASSIFICATION:
+            dataset = db.get(Dataset, workflow.dataset_id) if workflow.dataset_id else None
+            if dataset is None or dataset.kind != DATASET_IMAGE or not dataset.content_blob:
+                raise ExecutionError("The image dataset this workflow used has been deleted, so there is nothing to train on.")
+            try:
+                manifest = images.manifest_from_text(dataset.content)
+            except images.ImageDatasetError as exc:
+                raise ExecutionError(str(exc))
+            metrics, result = run_image_classification(dataset.content_blob, manifest, workflow.steps)
+            result["dataset"] = dataset.name
         else:
             dataset = db.get(Dataset, workflow.dataset_id) if workflow.dataset_id else None
             if dataset is None:

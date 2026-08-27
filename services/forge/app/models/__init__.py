@@ -1,7 +1,13 @@
 # People are referenced by identity `user_id` only; Forge never reads identity's database.
-from sqlalchemy import Boolean, Column, ForeignKey, Index, Integer, String, Text, TIMESTAMP, UniqueConstraint, func, text
+from sqlalchemy import Boolean, Column, ForeignKey, Index, Integer, LargeBinary, String, Text, TIMESTAMP, UniqueConstraint, func, text
 from sqlalchemy.orm import relationship
 from app.db import Base
+
+# What a dataset holds. Tabular datasets keep their CSV text in `content`; image
+# datasets keep a JSON manifest there and the archive bytes in `content_blob`.
+DATASET_TABULAR = "tabular"
+DATASET_IMAGE = "image"
+DATASET_KINDS = (DATASET_TABULAR, DATASET_IMAGE)
 
 class Dataset(Base):
     __tablename__ = "datasets"
@@ -9,10 +15,18 @@ class Dataset(Base):
     id = Column(Integer, primary_key=True)
     owner_user_id = Column(Integer, index=True, nullable=True)
     is_sample = Column(Boolean, nullable=False, server_default="false", default=False)
+    kind = Column(String(20), nullable=False, server_default=DATASET_TABULAR, default=DATASET_TABULAR)
     name = Column(String(200), nullable=False)
     original_filename = Column(String(400), nullable=True)
-    content = Column(Text, nullable=False)  # the raw CSV text
+    # CSV text for a tabular dataset, a JSON manifest for an image one. Always populated,
+    # so the column stays NOT NULL and every existing row keeps its meaning.
+    content = Column(Text, nullable=False)
+    # The validated ZIP for an image dataset, empty for a tabular one. Images live in
+    # Postgres the same way the CSVs do; object storage is the move once size demands it.
+    content_blob = Column(LargeBinary, nullable=True)
+    # Class names for an image dataset, CSV header for a tabular one.
     columns = Column(Text, nullable=False)
+    # Image count for an image dataset, row count for a tabular one.
     row_count = Column(Integer, nullable=False)
     created_at = Column(TIMESTAMP(timezone=True), server_default=func.now(), nullable=False)
     updated_at = Column(TIMESTAMP(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
@@ -33,7 +47,11 @@ KIND_TABULAR_CLASSIFICATION = "tabular_classification"
 KIND_TABULAR_REGRESSION = "tabular_regression"
 KIND_TIMESERIES_FORECAST = "timeseries_forecast"
 KIND_LLM_PLAYGROUND = "llm_playground"
-WORKFLOW_KINDS = (KIND_TABULAR_CLASSIFICATION, KIND_TABULAR_REGRESSION, KIND_TIMESERIES_FORECAST, KIND_LLM_PLAYGROUND)
+KIND_IMAGE_CLASSIFICATION = "image_classification"
+KIND_LLM_VISION = "llm_vision"
+WORKFLOW_KINDS = (KIND_TABULAR_CLASSIFICATION, KIND_TABULAR_REGRESSION, KIND_TIMESERIES_FORECAST, KIND_IMAGE_CLASSIFICATION, KIND_LLM_PLAYGROUND, KIND_LLM_VISION)
+# Kinds whose work is a call to the language model rather than a fit on a dataset.
+LLM_KINDS = (KIND_LLM_PLAYGROUND, KIND_LLM_VISION)
 
 RUN_QUEUED = "queued"
 RUN_RUNNING = "running"
@@ -41,6 +59,7 @@ RUN_SUCCEEDED = "succeeded"
 RUN_FAILED = "failed"
 
 LLM_KIND_PLAYGROUND = "playground"
+LLM_KIND_VISION = "vision"
 
 class Workflow(Base):
     __tablename__ = "workflows"

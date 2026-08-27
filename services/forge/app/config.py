@@ -44,6 +44,26 @@ class Settings(BaseSettings):
     DATASET_PREVIEW_ROWS: int = 10
     MAX_UPLOAD_MB: int = 5
 
+    # Image datasets. The archive is bigger than a CSV but the pieces inside it are small,
+    # so the limits are separate: one on the upload, one on what it unpacks to, one per
+    # image, and one on how many images a single run will read.
+    MAX_IMAGE_UPLOAD_MB: int = 25
+    MAX_IMAGE_TOTAL_MB: int = 100
+    MAX_IMAGE_FILE_MB: int = 5
+    MAX_IMAGE_COUNT: int = 2_000
+    # Below this a class score is measuring the split, not the model.
+    MIN_IMAGES_PER_CLASS: int = 5
+    # Longest edge an image is shrunk to before it is sent to the vision model. Measured
+    # against gpt-4o-mini on the same picture: 768 px billed 25,573 tokens, 512 px billed
+    # 8,588, and the two descriptions said the same things. Three times the spend for no
+    # extra detail is not a trade worth taking by default.
+    CAPTION_MAX_EDGE: int = 512
+    # What one image is assumed to cost when the budget is checked up front. The provider
+    # bills an image by how many tiles it covers, none of which shows up in the text, and
+    # an estimate that comes in low turns a cap into a report of overspending. Set above
+    # the 8,588 measured above so it stays a bound rather than a guess.
+    CAPTION_IMAGE_TOKEN_ESTIMATE: int = 10_000
+
     # Training runs on the same small box as everything else, so a run is refused before
     # it starts rather than after it has taken the worker down. Cells, not just rows: a
     # 2,000-row file with 900 one-hot columns costs the same as a huge one.

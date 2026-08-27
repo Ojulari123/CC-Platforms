@@ -1,4 +1,4 @@
-"""Runs a tabular or forecast workflow: CSV in, fitted model and metrics out.
+"""Runs a workflow: a CSV or an image archive in, a fitted model and metrics out.
 
 Every failure a learner can cause is caught here and turned into a sentence they can act
 on. A traceback is a message about Forge's internals, and it is never what comes back.
@@ -9,7 +9,8 @@ import logging
 import math
 from app.config import settings
 from app.models import KIND_TABULAR_CLASSIFICATION, KIND_TIMESERIES_FORECAST
-from app.services.steps import STEP_ENCODE_CATEGORICAL, STEP_EVALUATE, STEP_HANDLE_MISSING, STEP_LAG_FEATURES, STEP_LOAD_CSV, STEP_SCALE_FEATURES, STEP_SELECT_FEATURES, STEP_SELECT_TARGET, STEP_TRAIN_MODEL, STEP_TRAIN_TEST_SPLIT, ordered_steps
+from app.services import images
+from app.services.steps import FLATTENED_PIXEL_CAVEAT, STEP_ENCODE_CATEGORICAL, STEP_EVALUATE, STEP_HANDLE_MISSING, STEP_LAG_FEATURES, STEP_LOAD_CSV, STEP_SCALE_FEATURES, STEP_SELECT_FEATURES, STEP_SELECT_TARGET, STEP_GRAYSCALE_IMAGES, STEP_RESIZE_IMAGES, STEP_TRAIN_MODEL, STEP_TRAIN_TEST_SPLIT, ordered_steps
 
 logger = logging.getLogger(__name__)
 
@@ -278,3 +279,106 @@ def _plain(value):
     item = getattr(value, "item", None)
     value = item() if callable(item) else value
     return round(value, 6) if isinstance(value, float) else value
+
+def run_image_classification(blob: bytes, manifest: dict, steps) -> tuple[dict, dict]:
+    """Resize, optionally drop colour, flatten to one row per image, then hand the rows to
+    the same scikit-learn classifiers the CSV workflows use. Returns (metrics, result)."""
+    steps = ordered_steps(steps)
+    try:
+        images.check_trainable(manifest)
+    except images.ImageDatasetError as exc:
+        raise ExecutionError(str(exc))
+
+    size = (32, 32)
+    grayscale = False
+    split_params = {"test_size": 0.2, "random_state": 42, "shuffle": True}
+    scale_params: dict | None = None
+    model_params: dict | None = None
+    for step in steps:
+        params = _params(step)
+        if step.kind == STEP_RESIZE_IMAGES:
+            size = (params.get("width", 32), params.get("height", 32))
+        elif step.kind == STEP_GRAYSCALE_IMAGES:
+            grayscale = True
+        elif step.kind == STEP_TRAIN_TEST_SPLIT:
+            split_params = params
+        elif step.kind == STEP_SCALE_FEATURES:
+            scale_params = params
+        elif step.kind == STEP_TRAIN_MODEL:
+            model_params = params
+    if model_params is None:
+        raise ExecutionError("This workflow has no 'train_model' step, so there is nothing to run.")
+
+    channels = 1 if grayscale else 3
+    cells = manifest.get("total", 0) * size[0] * size[1] * channels
+    if cells > settings.MAX_TRAIN_CELLS:
+        raise ExecutionError(f"{manifest.get('total', 0):,} images at {size[0]}x{size[1]} in {'grayscale' if grayscale else 'colour'} is {cells:,} numbers, past the {settings.MAX_TRAIN_CELLS:,} Forge can hold. Resize smaller, add a 'grayscale_images' step, or use fewer images.")
+
+    try:
+        features, labels, names = images.load_matrix(blob, size=size, grayscale=grayscale)
+    except images.ImageDatasetError as exc:
+        raise ExecutionError(str(exc))
+    if len(features) < settings.MIN_TRAIN_ROWS:
+        raise ExecutionError(f"Only {len(features)} images could be read and Forge needs at least {settings.MIN_TRAIN_ROWS}.")
+
+    import numpy as np
+    from sklearn.model_selection import train_test_split
+
+    x_all = np.asarray(features, dtype=float)
+    y_all = np.asarray(labels, dtype=object)
+    counts = {label: int((y_all == label).sum()) for label in set(labels)}
+    stratify = y_all if split_params.get("shuffle", True) and min(counts.values()) >= 2 else None
+    # The row indices ride along through the split so the sample predictions can name the
+    # file each one came from. Reading them back off the end of the list would name the
+    # wrong images, because the split shuffles.
+    index = np.arange(len(features))
+    x_train, x_test, y_train, y_test, _, test_index = train_test_split(
+        x_all, y_all, index,
+        test_size=split_params.get("test_size", 0.2),
+        random_state=split_params.get("random_state", 42),
+        shuffle=split_params.get("shuffle", True),
+        stratify=stratify,
+    )
+    if not len(x_test):
+        raise ExecutionError("The test split came out empty. Raise 'test_size' or use more images.")
+
+    if scale_params is not None:
+        from sklearn.preprocessing import MinMaxScaler, StandardScaler
+
+        scaler = MinMaxScaler() if scale_params.get("strategy") == "minmax" else StandardScaler()
+        x_train = scaler.fit_transform(x_train)
+        x_test = scaler.transform(x_test)
+
+    model = _build_estimator(model_params["algorithm"], model_params.get("hyperparameters") or {})
+    try:
+        model.fit(x_train, y_train)
+    except Exception as exc:
+        logger.warning("image fit failed for %s: %s", model_params["algorithm"], exc)
+        raise ExecutionError(f"The model could not be trained on these images ({exc.__class__.__name__}). Try resizing smaller or using more images per class.")
+    predictions = model.predict(x_test)
+
+    import pandas as pd
+
+    metrics, extra = _classification_metrics(pd.Series(y_test), predictions)
+    # Named next to the score rather than in a footnote: a learner reading 0.62 should see
+    # in the same place why a convolutional network would not stop there.
+    result = {
+        "algorithm": model_params["algorithm"],
+        "hyperparameters": model_params.get("hyperparameters") or {},
+        "image_size": [size[0], size[1]],
+        "grayscale": grayscale,
+        "channels": channels,
+        "features_per_image": size[0] * size[1] * channels,
+        "images_used": len(features),
+        "class_counts": counts,
+        "train_rows": int(len(y_train)),
+        "test_rows": int(len(y_test)),
+        "scaled": scale_params is not None,
+        "method_note": FLATTENED_PIXEL_CAVEAT,
+        "predictions_sample": [
+            {"image": names[int(i)], "actual": str(a), "predicted": str(p)}
+            for i, a, p in list(zip(list(test_index), list(y_test), list(predictions), strict=True))[:SAMPLE_PREDICTIONS]
+        ],
+        **extra,
+    }
+    return metrics, result

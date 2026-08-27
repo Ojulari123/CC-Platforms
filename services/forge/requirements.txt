@@ -9,12 +9,15 @@ redis>=5.0,<6.0
 slowapi>=0.1.9,<0.2
 celery>=5.4,<6.0
 openai>=1.0,<2.0
-# The tabular workflows. scikit-learn brings scipy and joblib with it. Deliberately not
-# torch: image classification would add ~2 GB to an image that has no ML deps today, and
-# it is parked in docs/backlog.md instead.
+# The tabular and image workflows. scikit-learn brings scipy and joblib with it.
+# Deliberately not torch: image classification here resizes small, flattens the pixels and
+# hands them to the same scikit-learn classifiers the CSV workflows use, which is worse
+# than a CNN and about 2 GB lighter. Pillow (~3 MB) is the only decoder needed for that.
 scikit-learn>=1.6,<2.0
 pandas>=2.2,<3.0
 numpy>=2.0,<3.0
+# Decodes and resizes uploaded images. No model code, just the pixels.
+pillow>=11.0,<13.0
 # crescent-core (the shared token verifier + pagination) is installed
 # separately, from the monorepo path — it is not on PyPI:
 #   Docker: pip install /packages/core      (see Dockerfile)

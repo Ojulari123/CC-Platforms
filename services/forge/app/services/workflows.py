@@ -7,7 +7,7 @@ import json
 from fastapi import HTTPException
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session, selectinload
-from app.models import WORKFLOW_KINDS, KIND_LLM_PLAYGROUND, Workflow, WorkflowStep
+from app.models import DATASET_IMAGE, DATASET_TABULAR, WORKFLOW_KINDS, KIND_IMAGE_CLASSIFICATION, KIND_LLM_PLAYGROUND, KIND_LLM_VISION, Workflow, WorkflowStep
 from app.services.datasets import get_dataset
 from app.services.steps import StepError, validate_sequence
 
@@ -26,8 +26,11 @@ def create_workflow(db: Session, *, owner_user_id: int, name: str, kind: str, da
         raise HTTPException(status_code=400, detail=f"'{kind}' is not a workflow kind. Choose one of: {', '.join(WORKFLOW_KINDS)}.")
     if kind != KIND_LLM_PLAYGROUND:
         if dataset_id is None:
-            raise HTTPException(status_code=400, detail="This workflow kind needs a dataset to learn from.")
-        get_dataset(db, dataset_id, owner_user_id)  # 404/403 from the dataset rules
+            raise HTTPException(status_code=400, detail="This workflow kind needs a dataset to work from.")
+        dataset = get_dataset(db, dataset_id, owner_user_id)  # 404/403 from the dataset rules
+        wanted = DATASET_IMAGE if kind in (KIND_IMAGE_CLASSIFICATION, KIND_LLM_VISION) else DATASET_TABULAR
+        if dataset.kind != wanted:
+            raise HTTPException(status_code=400, detail=f"'{dataset.name}' holds {dataset.kind} data, and a {kind.replace('_', ' ')} workflow needs {wanted} data.")
     workflow = Workflow(owner_user_id=owner_user_id, name=name, kind=kind, dataset_id=dataset_id if kind != KIND_LLM_PLAYGROUND else None)
     try:
         workflow.steps = _step_rows(kind, steps)

@@ -39,7 +39,7 @@ def test_create_workflow_stores_one_row_per_step(client, act_as, db):
 
 def test_unknown_workflow_kind_is_refused(client, act_as, db):
     act_as(1)
-    response = client.post("/workflows", json={"name": "x", "kind": "image_classification", "dataset_id": _dataset(db).id, "steps": _steps()})
+    response = client.post("/workflows", json={"name": "x", "kind": "audio_classification", "dataset_id": _dataset(db).id, "steps": _steps()})
     assert response.status_code == 400
     assert "not a workflow kind" in response.json()["detail"]
 

@@ -4,6 +4,7 @@ from fastapi.responses import PlainTextResponse
 from sqlalchemy.orm import Session
 from crescent_core import Page, PageParams, TokenClaims, page_params
 from app.auth import current_user
+from app.models import DATASET_IMAGE
 from app.config import settings
 from app.db import get_db
 from app.rate_limit import limiter
@@ -76,7 +77,9 @@ def generated_code(request: Request, workflow_id: int, fmt: str = Query(default=
     data_path = "data.csv"
     if workflow.dataset_id:
         dataset = get_dataset(db, workflow.dataset_id, user.user_id)
-        data_path = dataset.original_filename or f"{dataset.name}.csv"
+        # An image script reads a folder the learner unzipped, not a file, so the path it
+        # is handed has to be a directory name rather than the archive's.
+        data_path = "images" if dataset.kind == DATASET_IMAGE else (dataset.original_filename or f"{dataset.name}.csv")
     if fmt == "notebook":
         notebook = codegen.generate_notebook(workflow, workflow.steps, data_path=data_path, model=settings.LLM_MODEL)
         return GeneratedCode(filename=codegen.notebook_filename(workflow), language="ipynb", code=json.dumps(notebook, indent=1))

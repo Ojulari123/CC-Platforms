@@ -6,8 +6,8 @@ a learner should be able to put the canvas and the script side by side and see w
 came from which box.
 """
 import json
-from app.models import KIND_LLM_PLAYGROUND, KIND_TABULAR_CLASSIFICATION, KIND_TIMESERIES_FORECAST
-from app.services.steps import STEP_ENCODE_CATEGORICAL, STEP_EVALUATE, STEP_HANDLE_MISSING, STEP_LAG_FEATURES, STEP_LOAD_CSV, STEP_PROMPT, STEP_SCALE_FEATURES, STEP_SELECT_FEATURES, STEP_SELECT_TARGET, STEP_TRAIN_MODEL, STEP_TRAIN_TEST_SPLIT, ordered_steps
+from app.models import KIND_IMAGE_CLASSIFICATION, KIND_LLM_PLAYGROUND, KIND_LLM_VISION, KIND_TABULAR_CLASSIFICATION, KIND_TIMESERIES_FORECAST
+from app.services.steps import FLATTENED_PIXEL_CAVEAT, STEP_ENCODE_CATEGORICAL, STEP_FLATTEN_IMAGES, STEP_GRAYSCALE_IMAGES, STEP_LOAD_IMAGES, STEP_RESIZE_IMAGES, STEP_VISION_PROMPT, STEP_EVALUATE, STEP_HANDLE_MISSING, STEP_LAG_FEATURES, STEP_LOAD_CSV, STEP_PROMPT, STEP_SCALE_FEATURES, STEP_SELECT_FEATURES, STEP_SELECT_TARGET, STEP_TRAIN_MODEL, STEP_TRAIN_TEST_SPLIT, ordered_steps
 
 # Constructor text per algorithm, alongside the import it needs. Kept beside the
 # generator rather than shared with execution.py: execution builds an object, this builds
@@ -66,6 +66,136 @@ def _llm_blocks(steps, model: str) -> tuple[list[str], list[Block]]:
             "print(f\"tokens used: {response.usage.total_tokens}\")",
         ]),
     ]
+    return imports, blocks
+
+def _vision_blocks(steps, model: str) -> tuple[list[str], list[Block]]:
+    params = _params(steps[0])
+    imports = ["import base64, mimetypes, os", "from openai import OpenAI"]
+    blocks = [
+        Block("step 1 of 1 — vision_prompt: the image, and what you asked about it", [
+            f"IMAGE_PATH = {params.get('image', 'image.png')!r}",
+            f"SYSTEM = {params.get('system', '')!r}",
+            f"PROMPT = {params.get('prompt', '')!r}",
+            "",
+            "# The key is read from the environment, never written into the file:",
+            "#   export OPENAI_API_KEY=your-key-here",
+            "client = OpenAI(api_key=os.environ[\"OPENAI_API_KEY\"])",
+            "",
+            "# The image travels inside the message as base64, so it does not have to be",
+            "# hosted anywhere the provider can reach.",
+            "raw = open(IMAGE_PATH, \"rb\").read()",
+            "mime = mimetypes.guess_type(IMAGE_PATH)[0] or \"image/png\"",
+            "encoded = base64.b64encode(raw).decode(\"ascii\")",
+            "response = client.chat.completions.create(",
+            f"    model={model!r},",
+            f"    max_tokens={params.get('max_tokens', 300)},",
+            "    messages=[",
+            "        {\"role\": \"system\", \"content\": SYSTEM},",
+            "        {\"role\": \"user\", \"content\": [",
+            "            {\"type\": \"text\", \"text\": PROMPT},",
+            "            {\"type\": \"image_url\", \"image_url\": {\"url\": f\"data:{mime};base64,{encoded}\"}},",
+            "        ]},",
+            "    ],",
+            ")",
+            "print(response.choices[0].message.content)",
+            "print(f\"tokens used: {response.usage.total_tokens}\")",
+        ]),
+    ]
+    return imports, blocks
+
+def _image_blocks(steps, data_path: str) -> tuple[list[str], list[Block]]:
+    imports = ["from pathlib import Path", "import numpy as np", "from PIL import Image"]
+    by_kind = {step.kind: _params(step) for step in steps}
+    positions = {step.kind: index + 1 for index, step in enumerate(steps)}
+    total = len(steps)
+    blocks: list[Block] = []
+
+    def heading(kind: str, text: str) -> str:
+        return f"step {positions.get(kind, '?')} of {total} — {kind}: {text}"
+
+    size = by_kind.get(STEP_RESIZE_IMAGES) or {"width": 32, "height": 32}
+    grayscale = STEP_GRAYSCALE_IMAGES in by_kind
+
+    blocks.append(Block(heading(STEP_LOAD_IMAGES, "one folder per class, images directly inside it"), [
+        f"DATA_DIR = Path({data_path!r})  # the folder you unzipped the dataset into",
+        f"SUFFIXES = {list(('.png', '.jpg', '.jpeg', '.bmp', '.webp'))!r}",
+        "",
+        "paths, labels = [], []",
+        "for folder in sorted(p for p in DATA_DIR.iterdir() if p.is_dir()):",
+        "    for image_path in sorted(folder.iterdir()):",
+        "        if image_path.suffix.lower() in SUFFIXES:",
+        "            paths.append(image_path)",
+        "            labels.append(folder.name)",
+        "if len(set(labels)) < 2:",
+        "    raise SystemExit(f\"Need at least two class folders in {DATA_DIR}, found: {sorted(set(labels))}\")",
+        "print(f\"{len(paths)} images across {len(set(labels))} classes\")",
+    ]))
+
+    blocks.append(Block(heading(STEP_RESIZE_IMAGES, f"every image to {size['width']}x{size['height']}, so every row is the same length"), [
+        f"SIZE = ({size['width']}, {size['height']})",
+        f"GRAYSCALE = {grayscale!r}" if grayscale else "GRAYSCALE = False",
+    ]))
+    if grayscale:
+        blocks.append(Block(heading(STEP_GRAYSCALE_IMAGES, "one number per pixel instead of three"), [
+            "# GRAYSCALE is read by the loop below, which converts to mode \"L\" instead of \"RGB\".",
+        ]))
+    blocks.append(Block(heading(STEP_FLATTEN_IMAGES, "the pixel grid laid out as one long row per image"), [
+        "rows = []",
+        "for image_path in paths:",
+        "    with Image.open(image_path) as image:",
+        "        image = image.convert(\"L\" if GRAYSCALE else \"RGB\")",
+        "        image = image.resize(SIZE)",
+        "        rows.append(np.asarray(image, dtype=float).reshape(-1) / 255.0)",
+        "X = np.stack(rows)",
+        "y = np.array(labels)",
+        "print(f\"{X.shape[0]} images, {X.shape[1]} numbers each\")",
+        "",
+        f"# {FLATTENED_PIXEL_CAVEAT}",
+    ]))
+
+    split = by_kind.get(STEP_TRAIN_TEST_SPLIT) or {"test_size": 0.2, "random_state": 42, "shuffle": True}
+    imports.append("from sklearn.model_selection import train_test_split")
+    blocks.append(Block(heading(STEP_TRAIN_TEST_SPLIT, f"hold back {int(float(split.get('test_size', 0.2)) * 100)}% of the images to score on"), [
+        "counts = {label: int((y == label).sum()) for label in set(y)}",
+        f"stratify = y if {bool(split.get('shuffle', True))} and min(counts.values()) >= 2 else None",
+        "X_train, X_test, y_train, y_test = train_test_split(",
+        f"    X, y, test_size={split.get('test_size', 0.2)}, random_state={split.get('random_state', 42)}, shuffle={bool(split.get('shuffle', True))}, stratify=stratify,",
+        ")",
+        "print(f\"{len(X_train)} images to train on, {len(X_test)} held back\")",
+    ]))
+
+    if STEP_SCALE_FEATURES in by_kind:
+        name = "MinMaxScaler" if (by_kind[STEP_SCALE_FEATURES].get("strategy") == "minmax") else "StandardScaler"
+        imports.append(f"from sklearn.preprocessing import {name}")
+        blocks.append(Block(heading(STEP_SCALE_FEATURES, "put the pixel values on a comparable range"), [
+            f"scaler = {name}()",
+            "# Fitted on the training images only. A scaler fitted on everything has already",
+            "# seen the test set, and the score it produces flatters the model.",
+            "X_train = scaler.fit_transform(X_train)",
+            "X_test = scaler.transform(X_test)",
+        ]))
+
+    model_params = by_kind.get(STEP_TRAIN_MODEL) or {}
+    algorithm = model_params.get("algorithm", "logistic_regression")
+    import_line, class_name, defaults = ESTIMATORS[algorithm]
+    imports.append(import_line)
+    blocks.append(Block(heading(STEP_TRAIN_MODEL, f"fit {algorithm} on the flattened pixels"), [
+        f"model = {class_name}({_call_args(defaults, model_params.get('hyperparameters') or {})})",
+        "model.fit(X_train, y_train)",
+        "predictions = model.predict(X_test)",
+    ]))
+
+    imports.append("from sklearn.metrics import accuracy_score, confusion_matrix, f1_score, precision_score, recall_score")
+    blocks.append(Block(heading(STEP_EVALUATE, "score the model on the images it never saw"), [
+        "labels_sorted = sorted(set(y_test) | set(predictions))",
+        "print(f\"accuracy:        {accuracy_score(y_test, predictions):.4f}\")",
+        "print(f\"precision_macro: {precision_score(y_test, predictions, average='macro', zero_division=0):.4f}\")",
+        "print(f\"recall_macro:    {recall_score(y_test, predictions, average='macro', zero_division=0):.4f}\")",
+        "print(f\"f1_macro:        {f1_score(y_test, predictions, average='macro', zero_division=0):.4f}\")",
+        "print(f\"classes: {[str(c) for c in labels_sorted]}\")",
+        "print(\"confusion matrix (rows are the true class):\")",
+        "print(confusion_matrix(y_test, predictions, labels=labels_sorted))",
+    ]))
     return imports, blocks
 
 def _tabular_blocks(workflow_kind: str, steps, target: str, data_path: str) -> tuple[list[str], list[Block]]:
@@ -210,8 +340,14 @@ def _tabular_blocks(workflow_kind: str, steps, target: str, data_path: str) -> t
     blocks.append(Block(heading(STEP_EVALUATE, "score the model on the rows it never saw"), lines))
     return imports, blocks
 
+NEEDS = {
+    KIND_LLM_PLAYGROUND: "pip install openai",
+    KIND_LLM_VISION: "pip install openai",
+    KIND_IMAGE_CLASSIFICATION: "pip install numpy pillow scikit-learn",
+}
+
 def _header(workflow, kind: str) -> str:
-    needs = "pip install openai" if kind == KIND_LLM_PLAYGROUND else "pip install pandas scikit-learn"
+    needs = NEEDS.get(kind, "pip install pandas scikit-learn")
     return "\n".join([
         '"""',
         f"{workflow.name} — generated by Crescent Forge.",
@@ -236,6 +372,12 @@ def _blocks_for(workflow, steps, data_path: str, model: str) -> tuple[list[str],
         if steps[0].kind != STEP_PROMPT:
             raise ValueError("An LLM playground workflow needs its prompt step.")
         return _llm_blocks(steps, model)
+    if workflow.kind == KIND_LLM_VISION:
+        if steps[0].kind != STEP_VISION_PROMPT:
+            raise ValueError("An image question workflow needs its vision_prompt step.")
+        return _vision_blocks(steps, model)
+    if workflow.kind == KIND_IMAGE_CLASSIFICATION:
+        return _image_blocks(steps, data_path)
     return _tabular_blocks(workflow.kind, steps, _target_name(steps, workflow.kind), data_path)
 
 def generate_script(workflow, steps, *, data_path: str = "data.csv", model: str = "gpt-4o-mini") -> str:

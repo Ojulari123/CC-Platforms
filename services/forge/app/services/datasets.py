@@ -7,8 +7,9 @@ from sqlalchemy import func, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, defer
 from app.config import settings
-from app.models import Dataset
+from app.models import DATASET_IMAGE, DATASET_TABULAR, Dataset
 from app.samples import SAMPLE_DATASETS
+from app.services import images
 from app.schemas.datasets import DatasetPreview
 
 logger = logging.getLogger(__name__)
@@ -54,6 +55,52 @@ def create_dataset(db: Session, owner_user_id: int, name: str, original_filename
     db.refresh(dataset)
     return dataset
 
+# A ZIP with one folder per class is the shape every image-classification tutorial already
+# uses, so a learner can prepare one in a file manager with no tooling and no manifest to
+# write. A loose image is accepted too, wrapped into a one-entry archive, because asking
+# someone to zip a single photo before they can ask a question about it is friction with
+# nothing behind it.
+IMAGE_SUFFIXES = images.ALLOWED_SUFFIXES
+
+def create_image_dataset(db: Session, owner_user_id: int, name: str, original_filename: str | None, raw_bytes: bytes) -> Dataset:
+    if not raw_bytes:
+        raise HTTPException(status_code=400, detail="File is empty")
+    filename = (original_filename or "").lower()
+    if filename.endswith(IMAGE_SUFFIXES):
+        blob = images.wrap_single_image(original_filename or "image.png", raw_bytes)
+    elif filename.endswith(".zip") or raw_bytes[:2] == b"PK":
+        blob = raw_bytes
+    else:
+        raise HTTPException(status_code=400, detail=f"Upload a .zip with one folder per class, or a single {', '.join(IMAGE_SUFFIXES)} image.")
+    try:
+        manifest = images.build_manifest(blob)
+    except images.ImageDatasetError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    dataset = Dataset(
+        owner_user_id=owner_user_id,
+        is_sample=False,
+        kind=DATASET_IMAGE,
+        name=name,
+        original_filename=original_filename,
+        content=json.dumps(manifest),
+        content_blob=blob,
+        columns=json.dumps(manifest["classes"]),
+        row_count=manifest["total"],
+    )
+    db.add(dataset)
+    db.commit()
+    db.refresh(dataset)
+    return dataset
+
+def image_manifest(db: Session, dataset_id: int, user_id: int) -> dict:
+    dataset = get_dataset(db, dataset_id, user_id)
+    if dataset.kind != DATASET_IMAGE:
+        raise HTTPException(status_code=400, detail="This is a CSV dataset. Use the preview endpoint for its rows.")
+    try:
+        return images.manifest_from_text(dataset.content)
+    except images.ImageDatasetError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
 def list_datasets(db: Session, owner_user_id: int, limit: int, offset: int) -> tuple[list[Dataset], int]:
     visible = or_(Dataset.owner_user_id == owner_user_id, Dataset.is_sample.is_(True))
     total = db.scalar(select(func.count()).select_from(Dataset).where(visible)) or 0
@@ -94,6 +141,8 @@ def get_dataset(db: Session, dataset_id: int, user_id: int) -> Dataset:
 
 def preview_dataset(db: Session, dataset_id: int, user_id: int, rows: int) -> DatasetPreview:
     dataset = get_dataset(db, dataset_id, user_id)
+    if dataset.kind == DATASET_IMAGE:
+        raise HTTPException(status_code=400, detail="This is an image dataset. Use the images endpoint to see what is in it.")
     parsed = list(csv.reader(io.StringIO(dataset.content)))
     header = parsed[0] if parsed else json.loads(dataset.columns)
     data_rows = parsed[1:]
@@ -127,6 +176,7 @@ def seed_sample_datasets(db: Session) -> None:
                 db.add(Dataset(
                     owner_user_id=None,
                     is_sample=True,
+                    kind=DATASET_TABULAR,
                     name=name,
                     original_filename=filename,
                     content=content,

@@ -12,7 +12,7 @@ from datetime import datetime, time, timezone
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 from app.config import settings
-from app.models import LlmUsage
+from app.models import LLM_KIND_PLAYGROUND, LlmUsage
 
 # Character-shaped approximation, no tokeniser dependency. A run of letters or digits is
 # about a token per three characters, punctuation is about one each, and anything outside
@@ -57,6 +57,6 @@ def check_budget(db: Session, user_id: int, *, about_to_spend: int) -> None:
     remaining = max(0, cap - used)
     raise BudgetExceeded(f"This needs about {about_to_spend:,} tokens and you have {remaining:,} of your {cap:,} daily tokens left. The allowance resets at 00:00 UTC.")
 
-def record_usage(db: Session, *, user_id: int, run_id: int | None, tokens: int) -> None:
+def record_usage(db: Session, *, user_id: int, run_id: int | None, tokens: int, kind: str = LLM_KIND_PLAYGROUND) -> None:
     """Rows here are never deleted: the ledger is the only record of what was spent."""
-    db.add(LlmUsage(run_id=run_id, user_id=user_id, tokens=max(0, tokens)))
+    db.add(LlmUsage(run_id=run_id, user_id=user_id, tokens=max(0, tokens), kind=kind))
