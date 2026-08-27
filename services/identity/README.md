@@ -50,7 +50,8 @@ Every product (Pulse, ML platform) trusts tokens issued here.
   a service authenticates as itself (`client_id` + `client_secret`) and gets a
   short-lived, scoped **service token**. Backed by the `service_clients` table; the
   `pulse` client is seeded on startup from `PULSE_CLIENT_SECRET` (no-op if unset) with
-  scopes `users:read:email users:read:profile tokens:verify`.
+  scopes `users:read:email users:read:profile tokens:verify admins:read`. Adding a scope
+  needs no migration: the seed rewrites `scopes` on the existing row at every boot.
 - **`POST /internal/users/emails`**: resolve `user_id → email` for another service
   (Pulse, for approver notifications). **Service-token + scope gated**
   (`users:read:email`); unknown ids are silently omitted.
@@ -80,6 +81,17 @@ Every product (Pulse, ML platform) trusts tokens issued here.
   read the silence as "still valid". Deactivation bumps `token_version` too, so the number
   alone already condemns an offboarded person's tokens. Batch capped at **200 ids**; over
   that is a 422.
+- **`GET /internal/departments/{dept_id}/admins`** and **`GET /internal/platform-admins`**:
+  who a product should tell when something needs a decision, as `user_id` + email.
+  **Service-token + scope gated** on its own scope `admins:read`. These exist because
+  `GET /departments/{dept_id}/members?role=admin` is gated on `require_dept_role()`, which
+  needs a **user** token with membership in that department — a service has none, so Pulse
+  could put a report in every dept admin's review queue and never be able to email them.
+  Separate scope, because naming the people who hold power in a department is a different
+  read from resolving an address you were already given an id for. Only **active** users
+  are returned; a deactivated admin cannot log in to act on the mail. An unknown
+  `dept_id` returns an empty list, not a 404: a repository can outlive the department it
+  was filed under, and "nobody to email" is a usable answer. Capped at 200 rows.
 
 Migrations run `0001`–`0010` (`0010_user_onboarded_at` adds `users.onboarded_at`, the
 explicit "this account was really onboarded" stamp the delete guard reads).

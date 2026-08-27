@@ -1,9 +1,8 @@
 from jose import jwt
-import pytest
 from sqlalchemy import select
 from app.models import ServiceClient
 from app.schemas.oauth import MAX_LOOKUP_IDS
-from app.security.jwt import create_access_token, create_service_token
+from app.security.jwt import create_service_token
 from app.services.service_clients import (
     FORGE_SCOPES,
     PULSE_SCOPES,
@@ -17,6 +16,7 @@ CLIENT_SECRET = "s3cret-known-only-to-tests"
 SCOPE = "users:read:email"
 PROFILE_SCOPE = "users:read:profile"
 TOKEN_VERSION_SCOPE = "tokens:verify"
+ADMINS_SCOPE = "admins:read"
 
 def _seed(db, secret=CLIENT_SECRET, scopes=SCOPE, active=True):
     client = seed_service_client(db, client_id=CLIENT_ID, secret=secret, scopes=scopes)
@@ -530,13 +530,23 @@ class TestSeed:
         })
         assert r.status_code == 401
 
-    def test_pulse_seed_grants_email_profile_and_token_version_scopes(self, db_session, monkeypatch):
+    def test_pulse_seed_grants_email_profile_token_version_and_admin_scopes(self, db_session, monkeypatch):
         from app.config import settings
         monkeypatch.setattr(settings, "PULSE_CLIENT_SECRET", CLIENT_SECRET)
         c = seed_pulse_client(db_session)
         assert c is not None
-        assert set(c.scopes.split()) == {SCOPE, PROFILE_SCOPE, TOKEN_VERSION_SCOPE}
+        assert set(c.scopes.split()) == {SCOPE, PROFILE_SCOPE, TOKEN_VERSION_SCOPE, ADMINS_SCOPE}
         assert c.scopes == PULSE_SCOPES
+
+    def test_a_re_seed_grants_a_newly_added_scope_to_an_existing_row(self, db_session, monkeypatch):
+        """How admins:read reached the live Pulse row: no migration, the boot re-seed
+        rewrites scopes on a client that already exists."""
+        from app.config import settings
+        monkeypatch.setattr(settings, "PULSE_CLIENT_SECRET", CLIENT_SECRET)
+        c = seed_pulse_client(db_session)
+        c.scopes = "users:read:email"
+        db_session.commit()
+        assert ADMINS_SCOPE in seed_pulse_client(db_session).scopes.split()
 
     def test_pulse_seed_is_noop_without_secret(self, db_session, monkeypatch):
         from app.config import settings
@@ -618,3 +628,86 @@ class TestSeed:
             "client_secret": "rotated-secret",
         })
         assert r.status_code == 200
+
+
+class TestAdminLookup:
+    """Pulse has to email whoever can decide a report. GET /departments/{id}/members
+    answers that for a person, not for a service, so these are the service-shaped form."""
+
+    def test_department_admins_are_returned_with_their_addresses(self, client, db_session, registered_user, invite_user):
+        dept_id = registered_user["dept_id"]
+        alice = client.get("/me", headers={"Authorization": f"Bearer {registered_user['tokens']['access_token']}"}).json()
+        invite_user(registered_user["tokens"], dept_id, "eng@example.com", "engineer")
+        second = invite_user(registered_user["tokens"], dept_id, "boss@example.com", "admin")
+        _seed(db_session, scopes=ADMINS_SCOPE)
+        token = _get_service_token(client)
+
+        r = client.get(f"/internal/departments/{dept_id}/admins", headers={"Authorization": f"Bearer {token}"})
+
+        assert r.status_code == 200, r.text
+        got = {u["user_id"]: u["email"] for u in r.json()["users"]}
+        assert got == {alice["id"]: "alice@example.com", second["user"]["id"]: "boss@example.com"}
+
+    def test_a_department_with_no_admin_returns_nobody(self, client, db_session, registered_user, invite_user):
+        other = client.post("/departments", json={"name": "Data"},
+                            headers={"Authorization": f"Bearer {registered_user['tokens']['access_token']}"})
+        assert other.status_code in (201, 403), other.text
+        _seed(db_session, scopes=ADMINS_SCOPE)
+        token = _get_service_token(client)
+
+        r = client.get("/internal/departments/999999/admins", headers={"Authorization": f"Bearer {token}"})
+
+        assert r.status_code == 200
+        assert r.json()["users"] == []
+
+    def test_platform_admins_are_returned(self, client, db_session, registered_user):
+        from app.models import User
+        alice = db_session.scalar(select(User).where(User.email == "alice@example.com"))
+        alice.is_platform_admin = True
+        db_session.commit()
+        _seed(db_session, scopes=ADMINS_SCOPE)
+        token = _get_service_token(client)
+
+        r = client.get("/internal/platform-admins", headers={"Authorization": f"Bearer {token}"})
+
+        assert r.status_code == 200, r.text
+        assert [u["email"] for u in r.json()["users"]] == ["alice@example.com"]
+
+    def test_a_deactivated_admin_is_left_out(self, client, db_session, registered_user):
+        from app.models import User
+        alice = db_session.scalar(select(User).where(User.email == "alice@example.com"))
+        alice.is_platform_admin = True
+        alice.is_active = False
+        db_session.commit()
+        _seed(db_session, scopes=ADMINS_SCOPE)
+        token = _get_service_token(client)
+
+        assert client.get("/internal/platform-admins",
+                          headers={"Authorization": f"Bearer {token}"}).json()["users"] == []
+        assert client.get(f"/internal/departments/{registered_user['dept_id']}/admins",
+                          headers={"Authorization": f"Bearer {token}"}).json()["users"] == []
+
+    def test_the_old_pulse_scopes_cannot_read_admins(self, client, db_session, registered_user):
+        _seed(db_session, scopes=f"{SCOPE} {PROFILE_SCOPE} {TOKEN_VERSION_SCOPE}")
+        token = _get_service_token(client)
+        headers = {"Authorization": f"Bearer {token}"}
+        assert client.get("/internal/platform-admins", headers=headers).status_code == 403
+        assert client.get(f"/internal/departments/{registered_user['dept_id']}/admins", headers=headers).status_code == 403
+
+    def test_admins_scope_alone_cannot_read_emails_profiles_or_token_versions(self, client, db_session):
+        _seed(db_session, scopes=ADMINS_SCOPE)
+        token = _get_service_token(client)
+        headers = {"Authorization": f"Bearer {token}"}
+        assert client.post("/internal/users/emails", json={"user_ids": [1]}, headers=headers).status_code == 403
+        assert client.post("/internal/users/profiles", json={"user_ids": [1]}, headers=headers).status_code == 403
+        assert client.post("/internal/users/token-versions", json={"user_ids": [1]}, headers=headers).status_code == 403
+
+    def test_an_unauthenticated_call_is_401(self, client, registered_user):
+        assert client.get("/internal/platform-admins").status_code == 401
+        assert client.get(f"/internal/departments/{registered_user['dept_id']}/admins").status_code == 401
+
+    def test_a_user_token_is_not_a_service_token(self, client, registered_user):
+        """The whole reason this endpoint exists is the reverse case, so keep the wall
+        pointing both ways: a user's access token cannot open an internal endpoint."""
+        headers = {"Authorization": f"Bearer {registered_user['tokens']['access_token']}"}
+        assert client.get("/internal/platform-admins", headers=headers).status_code == 401

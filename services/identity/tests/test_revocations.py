@@ -85,7 +85,7 @@ class TestWhatGetsPublished:
         tokens = _login(client, registered_user)
         assert client.post("/auth/logout-all", headers=auth(tokens)).status_code == 204
 
-        user_id = decode = client.post("/auth/login", json={"email": registered_user["email"], "password": registered_user["password"]}).json()["user"]["id"]
+        user_id = client.post("/auth/login", json={"email": registered_user["email"], "password": registered_user["password"]}).json()["user"]["id"]
         key, value, ttl = published.written[0]
         assert key == f"{revocations.USER_KEY_PREFIX}{user_id}"
         assert int(value) >= 1

@@ -361,7 +361,7 @@ class TestTransferMember:
         assert r.json()["detail"] == "Target department not found"
 
     def test_admin_of_only_the_source_cannot_move_someone_out(self, client, registered_user, invite_user, second_dept):
-        tokens, eng_dept = registered_user["tokens"], registered_user["dept_id"]
+        eng_dept = registered_user["dept_id"]
         self._bob_in(client, registered_user, invite_user, eng_dept, "admin")
         victim_id = self._bob_in(client, registered_user, invite_user, eng_dept, "engineer", "victim@example.com")
         bob = client.post("/auth/login", json={"email": "bob@example.com", "password": "Test123!password"}).json()

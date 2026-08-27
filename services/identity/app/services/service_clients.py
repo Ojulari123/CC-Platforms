@@ -10,7 +10,10 @@ _DUMMY_SECRET_HASH = hash_password("service-client-does-not-exist")
 
 # Explicit so seeding can't silently over-grant. Split by sensitivity: a service that
 # only draws names never gets the email one, and tokens:verify carries no PII at all.
-PULSE_SCOPES = "users:read:email users:read:profile tokens:verify"
+# admins:read is the one that names people a product may email about a decision, so it
+# only goes to a product that has decisions to route. Granted by re-seeding, not a
+# migration: seed_service_client below rewrites scopes on every identity boot.
+PULSE_SCOPES = "users:read:email users:read:profile tokens:verify admins:read"
 # Forge renders no names or addresses; it only needs to spot a killed session.
 FORGE_SCOPES = "tokens:verify"
 
