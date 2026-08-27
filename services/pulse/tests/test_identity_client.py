@@ -489,3 +489,109 @@ class TestResolveProfilesAnswer:
         answer = resolve_profiles_answer([10, 20])
         assert set(answer.profiles) == {10}
         assert answer.unknown == set()
+
+
+DEPT_ADMINS_URL = "http://identity:8000/internal/departments/7/admins"
+PLATFORM_ADMINS_URL = "http://identity:8000/internal/platform-admins"
+
+
+def _install_get(monkeypatch, handler):
+    def _get(url, **kwargs):
+        return handler(url, kwargs)
+    monkeypatch.setattr(identity_client.httpx, "get", _get)
+
+
+def _install_token_post(monkeypatch, token="svc-tok"):
+    def _post(url, **kwargs):
+        assert url == TOKEN_URL
+        return httpx.Response(200, json={"access_token": token, "expires_in": 600})
+    monkeypatch.setattr(identity_client.httpx, "post", _post)
+
+
+def test_dept_admin_lookup_sends_the_service_token_and_maps_the_answer(monkeypatch):
+    seen = []
+    _install_token_post(monkeypatch)
+
+    def handler(url, kwargs):
+        seen.append((url, kwargs["headers"]["Authorization"]))
+        return httpx.Response(200, json={"users": [
+            {"user_id": 41, "email": "admin@x.com"},
+            {"user_id": 42, "email": "other@x.com"},
+        ]})
+
+    _install_get(monkeypatch, handler)
+    assert identity_client.resolve_dept_admin_emails(7) == {41: "admin@x.com", 42: "other@x.com"}
+    assert seen == [(DEPT_ADMINS_URL, "Bearer svc-tok")]
+
+
+def test_platform_admin_lookup_maps_the_answer(monkeypatch):
+    _install_token_post(monkeypatch)
+    _install_get(monkeypatch, lambda url, kwargs: httpx.Response(200, json={"users": [{"user_id": 99, "email": "root@x.com"}]})
+                 if url == PLATFORM_ADMINS_URL else pytest.fail(url))
+    assert identity_client.resolve_platform_admin_emails() == {99: "root@x.com"}
+
+
+def test_a_department_with_no_admins_is_an_empty_dict_not_an_error(monkeypatch):
+    _install_token_post(monkeypatch)
+    _install_get(monkeypatch, lambda url, kwargs: httpx.Response(200, json={"users": []}))
+    assert identity_client.resolve_dept_admin_emails(7) == {}
+
+
+def test_the_dept_id_is_coerced_so_it_cannot_reshape_the_path(monkeypatch):
+    """The dept_id is interpolated into a URL path, so it goes through int() first."""
+    _install_token_post(monkeypatch)
+    _install_get(monkeypatch, lambda url, kwargs: httpx.Response(200, json={"users": []}))
+    with pytest.raises(ValueError):
+        identity_client.resolve_dept_admin_emails("7/../platform-admins")
+
+
+def test_a_401_on_an_admin_lookup_re_mints_the_token_once(monkeypatch):
+    tokens = iter(["stale", "fresh"])
+    minted = []
+
+    def _post(url, **kwargs):
+        assert url == TOKEN_URL
+        tok = next(tokens)
+        minted.append(tok)
+        return httpx.Response(200, json={"access_token": tok, "expires_in": 600})
+
+    monkeypatch.setattr(identity_client.httpx, "post", _post)
+
+    def handler(url, kwargs):
+        if kwargs["headers"]["Authorization"] == "Bearer stale":
+            return httpx.Response(401)
+        return httpx.Response(200, json={"users": [{"user_id": 99, "email": "root@x.com"}]})
+
+    _install_get(monkeypatch, handler)
+    assert identity_client.resolve_platform_admin_emails() == {99: "root@x.com"}
+    assert minted == ["stale", "fresh"]
+
+
+def test_a_403_on_an_admin_lookup_raises_rather_than_reading_as_nobody(monkeypatch):
+    """A missing admins:read scope must not look like a department with no admins."""
+    _install_token_post(monkeypatch)
+    _install_get(monkeypatch, lambda url, kwargs: httpx.Response(403))
+    with pytest.raises(IdentityResolutionError):
+        identity_client.resolve_dept_admin_emails(7)
+
+
+def test_a_transport_failure_on_an_admin_lookup_raises(monkeypatch, caplog):
+    _install_token_post(monkeypatch)
+
+    def handler(url, kwargs):
+        raise httpx.ConnectError("no route to host")
+
+    _install_get(monkeypatch, handler)
+    with caplog.at_level(logging.ERROR, logger="app.services.identity_client"):
+        with pytest.raises(IdentityResolutionError):
+            identity_client.resolve_platform_admin_emails()
+    # The internal identity URL stays in the log, never in the raised message.
+    assert "no route to host" in caplog.text
+
+
+def test_admin_lookups_refuse_without_service_credentials(monkeypatch):
+    monkeypatch.setattr(settings, "PULSE_SERVICE_CLIENT_SECRET", "")
+    with pytest.raises(IdentityResolutionError):
+        identity_client.resolve_dept_admin_emails(7)
+    with pytest.raises(IdentityResolutionError):
+        identity_client.resolve_platform_admin_emails()

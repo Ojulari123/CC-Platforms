@@ -89,12 +89,54 @@ def _lookup_body(path: str, what: str, user_ids: list[int]) -> dict:
 def _lookup(path: str, what: str, user_ids: list[int]) -> list[dict]:
     return _lookup_body(path, what, user_ids).get("users", [])
 
+def _get(path: str, token: str) -> httpx.Response:
+    return httpx.get(
+        f"{settings.IDENTITY_API_URL}{path}",
+        headers={"Authorization": f"Bearer {token}"},
+        timeout=HTTP_TIMEOUT,
+    )
+
+def _read(path: str, what: str) -> dict:
+    """The GET twin of _lookup_body, down to the one 401 retry: a service token cached
+    just past its expiry costs a round trip, not an answer."""
+    token = _get_service_token()
+    try:
+        resp = _get(path, token)
+        if resp.status_code == 401:
+            token = _get_service_token(force_refresh=True)
+            resp = _get(path, token)
+    except httpx.HTTPError as e:
+        logger.error("Could not reach identity to resolve %s: %s", what, e)
+        raise IdentityResolutionError(f"Could not reach the identity service to resolve {what}") from e
+    if resp.status_code >= 400:
+        raise IdentityResolutionError(f"Identity {what} lookup failed (HTTP {resp.status_code})")
+    return resp.json()
+
+def _require_service_credentials(what: str) -> None:
+    if not settings.PULSE_SERVICE_CLIENT_SECRET:
+        logger.error("Identity lookups are not configured: PULSE_SERVICE_CLIENT_SECRET must be set (needed to resolve %s)", what)
+        raise IdentityResolutionError(f"Identity lookups are not configured on this server; cannot resolve {what}")
+
+def resolve_dept_admin_emails(dept_id: int) -> dict[int, str]:
+    """Who administers one department, by id and address.
+
+    Pulse holds a repo's dept_id and nothing else about that department, and reports.
+    _can_approve already treats every admin of it as an approver. This is the same set,
+    asked for so they can be told. An empty answer means identity says the department has
+    no active admin, which is different from identity not answering — that raises."""
+    _require_service_credentials("department admins")
+    body = _read(f"/internal/departments/{int(dept_id)}/admins", "department admins")
+    return {u["user_id"]: u["email"] for u in body.get("users", [])}
+
+def resolve_platform_admin_emails() -> dict[int, str]:
+    _require_service_credentials("platform admins")
+    body = _read("/internal/platform-admins", "platform admins")
+    return {u["user_id"]: u["email"] for u in body.get("users", [])}
+
 def resolve_emails(user_ids: list[int]) -> dict[int, str]:
     if not user_ids:
         return {}
-    if not settings.PULSE_SERVICE_CLIENT_SECRET:
-        logger.error("Identity lookups are not configured: PULSE_SERVICE_CLIENT_SECRET must be set (needed to resolve emails)")
-        raise IdentityResolutionError("Identity lookups are not configured on this server; cannot resolve emails")
+    _require_service_credentials("emails")
     return {u["user_id"]: u["email"] for u in _lookup("/internal/users/emails", "email", user_ids)}
 
 _profile_lock = threading.Lock()

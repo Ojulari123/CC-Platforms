@@ -9,15 +9,16 @@ write 500s work that was already saved, so the caller retries and pays for it tw
 import logging
 import re
 from fastapi import HTTPException
-from sqlalchemy import func, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
 from crescent_core import TokenClaims
 from app.config import settings
 from app.models import (
     INDEX_READY, LLM_KIND_CHAT, ROLE_ASSISTANT, ROLE_USER,
-    ChatCitation, ChatConversation, ChatMessage, IndexedRepo, LlmUsage,
+    ChatCitation, ChatConversation, ChatMessage, IndexedRepo, LlmUsage, Repository,
 )
 from app.services import ai_provider, chat_prompts, credentials, embeddings, llm_budget, repo_index
+from app.services.repositories import visible_repo_scope
 
 logger = logging.getLogger(__name__)
 
@@ -100,10 +101,23 @@ def _searchable_indexes(db: Session, user: TokenClaims, indexed_repo_ids: list[i
     Ids that aren't theirs are dropped rather than refused: the scope list comes from a
     checkbox row that can be stale by the time it is sent, and a 404 there would be an
     error message where a narrower search was meant.
+
+    Owning the index row is not on its own enough to answer from it. An index of a
+    private repository Pulse tracks is a stored copy of that repository's source, and it
+    outlives the access that produced it, so the repo has to still be visible *now* —
+    the same rule repositories.visible_repo_scope applies to the repo row itself. An
+    index of a repository Pulse doesn't track, or of a public one, carries nothing the
+    owner couldn't read from GitHub directly, so it isn't gated.
     """
     q = select(IndexedRepo).where(IndexedRepo.owner_user_id == user.user_id, IndexedRepo.status == INDEX_READY)
     if indexed_repo_ids:
         q = q.where(IndexedRepo.id.in_(indexed_repo_ids))
+    if not user.is_platform_admin:
+        q = q.where(or_(
+            IndexedRepo.repo_id.is_(None),
+            IndexedRepo.repo_id.in_(select(Repository.id).where(Repository.private.is_(False))),
+            IndexedRepo.repo_id.in_(select(Repository.id).where(or_(*visible_repo_scope(user)))),
+        ))
     return list(db.scalars(q.order_by(IndexedRepo.id)))
 
 def _retrieve(db: Session, indexes: list[IndexedRepo], query_vector: list[float]) -> list[tuple[IndexedRepo, object]]:
@@ -297,7 +311,7 @@ def answer(db: Session, user: TokenClaims, *, conversation_id: int, content: str
         db.add(ChatCitation(message_id=message.id, **excerpt))
     # The embedding of the question is part of what this answer cost, so it is billed on
     # the same row rather than going unmetered.
-    db.add(LlmUsage(report_id=None, kind=LLM_KIND_CHAT, user_id=user.user_id, tokens=(result.token_count or 0) + embed_tokens))
+    db.add(LlmUsage(report_id=None, kind=LLM_KIND_CHAT, user_id=user.user_id, dept_id=credentials.paying_dept_id(credential), tokens=(result.token_count or 0) + embed_tokens))
     convo.updated_at = func.now()
     db.commit()
     db.refresh(message)

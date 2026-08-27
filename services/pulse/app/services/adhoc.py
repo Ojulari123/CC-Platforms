@@ -403,7 +403,7 @@ def generate_adhoc_report(db: Session, user: TokenClaims, payload, make_client=N
     # The usage row goes in the SAME transaction as the report, for the reason
     # generation.py spells out: a second commit means a failed ledger write 500s a report
     # that was already saved, so the caller retries and pays for another generation.
-    db.add(LlmUsage(report_id=report.id, kind=LLM_KIND_REPORT, user_id=user.user_id, tokens=tokens))
+    db.add(LlmUsage(report_id=report.id, kind=LLM_KIND_REPORT, user_id=user.user_id, dept_id=credentials.paying_dept_id(credential), tokens=tokens))
     db.commit()
     db.refresh(report)
     return report

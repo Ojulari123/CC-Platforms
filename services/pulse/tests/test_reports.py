@@ -1,6 +1,11 @@
 from datetime import date, datetime, timedelta, timezone
 import pytest
-from app.models import REPORT_KIND_ADHOC, Commit, Report, Repository
+from app.models import REPORT_KIND_ADHOC, Commit, Issue, PullRequest, Report, Repository
+
+# Write access from activity is a rolling window off the clock, so the seed commit that
+# makes these users contributors is relative: a fixed date ages out of the window.
+RECENT = datetime.now(timezone.utc) - timedelta(days=1)
+STALE = datetime.now(timezone.utc) - timedelta(days=400)
 
 DEPT = 1
 LEAD_ID = 20
@@ -31,7 +36,7 @@ def _seed_repo(db, gh_id, name, dept_id=DEPT, lead=LEAD_ID, deputy=DEPUTY_ID, co
     db.refresh(repo)
     for uid in contributors:
         db.add(Commit(repo_id=repo.id, sha=f"{name}-{uid}", author_user_id=uid,
-                      committed_at=datetime(2026, 1, 1, tzinfo=timezone.utc)))
+                      committed_at=RECENT))
     db.commit()
     return repo.id
 
@@ -69,6 +74,34 @@ class TestCreate:
     def test_cannot_report_on_a_repo_you_havent_contributed_to(self, client, act_as, repo):
         act_as(**MEMBER_NO_ACTIVITY)
         assert _create(client, repo).status_code == 403
+
+    def test_stale_contribution_no_longer_opens_a_report(self, client, act_as, db):
+        """The same window that hid the repo now closes writing on it. Bounded on the read
+        side alone let somebody who had moved department keep opening reports there."""
+        rid = _seed_repo(db, gh_id=7, name="stale", lead=None, deputy=None, contributors=())
+        db.add(Commit(repo_id=rid, sha="stale-10", author_user_id=10, committed_at=STALE))
+        db.commit()
+        act_as(**ENGINEER)
+        r = _create(client, rid)
+        assert r.status_code == 403, r.text
+        assert "no synced activity" in r.json()["detail"]
+
+    def test_a_stale_pull_request_or_issue_does_not_open_a_report_either(self, client, act_as, db):
+        """All three sources _has_activity reads are dated by their own column, so none of
+        them can be the one that stays open."""
+        rid = _seed_repo(db, gh_id=8, name="stale2", lead=None, deputy=None, contributors=())
+        db.add(PullRequest(repo_id=rid, github_pr_id=1, number=1, title="pr", state="open",
+                           merged=False, author_user_id=10, gh_created_at=STALE))
+        db.add(Issue(repo_id=rid, github_issue_id=1, number=2, title="iss", state="open",
+                     author_user_id=10, gh_created_at=STALE))
+        db.commit()
+        act_as(**ENGINEER)
+        assert _create(client, rid).status_code == 403
+
+    def test_recent_work_still_opens_a_report(self, client, act_as, db):
+        rid = _seed_repo(db, gh_id=9, name="fresh", lead=None, deputy=None, contributors=(10,))
+        act_as(**ENGINEER)
+        assert _create(client, rid).status_code == 201
 
     def test_one_report_per_author_per_repo_per_week(self, client, act_as, repo):
         act_as(**ENGINEER)

@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, Query, status
+from fastapi import APIRouter, Depends, Query
 from sqlalchemy.orm import Session
 from crescent_core import Page, PageParams, TokenClaims, page_params
 from app.auth import current_user

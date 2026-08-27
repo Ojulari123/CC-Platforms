@@ -6,7 +6,7 @@ from app.config import settings
 from app.models import (
     PROVIDER_OPENAI, REPORT_KIND_ADHOC, SCOPE_USER, STATUS_DRAFT, STATUS_SUBMITTED,
     ApiCredential, Commit, GitHubAccount, Issue, LlmUsage, Persona, PullRequest, Report,
-    ReportSubject, Repository, Review,
+    Repository, Review,
 )
 from app.services import adhoc, adhoc_prompts, ai_provider, personas
 from app.services.ai_provider import AIError, AIResult

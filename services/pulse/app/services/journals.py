@@ -137,7 +137,7 @@ def generate_rollup(db: Session, user: TokenClaims, repo_id: int, persona_id: in
     # commit means a failed ledger write 500s work that was already saved, so the caller
     # retries and pays for another generation.
     db.flush()
-    db.add(LlmUsage(report_id=None, kind=LLM_KIND_JOURNAL_ROLLUP, user_id=user.user_id, tokens=result.token_count or 0))
+    db.add(LlmUsage(report_id=None, kind=LLM_KIND_JOURNAL_ROLLUP, user_id=user.user_id, dept_id=credentials.paying_dept_id(credential), tokens=result.token_count or 0))
     db.commit()
     db.refresh(rollup)
     return rollup

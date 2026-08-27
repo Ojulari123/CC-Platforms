@@ -1,8 +1,12 @@
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 import pytest
 from app.models import REPORT_KIND_ADHOC, REPORT_KIND_WEEKLY, Commit, Report, ReportSubject, Repository
 from app.services import people
 from app.services.reports import report_subject_ids
+
+# Write access from activity is a rolling window off the clock, so the seed commit that
+# makes these users contributors is relative: a fixed date ages out of the window.
+RECENT = datetime.now(timezone.utc) - timedelta(days=1)
 
 DEPT = 1
 LEAD_ID = 20
@@ -20,7 +24,7 @@ def repo(db):
     db.commit()
     db.refresh(repo)
     db.add(Commit(repo_id=repo.id, sha="alpha-10", author_user_id=10,
-                  committed_at=datetime(2026, 1, 1, tzinfo=timezone.utc)))
+                  committed_at=RECENT))
     db.commit()
     return repo.id
 

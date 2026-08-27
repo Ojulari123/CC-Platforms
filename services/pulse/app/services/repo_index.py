@@ -28,7 +28,7 @@ from app.models import (
     INDEX_ERROR, INDEX_PAUSED, INDEX_PENDING, INDEX_RATE_LIMITED, INDEX_READY, INDEX_RUNNING,
     LLM_KIND_EMBEDDING, PROVIDER_OPENAI, IndexedRepo, LlmUsage, RepoChunk, Repository,
 )
-from app.services import credentials, embeddings, github_oauth, llm_budget
+from app.services import credentials, embeddings, github_oauth, llm_budget, repositories
 from app.services.github_client import GitHubClient, GitHubRateLimited
 from app.services.provider_limits import ProviderRateLimited
 
@@ -134,7 +134,9 @@ def _decode_vector(raw) -> list[float]:
     return list(raw)
 
 def _cosine_distance(a: list[float], b: list[float]) -> float:
-    dot = sum(x * y for x, y in zip(a, b))
+    # strict=False: a stored vector of the wrong width is a data problem to read as a
+    # poor match, not one to raise out of a search.
+    dot = sum(x * y for x, y in zip(a, b, strict=False))
     norm_a = math.sqrt(sum(x * x for x in a))
     norm_b = math.sqrt(sum(y * y for y in b))
     if norm_a == 0 or norm_b == 0:
@@ -235,7 +237,7 @@ def _chunk_batch(nodes: list[dict], blobs: list[bytes]) -> tuple[list[dict], int
     pending: list[dict] = []
     files_read = 0
     undecodable = 0
-    for node, raw in zip(nodes, blobs):
+    for node, raw in zip(nodes, blobs, strict=True):
         try:
             text = raw.decode("utf-8")
         except UnicodeDecodeError:
@@ -470,7 +472,9 @@ def ingest_repo(db: Session, *, indexed_repo_id: int, make_client: Callable[[str
                     token_estimate=token_estimate(chunk["content"]),
                     embedding=_encode_vector(db, vector),
                 )
-                for chunk, vector in zip(pending, vectors)
+                # strict=True: a short vector list would silently pair chunks with the wrong
+                # embeddings, which is an index that answers plausibly and wrongly.
+                for chunk, vector in zip(pending, vectors, strict=True)
             ]
             db.add_all(written)
             chunks_written += len(written)
@@ -478,7 +482,7 @@ def ingest_repo(db: Session, *, indexed_repo_id: int, make_client: Callable[[str
             # Billed per batch rather than once at the end. A run that dies half way
             # still spent what it spent, and a ledger that only records finished runs
             # would let a repeatedly failing index spend without ever showing up.
-            spend = LlmUsage(report_id=None, kind=LLM_KIND_EMBEDDING, user_id=row.owner_user_id, tokens=batch_tokens)
+            spend = LlmUsage(report_id=None, kind=LLM_KIND_EMBEDDING, user_id=row.owner_user_id, dept_id=credentials.paying_dept_id(credential), tokens=batch_tokens)
             db.add(spend)
             row.file_count = files_read
             row.chunk_count = chunks_written
@@ -584,14 +588,28 @@ def delete_indexed_repo(db: Session, user: TokenClaims, indexed_repo_id: int) ->
     db.delete(row)
     db.commit()
 
-def _queue(db: Session, owner_user_id: int, full_name: str, *, is_public: bool, dept_ids: "tuple[int, ...] | list[int]" = ()) -> IndexedRepo:
+class RepoNotVisible(Exception):
+    """The requester can no longer see a private repository Pulse tracks. Separate from
+    IndexRefused because this one never becomes `detail` on a row: the row would then say
+    a private repository by that name exists."""
+
+def _queue(db: Session, user: TokenClaims, full_name: str, *, is_public: bool) -> IndexedRepo:
     """Upsert on (owner, full_name): asking for the same repo twice re-indexes it rather
-    than making a second row that would drift out of date beside the first."""
+    than making a second row that would drift out of date beside the first.
+
+    Indexing a private repository Pulse tracks copies its source into Pulse and answers
+    chat questions out of that copy, so it is gated on the same rule as reading the repo
+    row. Checked again in chat._searchable_indexes, because access can lapse long after
+    the index was built."""
+    owner_user_id = user.user_id
     known = db.scalar(select(Repository).where(Repository.full_name == full_name))
+    if known is not None and known.private and not repositories._can_see_repo(db, user, known):
+        raise RepoNotVisible(full_name)
     row = db.scalar(select(IndexedRepo).where(IndexedRepo.owner_user_id == owner_user_id, IndexedRepo.full_name == full_name))
     if row is None:
         row = IndexedRepo(owner_user_id=owner_user_id, full_name=full_name)
         db.add(row)
+    dept_ids = user.dept_ids
     # Rewritten on every request, so re-indexing after a move carries the departments the
     # person is in now rather than the ones they were in the first time.
     row.owner_dept_ids = format_dept_ids(dept_ids)
@@ -632,7 +650,12 @@ def request_public_index(db: Session, user: TokenClaims, full_name: str) -> Inde
     # as public here would fail later as an unexplained 404 from GitHub instead of the
     # "connect your account" message the private path gives.
     known = db.scalar(select(Repository).where(Repository.full_name == full_name))
-    row = _queue(db, user.user_id, full_name, is_public=not (known is not None and known.private), dept_ids=user.dept_ids)
+    try:
+        row = _queue(db, user, full_name, is_public=not (known is not None and known.private))
+    except RepoNotVisible:
+        # 404, not 403, and the same wording as repositories.get_repository: a 403 here
+        # would confirm that a private repository by that name is tracked.
+        raise HTTPException(status_code=404, detail="Repository not found")
     db.commit()
     db.refresh(row)
     return row
@@ -658,7 +681,12 @@ def request_own_repos(db: Session, user: TokenClaims, make_client: Callable[[str
         if not is_valid_full_name(full_name):
             logger.warning("skipping a repository GitHub named %r: not a valid owner/name", full_name)
             continue
-        rows.append(_queue(db, user.user_id, full_name, is_public=not data.get("private", False), dept_ids=user.dept_ids))
+        try:
+            rows.append(_queue(db, user, full_name, is_public=not data.get("private", False)))
+        except RepoNotVisible:
+            # Skipped rather than raised: /mine is a batch, and one repository the
+            # requester has lost Pulse access to should not refuse the other twenty.
+            logger.info("skipping %s for user %s: no longer visible in Pulse", full_name, user.user_id)
     db.commit()
     for row in rows:
         db.refresh(row)

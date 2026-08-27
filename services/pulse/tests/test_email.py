@@ -1,5 +1,5 @@
 import logging
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 import httpx
 import pytest
@@ -13,6 +13,10 @@ from app.services.email import (
     send,
 )
 from app.services.identity_client import IdentityResolutionError
+
+# Write access from activity is a rolling window off the clock, so the seed commit that
+# makes these users contributors is relative: a fixed date ages out of the window.
+RECENT = datetime.now(timezone.utc) - timedelta(days=1)
 
 DEPT = 1
 LEAD_ID = 20
@@ -29,7 +33,7 @@ def _seed_repo(db, lead=LEAD_ID, deputy=DEPUTY_ID):
     db.commit()
     db.refresh(repo)
     db.add(Commit(repo_id=repo.id, sha="alpha-10", author_user_id=10,
-                  committed_at=datetime(2026, 1, 1, tzinfo=timezone.utc)))
+                  committed_at=RECENT))
     db.commit()
     return repo.id
 
@@ -234,8 +238,35 @@ class TestNotifyRealSend:
         assert sends == []
         assert "no approver emails resolved" in caplog.text
 
-    def test_no_approvers_but_a_department_logs_and_returns(self, monkeypatch, caplog):
+    def test_no_lead_or_deputy_falls_back_to_the_departments_admins(self, monkeypatch):
+        """The gap this closes: reports._can_approve already put this report in every
+        dept admin's queue, and nothing had ever told them it was there."""
         sends = []
+        asked = []
+        monkeypatch.setattr(email_mod, "resolve_dept_admin_emails",
+                            lambda dept_id: asked.append(dept_id) or {41: "admin@x.com", 42: "other@x.com"})
+        monkeypatch.setattr(email_mod, "send",
+                            lambda *, to, subject, html: sends.append((to, subject)))
+
+        notify_report_ready(_report(lead=None, deputy=None))
+
+        assert asked == [DEPT]
+        assert sorted(to for to, _ in sends) == ["admin@x.com", "other@x.com"]
+        assert {subject for _, subject in sends} == {"A report is ready for your review"}
+
+    def test_a_dept_admin_is_not_mailed_their_own_report(self, monkeypatch):
+        sends = []
+        monkeypatch.setattr(email_mod, "resolve_dept_admin_emails",
+                            lambda dept_id: {10: "author@x.com", 41: "admin@x.com"})
+        monkeypatch.setattr(email_mod, "send", lambda *, to, subject, html: sends.append(to))
+
+        notify_report_ready(_report(lead=None, deputy=None, author=10))
+
+        assert sends == ["admin@x.com"]
+
+    def test_a_department_with_no_admins_logs_and_sends_nothing(self, monkeypatch, caplog):
+        sends = []
+        monkeypatch.setattr(email_mod, "resolve_dept_admin_emails", lambda dept_id: {})
         monkeypatch.setattr(email_mod, "send",
                             lambda *, to, subject, html: sends.append(to))
         with caplog.at_level(logging.INFO, logger="app.services.email"):
@@ -243,11 +274,43 @@ class TestNotifyRealSend:
         assert sends == []
         assert "no approvers" in caplog.text
 
+    def test_identity_failing_on_the_admin_lookup_never_escapes(self, monkeypatch, caplog):
+        sends = []
+
+        def _boom(dept_id):
+            raise IdentityResolutionError("identity is down")
+
+        monkeypatch.setattr(email_mod, "resolve_dept_admin_emails", _boom)
+        monkeypatch.setattr(email_mod, "send", lambda *, to, subject, html: sends.append(to))
+        with caplog.at_level(logging.WARNING, logger="app.services.email"):
+            notify_report_ready(_report(lead=None, deputy=None))
+        assert sends == []
+        assert "identity is down" in caplog.text
+
+    def test_an_unfiled_repo_falls_back_to_the_platform_admins(self, monkeypatch):
+        """Item 2's backstop made real: _can_approve has always let a platform admin
+        decide this, and they were never told it existed."""
+        sends = []
+        monkeypatch.setattr(email_mod, "resolve_platform_admin_emails", lambda: {99: "platform@x.com"})
+        monkeypatch.setattr(email_mod, "resolve_emails", lambda ids: {10: "author@x.com"})
+        monkeypatch.setattr(email_mod, "send",
+                            lambda *, to, subject, html: sends.append((to, subject, html)))
+
+        notify_report_ready(_report(lead=None, deputy=None, dept_id=None))
+
+        assert [to for to, _, _ in sends] == ["platform@x.com", "author@x.com"]
+        assert sends[0][1] == "A report is ready for your review"
+        # The author is told the report is already actionable, not told to go chase one.
+        assert "platform admins have been emailed" in sends[1][2]
+
 
 class TestNoApproverWarning:
 
     def test_the_author_is_warned_and_told_what_to_ask_for(self, monkeypatch, caplog):
+        """With no platform admin reachable either, the author is the only person who
+        learns anything, and the copy has to send them somewhere useful."""
         sends = []
+        monkeypatch.setattr(email_mod, "resolve_platform_admin_emails", lambda: {})
         monkeypatch.setattr(email_mod, "resolve_emails", lambda ids: {10: "author@x.com"})
         monkeypatch.setattr(email_mod, "send",
                             lambda *, to, subject, html: sends.append((to, subject, html)))
@@ -258,13 +321,29 @@ class TestNoApproverWarning:
         assert len(sends) == 1
         to, subject, html = sends[0]
         assert to == "author@x.com"
-        assert subject == "Your report was submitted, but has no reviewer yet"
+        assert subject == "Your report was submitted, but has no named reviewer"
         assert "org/alpha" in html and "platform admin" in html
         assert "http://front/reports/7" in html
-        assert "no named approver" in caplog.text
+        assert "platform admins notified: False" in caplog.text
+
+    def test_the_author_is_still_warned_when_identity_cannot_be_reached(self, monkeypatch):
+        """The half that reaches a person must not be lost with the half that doesn't."""
+        sends = []
+
+        def _boom():
+            raise IdentityResolutionError("identity is down")
+
+        monkeypatch.setattr(email_mod, "resolve_platform_admin_emails", _boom)
+        monkeypatch.setattr(email_mod, "resolve_emails", lambda ids: {10: "author@x.com"})
+        monkeypatch.setattr(email_mod, "send", lambda *, to, subject, html: sends.append(to))
+
+        notify_report_ready(_report(lead=None, deputy=None, dept_id=None))
+
+        assert sends == ["author@x.com"]
 
     def test_an_unresolvable_author_only_logs(self, monkeypatch, caplog):
         sends = []
+        monkeypatch.setattr(email_mod, "resolve_platform_admin_emails", lambda: {})
         monkeypatch.setattr(email_mod, "resolve_emails", lambda ids: {})
         monkeypatch.setattr(email_mod, "send",
                             lambda *, to, subject, html: sends.append(to))
@@ -277,6 +356,7 @@ class TestNoApproverWarning:
         def _boom(*, to, subject, html):
             raise EmailSendError("provider rejected")
 
+        monkeypatch.setattr(email_mod, "resolve_platform_admin_emails", lambda: {})
         monkeypatch.setattr(email_mod, "resolve_emails", lambda ids: {10: "author@x.com"})
         monkeypatch.setattr(email_mod, "send", _boom)
         notify_report_ready(_report(lead=None, deputy=None, dept_id=None))
@@ -288,13 +368,14 @@ class TestNoApproverWarning:
         db.commit()
         db.refresh(repo)
         db.add(Commit(repo_id=repo.id, sha="unfiled-10", author_user_id=10,
-                      committed_at=datetime(2026, 1, 1, tzinfo=timezone.utc)))
+                      committed_at=RECENT))
         db.commit()
 
         sends = []
+        monkeypatch.setattr(email_mod, "resolve_platform_admin_emails", lambda: {99: "platform@x.com"})
         monkeypatch.setattr(email_mod, "resolve_emails", lambda ids: {10: "author@x.com"})
         monkeypatch.setattr(email_mod, "send",
                             lambda *, to, subject, html: sends.append(to))
         r = _open_submitted(client, act_as, repo.id)
         assert r.status_code == 200, r.text
-        assert sends == ["author@x.com"]
+        assert sends == ["platform@x.com", "author@x.com"]

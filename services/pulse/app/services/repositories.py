@@ -7,7 +7,7 @@ from sqlalchemy import func, or_, select, update
 from sqlalchemy.orm import Session
 from crescent_core import TokenClaims
 from app.models import Commit, Issue, PullRequest, Report, Repository
-from app.services.activity import repo_ids_worked_in, repo_ids_worked_in_q, user_ids_worked_in_repo
+from app.services.activity import repo_ids_worked_in, repo_ids_worked_in_q, user_ids_worked_in_repo, visibility_activity_cutoff
 
 def _get_repo(db: Session, repo_id: int) -> Repository:
     repo = db.get(Repository, repo_id)
@@ -32,11 +32,16 @@ def _can_see_repo(db: Session, user: TokenClaims, repo: Repository) -> bool:
         return True
     if repo.dept_id is not None and user.is_member_of(repo.dept_id):
         return True
-    return repo.id in repo_ids_worked_in(db, user.user_id)
+    return repo.id in repo_ids_worked_in(db, user.user_id, visibility_activity_cutoff())
 
 def _has_activity(db: Session, user_id: int, repo_id: int) -> bool:
-    for model in (Commit, PullRequest, Issue):
-        if db.scalar(select(model.id).where(model.repo_id == repo_id, model.author_user_id == user_id).limit(1)):
+    """Windowed by the same cutoff as _can_see_repo, and for the same reason: authorship
+    is evidence of past access. Bounding read but not write would let someone who moved
+    department keep posting journals and opening reports on a repo they can no longer
+    see, which reads as fixed while leaving the hole open."""
+    since = visibility_activity_cutoff()
+    for model, dated in ((Commit, Commit.committed_at), (PullRequest, PullRequest.gh_created_at), (Issue, Issue.gh_created_at)):
+        if db.scalar(select(model.id).where(model.repo_id == repo_id, model.author_user_id == user_id, dated >= since).limit(1)):
             return True
     return False
 
@@ -58,7 +63,7 @@ def visible_repo_scope(user: TokenClaims) -> list:
     scope = [
         Repository.lead_user_id == user.user_id,
         Repository.deputy_user_id == user.user_id,
-        Repository.id.in_(repo_ids_worked_in_q(user.user_id)),
+        Repository.id.in_(repo_ids_worked_in_q(user.user_id, visibility_activity_cutoff())),
     ]
     if user.dept_ids:
         scope.append(Repository.dept_id.in_(user.dept_ids))

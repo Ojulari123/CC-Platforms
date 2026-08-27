@@ -1,5 +1,10 @@
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from app.models import Commit, PullRequest, Report, Repository, Review
+
+# Visibility from activity is a rolling window off the clock, so these are relative:
+# a fixed date would silently stop counting as recent once the suite is old enough.
+RECENT = datetime.now(timezone.utc) - timedelta(days=1)
+STALE = datetime.now(timezone.utc) - timedelta(days=400)
 
 DEPT = 1
 PLATFORM = dict(user_id=99, memberships=[], is_platform_admin=True)
@@ -32,9 +37,20 @@ def _seed_report(db, repo_id, dept_id=None, author=10, week=date(2026, 7, 20)):
     return report.id
 
 
-def _seed_commit(db, repo_id, user_id=10, sha="c1"):
+def _seed_commit(db, repo_id, user_id=10, sha="c1", at=None):
     db.add(Commit(repo_id=repo_id, sha=sha, author_user_id=user_id, message="m",
-                  committed_at=datetime(2026, 7, 20, 12, 0, tzinfo=timezone.utc)))
+                  committed_at=at or RECENT))
+    db.commit()
+
+
+def _seed_review(db, repo_id, reviewer=10, at=None):
+    pr = PullRequest(repo_id=repo_id, github_pr_id=1, number=7, title="pr", state="open", merged=False,
+                     author_user_id=11, gh_created_at=at or RECENT)
+    db.add(pr)
+    db.commit()
+    db.refresh(pr)
+    db.add(Review(pull_request_id=pr.id, github_review_id=1, reviewer_user_id=reviewer, state="approved",
+                  submitted_at=at or RECENT))
     db.commit()
 
 
@@ -92,17 +108,43 @@ class TestListAndGet:
 
     def test_a_pr_reviewer_sees_the_unfiled_repo_they_reviewed_in(self, client, act_as, db):
         rid = _seed_repo(db, dept_id=None, gh_id=3, name="unfiled")
-        pr = PullRequest(repo_id=rid, github_pr_id=1, number=7, title="pr", state="open", merged=False,
-                         author_user_id=11, gh_created_at=datetime(2026, 7, 19, 12, 0, tzinfo=timezone.utc))
-        db.add(pr)
-        db.commit()
-        db.refresh(pr)
-        db.add(Review(pull_request_id=pr.id, github_review_id=1, reviewer_user_id=10, state="approved",
-                      submitted_at=datetime(2026, 7, 19, 13, 0, tzinfo=timezone.utc)))
-        db.commit()
+        _seed_review(db, rid, at=RECENT)
         act_as(**ENGINEER)
         assert client.get(f"/github/repositories/{rid}").status_code == 200
         assert client.get("/github/repositories").json()["total"] == 1
+
+    def test_stale_work_stops_revealing_an_unfiled_repo(self, client, act_as, db):
+        """Authorship is evidence of past access, not present access. Past the window it
+        no longer opens a repo on its own — the case this closes is an internal move,
+        where the department grant goes at once and this one used to last forever."""
+        rid = _seed_repo(db, dept_id=None, gh_id=3, name="unfiled")
+        _seed_commit(db, rid, user_id=10, at=STALE)
+        act_as(**ENGINEER)
+        assert client.get(f"/github/repositories/{rid}").status_code == 404
+        assert client.get("/github/repositories").json()["total"] == 0
+
+    def test_a_stale_review_stops_revealing_an_unfiled_repo(self, client, act_as, db):
+        rid = _seed_repo(db, dept_id=None, gh_id=3, name="unfiled")
+        _seed_review(db, rid, at=STALE)
+        act_as(**ENGINEER)
+        assert client.get(f"/github/repositories/{rid}").status_code == 404
+        assert client.get("/github/repositories").json()["total"] == 0
+
+    def test_the_window_is_configurable(self, client, act_as, db, monkeypatch):
+        from app.config import settings
+        rid = _seed_repo(db, dept_id=None, gh_id=3, name="unfiled")
+        _seed_commit(db, rid, user_id=10, at=datetime.now(timezone.utc) - timedelta(days=120))
+        act_as(**ENGINEER)
+        assert client.get(f"/github/repositories/{rid}").status_code == 404
+        monkeypatch.setattr(settings, "REPO_VISIBILITY_ACTIVITY_DAYS", 365)
+        assert client.get(f"/github/repositories/{rid}").status_code == 200
+
+    def test_stale_work_still_leaves_the_department_grant_alone(self, client, act_as, db):
+        """The window only bounds the activity signal; membership is checked live."""
+        rid = _seed_repo(db, dept_id=DEPT, gh_id=4, name="filed")
+        _seed_commit(db, rid, user_id=10, at=STALE)
+        act_as(**ENGINEER)
+        assert client.get(f"/github/repositories/{rid}").status_code == 200
 
     def test_someone_elses_work_does_not_reveal_an_unfiled_repo(self, client, act_as, db):
         rid = _seed_repo(db, dept_id=None, gh_id=3, name="unfiled")
@@ -335,12 +377,12 @@ class TestApproverCandidates:
     def test_a_reviewer_counts_as_a_contributor(self, client, act_as, db):
         rid = _seed_repo(db, dept_id=DEPT)
         pr = PullRequest(repo_id=rid, github_pr_id=1, number=7, title="pr", state="open", merged=False,
-                         author_user_id=11, gh_created_at=datetime(2026, 7, 19, 12, 0, tzinfo=timezone.utc))
+                         author_user_id=11, gh_created_at=RECENT)
         db.add(pr)
         db.commit()
         db.refresh(pr)
         db.add(Review(pull_request_id=pr.id, github_review_id=1, reviewer_user_id=10, state="approved",
-                      submitted_at=datetime(2026, 7, 19, 13, 0, tzinfo=timezone.utc)))
+                      submitted_at=RECENT))
         db.commit()
         act_as(**DEPT_ADMIN)
         assert self._ids(client, rid) == [10, 11]

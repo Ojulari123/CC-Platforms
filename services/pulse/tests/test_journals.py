@@ -1,4 +1,4 @@
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 import pytest
 from app import crypto
 from app.config import settings
@@ -19,6 +19,10 @@ ENGINEER = dict(user_id=10, memberships=[{"dept_id": DEPT, "team_id": None, "rol
 CONTRIBUTOR = dict(user_id=11, memberships=[{"dept_id": DEPT, "team_id": None, "role": "engineer"}])
 OUTSIDER = dict(user_id=40, memberships=[{"dept_id": 2, "team_id": None, "role": "engineer"}])
 
+# Access from activity is a rolling window off the clock, so the seed commit that makes
+# this user a contributor is relative: a fixed date ages out of the window.
+RECENT = datetime.now(timezone.utc) - timedelta(days=1)
+
 FAKE = AIResult(
     text="Auth work is moving; the migration is blocked on a review.",
     model="claude-sonnet-5",
@@ -37,9 +41,9 @@ def _seed_repo(db, gh_id=1, name="alpha", dept_id=DEPT, lead=LEAD_ID, deputy=DEP
     return repo
 
 
-def _seed_commit(db, repo_id, user_id=11, sha="c1"):
+def _seed_commit(db, repo_id, user_id=11, sha="c1", at=None):
     db.add(Commit(repo_id=repo_id, sha=sha, author_user_id=user_id, message="m",
-                  committed_at=datetime(2026, 7, 20, 12, 0, tzinfo=timezone.utc)))
+                  committed_at=at or RECENT))
     db.commit()
 
 
@@ -158,6 +162,27 @@ class TestWrite:
         _seed_commit(db, repo.id, user_id=11)
         act_as(**CONTRIBUTOR)
         assert client.post(_url(repo.id), json={"body": "still on the parser"}).status_code == 201
+
+    def test_stale_activity_no_longer_lets_someone_post(self, client, act_as, db):
+        """Write is bounded by the same window as read. Before this it was not, so
+        somebody who had moved on could still open reports and post journals on a repo
+        they could no longer see — the worst of both, because it read as closed."""
+        repo = _seed_repo(db, dept_id=None, lead=None, deputy=None)
+        _seed_commit(db, repo.id, user_id=11, at=datetime.now(timezone.utc) - timedelta(days=400))
+        act_as(**CONTRIBUTOR)
+        assert client.get(_url(repo.id)).status_code == 404
+        assert client.post(_url(repo.id), json={"body": "still here"}).status_code == 404
+
+    def test_stale_activity_no_longer_lets_a_dept_member_post(self, client, act_as, db):
+        """Same window, but on a filed repo the department grant keeps read alive, so the
+        403 is visible rather than hidden behind the 404."""
+        repo = _seed_repo(db, lead=None, deputy=None)
+        _seed_commit(db, repo.id, user_id=11, at=datetime.now(timezone.utc) - timedelta(days=400))
+        act_as(**CONTRIBUTOR)
+        assert client.get(_url(repo.id)).status_code == 200
+        r = client.post(_url(repo.id), json={"body": "still here"})
+        assert r.status_code == 403, r.text
+        assert "member of this repository" in r.json()["detail"]
 
     def test_a_platform_admin_can_post(self, client, act_as, db):
         repo = _seed_repo(db)

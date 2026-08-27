@@ -1,7 +1,8 @@
-from datetime import date, datetime, time, timezone
+from datetime import date, datetime, time, timedelta, timezone
 from sqlalchemy import or_, select
 from sqlalchemy.orm import Session
 from crescent_core import TokenClaims
+from app.config import settings
 from app.models import Commit, Issue, PullRequest, Repository, Review
 from app.schemas.activity import (
     ActivityCounts, ActivityResponse, CommitItem, IssueItem, PullRequestItem, ReviewItem,
@@ -16,17 +17,44 @@ def _oversight_repo_ids(db: Session, user: TokenClaims) -> list[int]:
         scope.append(Repository.dept_id.in_(admin_dept_ids))
     return list(db.scalars(select(Repository.id).where(or_(*scope))))
 
-def repo_ids_worked_in_q(user_id: int):
+def visibility_activity_cutoff() -> datetime:
+    """How far back activity still counts as evidence of access.
+
+    Being lead, deputy or a member of the repo's department is *current* state: it comes
+    off an access token minted minutes ago and stops being true the moment an admin
+    changes it. Having authored a commit is not — it is evidence that someone had access
+    once, and left unbounded it grants read on an old team's repositories forever. So the
+    activity grant decays: work older than REPO_VISIBILITY_ACTIVITY_DAYS no longer opens
+    a repository on its own.
+
+    The window is the staleness we accept. Someone who moves department loses the
+    department grant the same day and the activity grant at most that many days later,
+    because after the move they stop committing there. It is not shorter because an
+    engineer legitimately reads and finishes reports covering work done before the move.
+    """
+    return datetime.now(timezone.utc) - timedelta(days=settings.REPO_VISIBILITY_ACTIVITY_DAYS)
+
+
+def repo_ids_worked_in_q(user_id: int, since: datetime | None = None):
     """Returned unexecuted so callers that filter repos in SQL can drop it into an
-    `IN (...)`. This is the single definition of "worked in"; don't write a second one."""
-    return select(Commit.repo_id).where(Commit.author_user_id == user_id).union(
-        select(PullRequest.repo_id).where(PullRequest.author_user_id == user_id),
-        select(Issue.repo_id).where(Issue.author_user_id == user_id),
-        select(PullRequest.repo_id).join(Review, Review.pull_request_id == PullRequest.id).where(Review.reviewer_user_id == user_id),
+    `IN (...)`. This is the single definition of "worked in"; don't write a second one.
+
+    `since` drops activity older than that instant. Each of the four sources is dated by
+    the column the rest of this module already orders it by, so "worked in recently" and
+    "recent activity" mean the same thing. Rows with a null timestamp are dropped by the
+    comparison, which is the safe direction for the caller that uses this to decide who
+    may read a repository."""
+    def _window(q, column):
+        return q if since is None else q.where(column >= since)
+
+    return _window(select(Commit.repo_id).where(Commit.author_user_id == user_id), Commit.committed_at).union(
+        _window(select(PullRequest.repo_id).where(PullRequest.author_user_id == user_id), PullRequest.gh_created_at),
+        _window(select(Issue.repo_id).where(Issue.author_user_id == user_id), Issue.gh_created_at),
+        _window(select(PullRequest.repo_id).join(Review, Review.pull_request_id == PullRequest.id).where(Review.reviewer_user_id == user_id), Review.submitted_at),
     )
 
-def repo_ids_worked_in(db: Session, user_id: int) -> set[int]:
-    return set(db.scalars(repo_ids_worked_in_q(user_id)))
+def repo_ids_worked_in(db: Session, user_id: int, since: datetime | None = None) -> set[int]:
+    return set(db.scalars(repo_ids_worked_in_q(user_id, since)))
 
 def user_ids_worked_in_repo(db: Session, repo_id: int) -> set[int]:
     """The mirror of repo_ids_worked_in_q — who worked in one repo, rather than which
@@ -45,10 +73,14 @@ def visible_repo_ids(db: Session, user: TokenClaims, target_user_id: int) -> lis
 
     Pulse must not read identity's database, so it doesn't know a user's department: a
     department admin's reach over a *person* is derived from the only departmental fact
-    Pulse holds, which department a repo is filed under."""
+    Pulse holds, which department a repo is filed under.
+
+    The target's side of the overlap uses the same activity window as repo visibility, so
+    "which of my repos did this person work in" ages out exactly when their own read
+    access to those repos does."""
     if target_user_id == user.user_id or user.is_platform_admin:
         return None
-    worked_in = repo_ids_worked_in(db, target_user_id)
+    worked_in = repo_ids_worked_in(db, target_user_id, visibility_activity_cutoff())
     return [rid for rid in _oversight_repo_ids(db, user) if rid in worked_in]
 
 def _since_dt(since: date | None) -> datetime | None:

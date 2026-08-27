@@ -9,7 +9,7 @@ from app.models import Commit, GitHubAccount, Issue, PullRequest, Repository, Re
 from app.services import sync as sync_service
 from app.services.github_client import GitHubClient
 from app.services.repo_index import RECONNECT_DETAIL
-import app.tasks 
+import app.tasks  # noqa: F401 — registers the celery tasks asserted on below
 
 REPO = {"id": 555, "name": "alpha", "full_name": "org/alpha", "private": False, "default_branch": "main", "owner": {"login": "org"}}
 

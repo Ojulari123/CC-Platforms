@@ -587,7 +587,8 @@ class TestRoutes:
         assert queued == [body["id"]]
 
     def test_a_tracked_private_repo_is_queued_as_private(self, client, act_as, db, queued):
-        db.add(Repository(github_repo_id=1, full_name="org/secret", owner="org", name="secret", private=True))
+        db.add(Repository(github_repo_id=1, full_name="org/secret", owner="org", name="secret",
+                          private=True, dept_id=1))
         db.commit()
         act_as(**CALLER)
 
@@ -596,6 +597,19 @@ class TestRoutes:
         assert r.status_code == 202
         assert r.json()["is_public"] is False
         assert r.json()["repo_id"] is not None
+
+    def test_a_tracked_private_repo_the_caller_cannot_see_is_not_indexed(self, client, act_as, db, queued):
+        db.add(Repository(github_repo_id=1, full_name="org/secret", owner="org", name="secret",
+                          private=True, dept_id=99))
+        db.commit()
+        act_as(**CALLER)
+
+        r = client.post("/chat/repos", json={"full_name": "org/secret"})
+
+        # 404 rather than 403: a 403 confirms a private repo by that name is tracked.
+        assert r.status_code == 404
+        assert db.query(IndexedRepo).count() == 0
+        assert queued == []
 
     def test_asking_twice_reuses_the_row(self, client, act_as, db, queued):
         act_as(**CALLER)
@@ -708,6 +722,26 @@ class TestMyRepos:
         assert [r.is_public for r in rows] == [True, False]
         assert all(r.status == INDEX_PENDING for r in rows)
         assert lister.closed is True
+
+    def test_a_tracked_private_repo_the_caller_lost_access_to_is_skipped_not_refused(self, client, act_as, db):
+        """GitHub still hands it over — the token is theirs — but Pulse would be storing
+        and answering over its source, so Pulse applies its own rule. One skipped repo
+        must not refuse the rest of the batch."""
+        db.add(Repository(github_repo_id=1, full_name="org/secret", owner="org", name="secret",
+                          private=True, dept_id=99))
+        db.commit()
+        _seed_account(db)
+        user = act_as(**CALLER)
+        found = [{"full_name": "org/alpha", "private": False}, {"full_name": "org/secret", "private": True}]
+
+        class Lister:
+            def list_repos_for_token(self):
+                return found
+
+        rows = repo_index.request_own_repos(db, user, make_client=lambda token: Lister())
+
+        assert [r.full_name for r in rows] == ["org/alpha"]
+        assert db.query(IndexedRepo).count() == 1
 
     def test_the_route_enqueues_one_task_per_discovered_repo(self, client, act_as, db, queued, monkeypatch):
         _seed_account(db)

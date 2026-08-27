@@ -3,7 +3,7 @@ every draft, so it's the only way to tell which prompt produced one.
 """
 import json
 
-PROMPT_VERSION = "2026-08-26.2"
+PROMPT_VERSION = "2026-08-26.3"
 
 SYSTEM_PROMPT = (
     "You are an engineering reporting assistant for CypherCrescent's Pulse platform. "
@@ -42,12 +42,27 @@ _FIELD_GUIDANCE = (
     "anything else."
 )
 
+# A week can now reach the model with no commits, pull requests, reviews or issues at
+# all, generated from journal entries alone. Told separately from the field guidance
+# because it changes what the first two fields are allowed to claim, not their shape.
+_JOURNAL_ONLY_GUIDANCE = (
+    "`no_github_activity` is true for this week: nothing was synced from GitHub for this "
+    "person in this repository. Write summary_manager and summary_exec from the "
+    "`stated_intent.journal_entries` alone, say plainly that the week has no recorded "
+    "GitHub activity and that the report is based on what the engineer wrote, and do not "
+    "describe commits, pull requests, reviews or issues. Do not treat the absence as a "
+    "finding about their productivity: Pulse cannot tell an unsynced week from a quiet one."
+)
+
 def build_system_prompt() -> str:
     return SYSTEM_PROMPT
 
 def build_user_prompt(activity_payload: dict) -> str:
+    guidance = _FIELD_GUIDANCE
+    if activity_payload.get("no_github_activity"):
+        guidance = f"{guidance}\n\n{_JOURNAL_ONLY_GUIDANCE}"
     return (
-        f"{_FIELD_GUIDANCE}\n\n"
+        f"{guidance}\n\n"
         "Here is the engineer's activity for the week as JSON:\n"
         f"{json.dumps(activity_payload, default=str)}"
     )

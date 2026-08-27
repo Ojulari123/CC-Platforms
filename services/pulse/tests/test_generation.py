@@ -1,5 +1,5 @@
 from contextlib import contextmanager
-from datetime import date, datetime, timezone
+from datetime import date, datetime, time, timedelta, timezone
 import pytest
 from app import crypto
 from app.config import settings
@@ -9,10 +9,10 @@ from app.models import (
 )
 from app.services import generation, llm, llm_budget, personas
 from app.services.credentials import ResolvedCredential
-from app.services.generation import _MAX_ITEMS_PER_KIND
+from app.services.generation import JOURNAL_ONLY_NOTE, _MAX_ITEMS_PER_KIND
 from app.services.llm import LLMError, LLMResult
 from app.services.llm_budget import BudgetExceededError
-from app.services.prompts import PROMPT_VERSION
+from app.services.prompts import PROMPT_VERSION, build_user_prompt
 
 
 @contextmanager
@@ -29,7 +29,12 @@ def monkeypatch_cap(value: int):
 DEPT = 1
 LEAD_ID = 20
 DEPUTY_ID = 25
-WEEK = "2026-07-20"  # a Monday
+# The week reported on is relative to today: write access from activity is a rolling
+# window off the clock, so a fixed week eventually ages out of it and every generate here
+# starts 403ing. Day numbers below are offsets into that week, Monday being 0, and
+# negative ones sit before it.
+WEEK_MONDAY = date.today() - timedelta(days=date.today().weekday() + 7)
+WEEK = WEEK_MONDAY.isoformat()
 
 ENGINEER = dict(user_id=10, memberships=[{"dept_id": DEPT, "team_id": None, "role": "engineer"}])
 LEAD = dict(user_id=LEAD_ID, memberships=[{"dept_id": DEPT, "team_id": None, "role": "manager"}])
@@ -43,8 +48,8 @@ FAKE = LLMResult(
     token_count=321,
 )
 
-def _dt(y, m, d):
-    return datetime(y, m, d, 12, 0, tzinfo=timezone.utc)
+def _dt(day):
+    return datetime.combine(WEEK_MONDAY + timedelta(days=day), time(12, 0), tzinfo=timezone.utc)
 
 def _seed_repo(db, gh_id=1, name="alpha", dept_id=DEPT, lead=LEAD_ID, deputy=DEPUTY_ID):
     repo = Repository(
@@ -59,10 +64,10 @@ def _seed_repo(db, gh_id=1, name="alpha", dept_id=DEPT, lead=LEAD_ID, deputy=DEP
 def _seed_week_activity(db, repo_id, user_id=10, commits=2, prs=1):
     for i in range(commits):
         db.add(Commit(repo_id=repo_id, sha=f"w{i}", author_user_id=user_id,
-                      message=f"commit {i}", committed_at=_dt(2026, 7, 21 + i)))
+                      message=f"commit {i}", committed_at=_dt(1 + i)))
     for i in range(prs):
         db.add(PullRequest(repo_id=repo_id, github_pr_id=100 + i, number=7 + i, title="pr",
-                           state="open", merged=False, author_user_id=user_id, gh_created_at=_dt(2026, 7, 22)))
+                           state="open", merged=False, author_user_id=user_id, gh_created_at=_dt(2)))
     db.commit()
 
 @pytest.fixture
@@ -135,8 +140,8 @@ class TestGenerateHappyPath:
 
         row = db.get(Report, r.json()["id"])
         assert row.repo_full_name == repo.full_name
-        assert row.range_start == date(2026, 7, 20)
-        assert row.range_end == date(2026, 7, 26)
+        assert row.range_start == WEEK_MONDAY
+        assert row.range_end == WEEK_MONDAY + timedelta(days=6)
         # The shape 0010's backfill gives an existing row: a full Monday..Sunday week.
         assert row.range_start == row.week_start
         assert (row.range_end - row.range_start).days == 6
@@ -193,7 +198,7 @@ class TestTruncation:
         over = _MAX_ITEMS_PER_KIND + 5
         for i in range(over):
             db.add(Commit(repo_id=repo.id, sha=f"big{i}", author_user_id=10,
-                          message=f"commit {i}", committed_at=_dt(2026, 7, 21)))
+                          message=f"commit {i}", committed_at=_dt(1)))
         db.commit()
 
         act_as(**ENGINEER)
@@ -213,6 +218,27 @@ class TestGenerateGuards:
         assert r.status_code == 422, r.text
         assert mock_llm["calls"] == 0
         assert db.query(Report).count() == 0
+
+    def test_a_week_with_nothing_at_all_is_still_refused(self, client, act_as, db, mock_llm):
+        """The one thing this must keep refusing. A report written from no input is worse
+        than no report, because it reads like a record of a week."""
+        repo = _seed_repo(db)
+        act_as(**LEAD)
+        r = client.post("/reports/generate", json={"repo_id": repo.id, "week_start": WEEK})
+        assert r.status_code == 422, r.text
+        assert "no journal entries" in r.json()["detail"]
+        assert mock_llm["calls"] == 0
+
+    def test_an_assigned_open_issue_alone_is_not_enough(self, client, act_as, db, mock_llm):
+        """Assigned issues are not scoped to the week, so one assigned months ago would
+        otherwise let every silent week since generate a report with nothing in it."""
+        repo = _seed_repo(db)
+        db.add(Issue(repo_id=repo.id, github_issue_id=1, number=4, title="queued", state="open",
+                     assignee_user_id=LEAD_ID, gh_created_at=_dt(-28)))
+        db.commit()
+        act_as(**LEAD)
+        assert client.post("/reports/generate", json={"repo_id": repo.id, "week_start": WEEK}).status_code == 422
+        assert mock_llm["calls"] == 0
 
     def test_llm_failure_returns_502_not_500(self, client, act_as, db, monkeypatch):
         repo = _seed_repo(db)
@@ -439,38 +465,38 @@ class TestTheModelIsGivenEveryDateItCouldClaim:
     def test_a_closed_issue_carries_its_closed_at(self, client, act_as, db, mock_llm):
         repo = _seed_repo(db)
         db.add(Issue(repo_id=repo.id, github_issue_id=6093, number=6093, title="ipv6 parsing",
-                     state="closed", author_user_id=10, gh_created_at=_dt(2026, 7, 21),
-                     closed_at=_dt(2026, 7, 24)))
+                     state="closed", author_user_id=10, gh_created_at=_dt(1),
+                     closed_at=_dt(4)))
         db.commit()
         act_as(**ENGINEER)
 
         assert client.post("/reports/generate", json={"repo_id": repo.id, "week_start": WEEK}).status_code == 201
 
         issue = mock_llm["last_payload"]["issues"][0]
-        assert issue["gh_created_at"] == _dt(2026, 7, 21).replace(tzinfo=None)
-        assert issue["closed_at"] == _dt(2026, 7, 24).replace(tzinfo=None)
+        assert issue["gh_created_at"] == _dt(1).replace(tzinfo=None)
+        assert issue["closed_at"] == _dt(4).replace(tzinfo=None)
 
     def test_a_merged_pull_request_carries_both_merged_at_and_closed_at(self, client, act_as, db, mock_llm):
         repo = _seed_repo(db)
         db.add(PullRequest(repo_id=repo.id, github_pr_id=6096, number=6096, title="fix partition",
                            state="closed", merged=True, author_user_id=10,
-                           gh_created_at=_dt(2026, 7, 21), merged_at=_dt(2026, 7, 24),
-                           closed_at=_dt(2026, 7, 24)))
+                           gh_created_at=_dt(1), merged_at=_dt(4),
+                           closed_at=_dt(4)))
         db.commit()
         act_as(**ENGINEER)
 
         assert client.post("/reports/generate", json={"repo_id": repo.id, "week_start": WEEK}).status_code == 201
 
         pr = mock_llm["last_payload"]["pull_requests"][0]
-        assert pr["merged_at"] == _dt(2026, 7, 24).replace(tzinfo=None)
-        assert pr["closed_at"] == _dt(2026, 7, 24).replace(tzinfo=None)
+        assert pr["merged_at"] == _dt(4).replace(tzinfo=None)
+        assert pr["closed_at"] == _dt(4).replace(tzinfo=None)
 
     def test_a_pull_request_closed_without_merging_carries_a_closure_date(self, client, act_as, db, mock_llm):
         repo = _seed_repo(db)
         db.add(PullRequest(repo_id=repo.id, github_pr_id=6097, number=6097, title="abandoned",
                            state="closed", merged=False, author_user_id=10,
-                           gh_created_at=_dt(2026, 7, 21), merged_at=None,
-                           closed_at=_dt(2026, 7, 24)))
+                           gh_created_at=_dt(1), merged_at=None,
+                           closed_at=_dt(4)))
         db.commit()
         act_as(**ENGINEER)
 
@@ -478,7 +504,7 @@ class TestTheModelIsGivenEveryDateItCouldClaim:
 
         pr = mock_llm["last_payload"]["pull_requests"][0]
         assert pr["merged_at"] is None
-        assert pr["closed_at"] == _dt(2026, 7, 24).replace(tzinfo=None)
+        assert pr["closed_at"] == _dt(4).replace(tzinfo=None)
 
     def test_an_open_pull_request_says_null_rather_than_dropping_the_keys(self, client, act_as, db, mock_llm):
         repo = _seed_repo(db)
@@ -494,12 +520,12 @@ class TestTheModelIsGivenEveryDateItCouldClaim:
         repo = _seed_repo(db)
         _seed_week_activity(db, repo.id, commits=1, prs=0)
         pr = PullRequest(repo_id=repo.id, github_pr_id=500, number=6096, title="pr", state="open",
-                         merged=False, author_user_id=99, gh_created_at=_dt(2026, 7, 21))
+                         merged=False, author_user_id=99, gh_created_at=_dt(1))
         db.add(pr)
         db.commit()
         db.refresh(pr)
         db.add(Review(pull_request_id=pr.id, github_review_id=900, reviewer_user_id=10,
-                      state="approved", submitted_at=_dt(2026, 7, 22)))
+                      state="approved", submitted_at=_dt(2)))
         db.commit()
         act_as(**ENGINEER)
 
@@ -516,7 +542,7 @@ class TestTheModelIsGivenEveryDateItCouldClaim:
 
         client.post("/reports/generate", json={"repo_id": repo.id, "week_start": WEEK})
 
-        assert mock_llm["last_payload"]["week_end"] == date(2026, 7, 26)
+        assert mock_llm["last_payload"]["week_end"] == WEEK_MONDAY + timedelta(days=6)
 
     def test_the_prompt_forbids_deriving_one_field_from_another(self):
         from app.services import prompts
@@ -526,8 +552,64 @@ class TestTheModelIsGivenEveryDateItCouldClaim:
         assert "never derive one field from another" in system
 
     def test_the_prompt_version_records_the_change(self):
-        assert PROMPT_VERSION == "2026-08-26.2"
+        assert PROMPT_VERSION == "2026-08-26.3"
 
+
+class TestAJournalOnlyWeek:
+    """A week spent blocked, in meetings or reviewing other people's work leaves no
+    commits and is still a week. Refusing it sent people back to writing the report by
+    hand, and it contradicted the goals feature, which reads journals."""
+
+    def _contributor(self, db, repo):
+        # Access to write comes from earlier work in the repo, not from this week — which
+        # is the whole situation being reported on.
+        db.add(Commit(repo_id=repo.id, sha="older", author_user_id=10, message="last month",
+                      committed_at=_dt(-28)))
+        db.commit()
+
+    def test_journal_entries_alone_generate_a_report(self, client, act_as, db, mock_llm):
+        repo = _seed_repo(db)
+        self._contributor(db, repo)
+        db.add(RepoJournal(repo_id=repo.id, author_user_id=10,
+                           body="Blocked all week on the staging certificate.", created_at=_dt(2)))
+        db.commit()
+        act_as(**ENGINEER)
+        r = client.post("/reports/generate", json={"repo_id": repo.id, "week_start": WEEK})
+        assert r.status_code == 201, r.text
+        assert mock_llm["calls"] == 1
+        assert mock_llm["last_payload"]["stated_intent"]["counts"]["journal_entries"] == 1
+
+    def test_the_report_says_what_it_was_built_from(self, client, act_as, db, mock_llm):
+        """Not left to the model. The note is written by Pulse, so a reader can never
+        mistake an unsynced week for a quiet one."""
+        repo = _seed_repo(db)
+        self._contributor(db, repo)
+        db.add(RepoJournal(repo_id=repo.id, author_user_id=10, body="Chasing IT.", created_at=_dt(2)))
+        db.commit()
+        act_as(**ENGINEER)
+        body = client.post("/reports/generate", json={"repo_id": repo.id, "week_start": WEEK}).json()
+        assert body["summary_manager"].startswith(JOURNAL_ONLY_NOTE)
+        assert FAKE.summary_manager in body["summary_manager"]
+
+    def test_the_model_is_told_the_week_has_no_github_activity(self, client, act_as, db, mock_llm):
+        repo = _seed_repo(db)
+        self._contributor(db, repo)
+        db.add(RepoJournal(repo_id=repo.id, author_user_id=10, body="Chasing IT.", created_at=_dt(2)))
+        db.commit()
+        act_as(**ENGINEER)
+        client.post("/reports/generate", json={"repo_id": repo.id, "week_start": WEEK})
+        payload = mock_llm["last_payload"]
+        assert payload["no_github_activity"] is True
+        assert "based on what the engineer wrote" in build_user_prompt(payload)
+
+    def test_a_normal_week_is_not_flagged_and_carries_no_note(self, client, act_as, db, mock_llm):
+        repo = _seed_repo(db)
+        _seed_week_activity(db, repo.id)
+        act_as(**ENGINEER)
+        body = client.post("/reports/generate", json={"repo_id": repo.id, "week_start": WEEK}).json()
+        assert mock_llm["last_payload"]["no_github_activity"] is False
+        assert body["summary_manager"] == FAKE.summary_manager
+        assert "based on what the engineer wrote" not in build_user_prompt(mock_llm["last_payload"])
 
 class TestNextWeekGoalsComeFromStatedIntent:
     """Goals used to be "a short, plausible set of next steps implied by the in-progress
@@ -543,7 +625,7 @@ class TestNextWeekGoalsComeFromStatedIntent:
         repo = _seed_repo(db)
         _seed_week_activity(db, repo.id)
         db.add(RepoJournal(repo_id=repo.id, author_user_id=10, body="Blocked on the staging certificate. Chasing IT on Monday.",
-                           created_at=_dt(2026, 7, 22)))
+                           created_at=_dt(2)))
         db.commit()
         act_as(**ENGINEER)
 
@@ -557,7 +639,7 @@ class TestNextWeekGoalsComeFromStatedIntent:
         repo = _seed_repo(db)
         _seed_week_activity(db, repo.id)
         db.add(RepoJournal(repo_id=repo.id, author_user_id=LEAD_ID, body="I will rewrite the loader.",
-                           created_at=_dt(2026, 7, 22)))
+                           created_at=_dt(2)))
         db.commit()
         act_as(**ENGINEER)
 
@@ -569,7 +651,7 @@ class TestNextWeekGoalsComeFromStatedIntent:
         repo = _seed_repo(db)
         _seed_week_activity(db, repo.id)
         db.add(RepoJournal(repo_id=repo.id, author_user_id=10, body="Last month's plan.",
-                           created_at=_dt(2026, 6, 22)))
+                           created_at=_dt(-28)))
         db.commit()
         act_as(**ENGINEER)
 
@@ -583,7 +665,7 @@ class TestNextWeekGoalsComeFromStatedIntent:
         db.add(Issue(repo_id=repo.id, github_issue_id=900, number=41, title="Cache the JWKS response",
                      state="open", author_user_id=LEAD_ID, assignee_user_id=10,
                      assignee_github_login="ada", milestone_title="Sprint 12",
-                     milestone_due_on=_dt(2026, 8, 3), gh_created_at=_dt(2026, 7, 15)))
+                     milestone_due_on=_dt(14), gh_created_at=_dt(-5)))
         db.commit()
         act_as(**ENGINEER)
 
@@ -592,14 +674,14 @@ class TestNextWeekGoalsComeFromStatedIntent:
         assigned = mock_llm["last_payload"]["stated_intent"]["assigned_open_issues"]
         assert [i["number"] for i in assigned] == [41]
         assert assigned[0]["milestone"] == "Sprint 12"
-        assert assigned[0]["due_on"] == _dt(2026, 8, 3).replace(tzinfo=None)
+        assert assigned[0]["due_on"] == _dt(14).replace(tzinfo=None)
 
     def test_an_issue_the_author_merely_raised_is_not_queued_to_them(self, client, act_as, db, mock_llm):
         repo = _seed_repo(db)
         _seed_week_activity(db, repo.id)
         db.add(Issue(repo_id=repo.id, github_issue_id=901, number=42, title="somebody else's job",
                      state="open", author_user_id=10, assignee_user_id=LEAD_ID,
-                     gh_created_at=_dt(2026, 7, 15)))
+                     gh_created_at=_dt(-5)))
         db.commit()
         act_as(**ENGINEER)
 
@@ -611,8 +693,8 @@ class TestNextWeekGoalsComeFromStatedIntent:
         repo = _seed_repo(db)
         _seed_week_activity(db, repo.id)
         db.add(Issue(repo_id=repo.id, github_issue_id=902, number=43, title="already done",
-                     state="closed", assignee_user_id=10, gh_created_at=_dt(2026, 7, 15),
-                     closed_at=_dt(2026, 7, 16)))
+                     state="closed", assignee_user_id=10, gh_created_at=_dt(-5),
+                     closed_at=_dt(-4)))
         db.commit()
         act_as(**ENGINEER)
 
@@ -625,7 +707,7 @@ class TestNextWeekGoalsComeFromStatedIntent:
         other = _seed_repo(db, gh_id=2, name="beta")
         _seed_week_activity(db, repo.id)
         db.add(Issue(repo_id=other.id, github_issue_id=903, number=44, title="beta work",
-                     state="open", assignee_user_id=10, gh_created_at=_dt(2026, 7, 15)))
+                     state="open", assignee_user_id=10, gh_created_at=_dt(-5)))
         db.commit()
         act_as(**ENGINEER)
 
@@ -648,7 +730,7 @@ class TestNextWeekGoalsComeFromStatedIntent:
         repo = _seed_repo(db)
         _seed_week_activity(db, repo.id)
         for i in range(generation._MAX_STATED_ITEMS + 3):
-            db.add(RepoJournal(repo_id=repo.id, author_user_id=10, body=f"entry {i}", created_at=_dt(2026, 7, 22)))
+            db.add(RepoJournal(repo_id=repo.id, author_user_id=10, body=f"entry {i}", created_at=_dt(2)))
         db.commit()
         act_as(**ENGINEER)
 
@@ -664,7 +746,7 @@ class TestNextWeekGoalsComeFromStatedIntent:
         _seed_week_activity(db, repo.id)
         db.add(RepoJournal(repo_id=repo.id, author_user_id=10,
                            body="plan: " + "x" * (generation._MAX_JOURNAL_CHARS + 200),
-                           created_at=_dt(2026, 7, 22)))
+                           created_at=_dt(2)))
         db.commit()
         act_as(**ENGINEER)
 

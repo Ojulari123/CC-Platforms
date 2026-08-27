@@ -5,6 +5,7 @@ from app.config import settings
 from app.models import (
     EMBEDDING_DIM, INDEX_PENDING, INDEX_READY, PROVIDER_OPENAI, SCOPE_USER,
     ApiCredential, ChatCitation, ChatConversation, ChatMessage, IndexedRepo, LlmUsage, RepoChunk,
+    Repository,
 )
 from app.services import ai_provider, chat, chat_prompts, embeddings, repo_index
 from app.services.ai_provider import AIError, AIResult
@@ -303,6 +304,45 @@ class TestScope:
         r = client.post(f"{URL}/{convo.id}/messages", json={"content": "what is here?", "indexed_repo_ids": [theirs.id]})
         assert r.status_code == 422
         assert mock_ai["calls"] == 0
+
+    def test_a_private_repo_the_owner_can_no_longer_see_is_not_answered_from(self, client, act_as, db, mock_ai, mock_embed):
+        """The index is a stored copy of that repository's source and outlives the access
+        that built it, so it is checked against the live rule, not against who owns it."""
+        repo = Repository(github_repo_id=1, full_name="org/secret", owner="org", name="secret",
+                          private=True, dept_id=42)
+        db.add(repo)
+        db.commit()
+        db.refresh(repo)
+        mine = _seed_index(db, full_name="org/secret")
+        mine.repo_id = repo.id
+        mine.is_public = False
+        db.commit()
+        _seed_chunk(db, mine.id, path="secret.py")
+        act_as(**ME)
+        convo = _seed_conversation(db)
+
+        r = client.post(f"{URL}/{convo.id}/messages", json={"content": "what is here?"})
+
+        assert r.status_code == 422
+        assert mock_ai["calls"] == 0 and mock_embed["calls"] == 0
+
+    def test_a_private_repo_still_in_the_owners_department_is_answered_from(self, client, act_as, db, mock_ai, mock_embed):
+        repo = Repository(github_repo_id=1, full_name="org/secret", owner="org", name="secret",
+                          private=True, dept_id=42)
+        db.add(repo)
+        db.commit()
+        db.refresh(repo)
+        mine = _seed_index(db, full_name="org/secret")
+        mine.repo_id = repo.id
+        mine.is_public = False
+        db.commit()
+        _seed_chunk(db, mine.id, path="secret.py")
+        act_as(user_id=MY_ID, memberships=[{"dept_id": 42, "team_id": None, "role": "engineer"}])
+        convo = _seed_conversation(db)
+
+        r = client.post(f"{URL}/{convo.id}/messages", json={"content": "what is here?"})
+
+        assert r.status_code == 201, r.text
 
     def test_an_empty_scope_searches_everything_of_mine(self, client, act_as, db, mock_ai, mock_embed, ready_repo):
         act_as(**ME)

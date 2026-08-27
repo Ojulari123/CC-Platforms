@@ -202,6 +202,10 @@ class LlmUsage(Base):
     report_id = Column(Integer, nullable=True, index=True)
     kind = Column(String(30), nullable=False, server_default=LLM_KIND_REPORT, default=LLM_KIND_REPORT)
     user_id = Column(Integer, nullable=False, index=True)
+    # Whose money paid, denormalised the same way reports.dept_id is: null on a personal
+    # or platform key. Pulse cannot ask identity which department a user_id sits in, so
+    # without this column a department's own spend is unanswerable here.
+    dept_id = Column(Integer, nullable=True, index=True)
     tokens = Column(Integer, nullable=False)
     created_at = Column(TIMESTAMP(timezone=True), server_default=func.now(), nullable=False)
 

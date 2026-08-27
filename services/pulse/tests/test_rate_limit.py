@@ -1,6 +1,6 @@
 import base64
 import time
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 import pytest
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import rsa
@@ -20,7 +20,11 @@ from app.services import llm
 from app.services.llm import LLMResult
 
 DEPT = 1
-WEEK = "2026-07-20"  # a Monday
+# Access from activity is a rolling window off the clock, so the seed commit that makes
+# this user a contributor is relative: a fixed date ages out of the window. The week
+# generated for is the Monday of that commit's week, so the two stay in step.
+RECENT = datetime.now(timezone.utc) - timedelta(days=1)
+WEEK = (RECENT.date() - timedelta(days=RECENT.weekday())).isoformat()
 ENGINEER = dict(user_id=10, memberships=[{"dept_id": DEPT, "team_id": None, "role": "engineer"}])
 
 FAKE = LLMResult(
@@ -73,7 +77,7 @@ def repo_with_activity(db):
     db.commit()
     db.refresh(repo)
     db.add(Commit(repo_id=repo.id, sha="c1", author_user_id=10, message="work",
-                  committed_at=datetime(2026, 7, 21, 12, tzinfo=timezone.utc)))
+                  committed_at=RECENT))
     db.commit()
     return repo
 

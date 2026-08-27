@@ -1,4 +1,4 @@
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 import httpx
 import pytest
 from sqlalchemy import select
@@ -11,6 +11,10 @@ from app.services.leavers import revoke_departed_credentials
 
 TOKEN_URL = "http://identity:8000/oauth/token"
 PROFILES_URL = "http://identity:8000/internal/users/profiles"
+
+# Access from activity is a rolling window off the clock, so the seed commit that makes
+# this user a contributor is relative: a fixed date ages out of the window.
+RECENT = datetime.now(timezone.utc) - timedelta(days=1)
 
 
 @pytest.fixture(autouse=True)
@@ -195,7 +199,7 @@ def _history_for(db, user_id):
     db.commit()
     db.refresh(repo)
     db.add(Commit(repo_id=repo.id, sha="abc", author_user_id=user_id, author_github_login="ada",
-                  message="did work", committed_at=datetime(2026, 7, 21, 12, tzinfo=timezone.utc)))
+                  message="did work", committed_at=RECENT))
     pr = PullRequest(repo_id=repo.id, github_pr_id=1, number=7, title="a PR", state="open",
                      author_user_id=user_id, author_github_login="ada")
     db.add(pr)

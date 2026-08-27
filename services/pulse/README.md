@@ -57,7 +57,7 @@ Sits alongside the other product, **Forge** (`services/forge/`).
 
 | Method | Path | Who | Purpose |
 |---|---|---|---|
-| GET | `/admin/llm-usage` | platform admin | LLM consumption so far: `{total_tokens, generation_count}` (optional `?since=YYYY-MM-DD`), so the admin knows when to top up the account |
+| GET | `/admin/llm-usage` | whoever is paying | LLM consumption so far, scoped to the caller: `{scope, total_tokens, generation_count, by_kind}` (optional `?since=YYYY-MM-DD`). See "Who sees which figures" |
 
 ### Report generation, PDF & email (Week 4)
 
@@ -87,9 +87,25 @@ Sits alongside the other product, **Forge** (`services/forge/`).
   mentioning `R&D` or `<100ms` rendered wrong and a stray `</b>` raised and 500'd the
   export. The `<br/>` that turns newlines in the goals list into line breaks is the
   template's own markup and is still applied after escaping.
-- **`GET /admin/llm-usage`** (platform admin only) reports total tokens and
-  generation count. By design, report viewers do **not** see the model or a
-  per-report token count; usage rolls up only to this admin view.
+- **`GET /admin/llm-usage`** reports total tokens and generation count, scoped to
+  whoever is asking. By design, report viewers do **not** see the model or a
+  per-report token count; usage rolls up only to this view.
+
+  **Who sees which figures.** The gate is `llm_budget.may_see_figures`, the same rule
+  behind the budget messages: token counts are an accounting fact about somebody's key,
+  so they belong to whoever pays. Somebody running on the platform's key gets 403 —
+  there is no bill of theirs to show, and this endpoint's unscoped answer is the whole
+  organisation's spend. Above that gate there are three answers: a platform admin sees
+  everything, an admin of a department sees what that department's key paid for plus
+  their own, and everybody else sees their own. `scope` in the response says which of
+  the three you got, so a total is never mistaken for the organisation's.
+
+  A member's personal-key spend stays off their department admin's figures: that is the
+  member's money and it reconciles against no departmental invoice. `llm_usage.dept_id`
+  is stamped at spend time from the key that paid (migration `0018`), because Pulse must
+  not read identity's database and so cannot ask which department a `user_id` sits in.
+  Rows written before that migration carry null and count towards their own user and the
+  platform total only.
 - **Email on submit (real as of Week 5):** submitting a report notifies the repo's
   approvers (lead + deputy) by email. Pulse resolves their `user_id → email` by
   calling identity's `POST /internal/users/emails`, authenticating as the **`pulse`
@@ -99,6 +115,22 @@ Sits alongside the other product, **Forge** (`services/forge/`).
   commit**: identity down, resolution failing, email misconfigured, or Brevo erroring
   are all logged and swallowed, so a notification problem can never block or roll back a
   submission.
+- **Who gets told, when nobody is named.** The recipient list is `reports._can_approve`
+  read back out, so the people in a report's review queue are the people who hear about
+  it. Lead and deputy first. If the repo names neither but is filed under a department,
+  **every active admin of that department** is emailed — they were already in that queue
+  and simply were never told, which is how a report could sit unreviewed indefinitely.
+  Pulse asks identity `GET /internal/departments/{dept_id}/admins` for that, on the
+  `admins:read` scope, because `GET /departments/{id}/members?role=admin` needs a *user*
+  token with membership that a service cannot present. If the repo has **no department
+  either**, `GET /internal/platform-admins` is the backstop: `_can_approve` has always let
+  a platform admin decide such a report, so submission is allowed rather than refused —
+  refusing would strand finished work behind an admin task the author can't perform — and
+  the author gets a second email saying the platform admins have been told and that filing
+  the repo hands it to someone closer to the work. `GET /github/repositories/unfiled` is
+  where those repos are found and fixed. The author's warning is sent even when the
+  identity lookup fails, because it is the only message that reaches a person at all.
+  Nobody is ever emailed about their own report; they couldn't approve it.
 
 **GitHub: connect & sync**
 
@@ -136,11 +168,41 @@ whoever calls the callback can't aim the browser somewhere else.
 | PUT / DELETE | `/github/repositories/{id}/tracked` | dept/platform admin | Resume / stop syncing this repo. Not a visibility rule: history and reports stay readable |
 
 **Who sees a repo:** a platform admin (all of them), its lead or deputy, anyone in
-the department it's filed under, or anyone who has **worked in it**: authored a
-commit, PR or issue there, or reviewed a PR there. That last rule is what makes a
+the department it's filed under, or anyone who has **worked in it recently**: authored a
+commit, PR or issue there, or reviewed a PR there, in the last
+`REPO_VISIBILITY_ACTIVITY_DAYS` (default **90**). That last rule is what makes a
 freshly synced repo visible before an admin has filed it under a department.
 Visibility is not permission: working in a repo never lets you set its department,
 lead or deputy.
+
+The window on that last rule is the point of it. Lead, deputy and department membership
+are *current* state, read off an access token minted minutes ago and false the moment an
+admin changes them. Authorship is not: it says someone had access once, and unbounded it
+granted read on an old team's repositories forever, so an internal department move kept
+its old repos. It matters more than it used to, because the chatbot answers questions over
+**private source code** under the same rule. So the activity grant now decays, and the
+staleness we accept is that window: after a move you stop committing there, and the last
+door shuts at most 90 days later. Lower it in `.env` to shorten that.
+
+**Writing follows the same window.** Posting to a repo's journal or opening a report on it
+takes membership of the repo — lead, deputy, admin of its department, or activity in it —
+and that activity is bounded by the same `REPO_VISIBILITY_ACTIVITY_DAYS`. Reading and
+writing share one cutoff (`services/activity.visibility_activity_cutoff`) so they can't
+drift apart: bounding read alone left somebody who had moved on still able to post
+journals and open reports on a repo they could no longer see. Viewing *another person's*
+activity is bounded on the same clock, so an engineer stops appearing under their old
+department admin when their work there goes stale.
+
+Not covered by it: someone who stays in the same department but is dropped from a GitHub
+repository keeps Pulse's department grant. Pulse doesn't sync the collaborator list, and
+its OAuth scope wouldn't reach a private one anyway (see the backlog).
+
+**The chatbot follows the same rule.** An index of a private repository Pulse tracks is a
+stored copy of that repository's source, and it outlives the access that built it, so
+`POST /chat/repos` refuses one you can no longer see (404, like the repo row) and
+`_searchable_indexes` drops it from retrieval even if it was indexed while you could.
+Public repos and repos Pulse doesn't track carry nothing you couldn't read from GitHub
+yourself, and aren't gated.
 
 **Filing the backlog.** Nothing files a repo automatically, because a department can't be
 guessed from who committed, because it decides who may *approve* the repo's reports,
@@ -350,10 +412,11 @@ Connecting GitHub needs an **OAuth App** (Client ID/Secret in `.env`) and a
 | `LLM_MODEL` | `gpt-4o-mini` | Model used for generation. |
 | `LLM_TIMEOUT_SECONDS` | `30.0` | Per-call provider timeout. |
 | `LLM_MAX_OUTPUT_TOKENS` | `1000` | Output cap per generation. |
+| `REPO_VISIBILITY_ACTIVITY_DAYS` | `90` | How long having worked in a repo keeps it readable. See "Who sees a repo". |
 | `BREVO_API_KEY` | `""` | Brevo key for the real email send on submit. |
 | `EMAIL_FROM` | `""` | Sender address for notifications. |
 | `FRONTEND_URL` | `http://localhost:3000` | Base for the report link in notification emails. |
-| `IDENTITY_API_URL` | `http://identity:8000` | Identity's internal URL, used for the `/oauth/token` + `/internal/users/emails` + `/internal/users/profiles` service calls. |
+| `IDENTITY_API_URL` | `http://identity:8000` | Identity's internal URL, used for the `/oauth/token` + `/internal/users/emails` + `/internal/users/profiles` + `/internal/departments/{id}/admins` + `/internal/platform-admins` service calls. |
 | `PULSE_SERVICE_CLIENT_ID` | `pulse` | Client id Pulse authenticates as (client-credentials). |
 | `PULSE_SERVICE_CLIENT_SECRET` | `""` | Shared secret for that client. Empty = email and name resolution refuse to call (log-and-skip; responses just carry no names). |
 

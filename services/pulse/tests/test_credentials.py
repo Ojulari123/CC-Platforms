@@ -542,7 +542,7 @@ class TestProbeSeam:
         # The probe builds its client inside the function, so a bad key fails at the
         # first call rather than at import. No network: the client constructor raises.
         def _boom(*args, **kwargs):
-            raise RuntimeError(f"bad request with sk-secret-do-not-log")
+            raise RuntimeError("bad request with sk-secret-do-not-log")
 
         monkeypatch.setattr("openai.OpenAI", _boom)
 

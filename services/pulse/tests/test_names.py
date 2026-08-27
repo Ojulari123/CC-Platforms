@@ -5,6 +5,10 @@ from app.config import settings
 from app.models import Commit, Repository
 from app.services import identity_client
 
+# Write access from activity is a rolling window off the clock, so the seed commit that
+# makes these users contributors is relative: a fixed date ages out of the window.
+RECENT = datetime.now(timezone.utc) - timedelta(days=1)
+
 DEPT = 1
 LEAD_ID = 20
 DEPUTY_ID = 25
@@ -79,7 +83,7 @@ def _seed_repo(db, *, lead=LEAD_ID, deputy=DEPUTY_ID, contributors=(10, 11)):
     db.refresh(repo)
     for uid in contributors:
         db.add(Commit(repo_id=repo.id, sha=f"a-{uid}", author_user_id=uid,
-                      committed_at=datetime(2026, 1, 1, tzinfo=timezone.utc)))
+                      committed_at=RECENT))
     db.commit()
     return repo.id
 
@@ -96,7 +100,7 @@ def _draft(client, repo_id, week=None):
 
 class TestReportNames:
     def test_get_report_carries_author_alongside_the_id(self, client, act_as, db, monkeypatch):
-        fake = FakeIdentity(monkeypatch)
+        FakeIdentity(monkeypatch)
         repo_id = _seed_repo(db)
         act_as(**ENGINEER)
         rid = _draft(client, repo_id)

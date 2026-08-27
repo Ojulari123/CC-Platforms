@@ -44,6 +44,11 @@ class Settings(BaseSettings):
     GITHUB_TOKEN_ENC_KEY: str = ""
     GITHUB_REPOS: str = ""
 
+    # How long authorship keeps a repository readable after the fact. See
+    # services/activity.visibility_activity_cutoff — this is the staleness window on
+    # repo visibility, not a sync setting.
+    REPO_VISIBILITY_ACTIVITY_DAYS: int = Field(90, ge=1)
+
     # How far back before the cursor commits are re-requested. See sync._commit_window.
     GITHUB_SYNC_OVERLAP_MINUTES: int = Field(10080, ge=0)  # 7 days
     GITHUB_SYNC_BRANCHES: bool = True

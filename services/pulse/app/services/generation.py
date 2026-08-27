@@ -24,6 +24,15 @@ _MAX_ITEMS_PER_KIND = 50
 _MAX_STATED_ITEMS = 15
 _MAX_JOURNAL_CHARS = 1500
 
+# Prepended verbatim to the manager summary of a week that has journal entries and no
+# synced GitHub activity. The prompt is told the same thing, but the prompt is a request
+# and this is a guarantee: a reader must never have to guess whether a quiet-looking
+# report was a quiet week or an unsynced one.
+JOURNAL_ONLY_NOTE = (
+    "Based on journal entries only: no GitHub activity was synced for this week in this "
+    "repository."
+)
+
 class NoActivityError(Exception):
     pass
 
@@ -142,6 +151,9 @@ def _collect_week_activity(db: Session, user_id: int, repo_id: int, week_start: 
             "reviews": len(reviews), "issues": len(issues),
         },
         "truncated": truncated,
+        # Stated rather than left to be inferred from four zeroes, because the difference
+        # between "a quiet week" and "nothing synced" is the whole meaning of the report.
+        "no_github_activity": not (commit_items or prs or reviews or issues),
         "notes": [note] if note else [],
         "commits": commit_items[:n],
         "pull_requests": [_pr_item(p) for p in prs[:n]],
@@ -156,6 +168,17 @@ def _collect_week_activity(db: Session, user_id: int, repo_id: int, week_start: 
 def _total_items(activity: dict) -> int:
     c = activity["counts"]
     return c["commits"] + c["pull_requests"] + c["reviews"] + c["issues"]
+
+def _journal_items(activity: dict) -> int:
+    """Journal entries are activity. A week spent blocked, in reviews or on somebody
+    else's incident produces no commits and is still a week of work, and refusing to
+    report it pushed people back to writing the week up by hand.
+
+    Deliberately not counting `assigned_open_issues`: those are not week-scoped, so an
+    issue assigned in March and never touched would let every silent week since generate
+    a report out of nothing said about it. Journal entries are scoped to the week and
+    were written by the person on purpose."""
+    return activity["stated_intent"]["counts"]["journal_entries"]
 
 def generate_report(db: Session, user: TokenClaims, repo_id: int, week_start: date | None = None, persona_id: int | None = None) -> Report:
     repo = db.get(Repository, repo_id)
@@ -189,10 +212,12 @@ def generate_report(db: Session, user: TokenClaims, repo_id: int, week_start: da
         )
 
     activity = _collect_week_activity(db, user.user_id, repo.id, week)
-    if _total_items(activity) == 0:
+    journal_only = _total_items(activity) == 0
+    if journal_only and _journal_items(activity) == 0:
         raise NoActivityError(
-            f"No synced GitHub activity for the week of {week.isoformat()} in this repo, "
-            "so there is nothing to generate a report from."
+            f"No synced GitHub activity and no journal entries for the week of "
+            f"{week.isoformat()} in this repo, so there is nothing to generate a report "
+            "from."
         )
 
     persona = personas.resolve(db, user, persona_id)
@@ -220,8 +245,11 @@ def generate_report(db: Session, user: TokenClaims, repo_id: int, week_start: da
     )
 
     now = datetime.now(timezone.utc)
+    summary_manager = result.summary_manager or ""
+    if journal_only:
+        summary_manager = f"{JOURNAL_ONLY_NOTE}\n\n{summary_manager}".strip()
     if existing is not None:
-        existing.summary_manager = result.summary_manager
+        existing.summary_manager = summary_manager
         existing.summary_exec = result.summary_exec
         existing.next_week_goals = result.next_week_goals
         existing.generated_at = now
@@ -240,7 +268,7 @@ def generate_report(db: Session, user: TokenClaims, repo_id: int, week_start: da
             range_start=week,
             range_end=week + timedelta(days=6),
             status=STATUS_DRAFT,
-            summary_manager=result.summary_manager,
+            summary_manager=summary_manager,
             summary_exec=result.summary_exec,
             next_week_goals=result.next_week_goals,
             generated_at=now,
@@ -253,7 +281,7 @@ def generate_report(db: Session, user: TokenClaims, repo_id: int, week_start: da
     # failed ledger write 500'd a report that was already saved, so the caller retried
     # and paid for another generation.
     db.flush()
-    db.add(LlmUsage(report_id=report.id, kind=LLM_KIND_REPORT, user_id=user.user_id, tokens=result.token_count or 0))
+    db.add(LlmUsage(report_id=report.id, kind=LLM_KIND_REPORT, user_id=user.user_id, dept_id=credentials.paying_dept_id(credential), tokens=result.token_count or 0))
     db.commit()
     db.refresh(report)
     return report

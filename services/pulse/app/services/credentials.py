@@ -50,6 +50,10 @@ class ResolvedCredential:
     model: str | None
     bypass_token_cap: bool
     credential_id: int | None = None
+    # Which department's money this is, on a department-scoped key and nowhere else. The
+    # ledger stamps it on every row so a department admin can be shown the spend that
+    # reconciles against their own invoice.
+    dept_id: int | None = None
 
 def _preferred_providers(provider: str | None) -> tuple[str, ...]:
     """Which providers are allowed for this call, best first. A pinned AI_PROVIDER is
@@ -75,7 +79,16 @@ def _row_to_resolved(row: ApiCredential, source: str) -> ResolvedCredential:
         model=row.model,
         bypass_token_cap=bool(row.bypass_token_cap),
         credential_id=row.id,
+        dept_id=row.dept_id if source == SOURCE_DEPARTMENT else None,
     )
+
+def paying_dept_id(credential: "ResolvedCredential | None") -> int | None:
+    """The department to bill this call to, which is only ever a department key. A user's
+    own key is their money and the platform's key is the platform's; neither belongs on a
+    department's invoice, so both stamp null."""
+    if credential is None or credential.source != SOURCE_DEPARTMENT:
+        return None
+    return credential.dept_id
 
 def _find(db: Session, *, scope: str, provider: str, owner_user_id: int | None = None, dept_id: int | None = None) -> ApiCredential | None:
     owner_match = ApiCredential.owner_user_id.is_(None) if owner_user_id is None else ApiCredential.owner_user_id == owner_user_id
