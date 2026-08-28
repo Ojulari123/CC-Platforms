@@ -1,0 +1,12 @@
+version: 2
+
+secret:
+  # Lockfile integrity hashes are base64 SHA-512 digests of published tarballs.
+  # They are high-entropy by construction and public by definition, so every
+  # lockfile bump reads as a "Generic High Entropy Secret" and buries real hits.
+  ignored_paths:
+    - "**/package-lock.json"
+    - "**/yarn.lock"
+    - "**/pnpm-lock.yaml"
+    - "**/poetry.lock"
+    - "**/uv.lock"
